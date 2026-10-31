@@ -34,6 +34,7 @@ This is the running source of truth for building the Panoptic-Beta application. 
 - **2026-10-31:** Exchange #25 recorded. Completely overhauled Section 6.4 (Admin Portal) in `SPECIFICATION.md` to implement the **5-Tab Mission Control Architecture** with real-time PyTorch/ML training observability: (1) `/admin/dynamics` (scalar learning curves, gradient norms, early-stopping detection), (2) `/admin/internals` (3D ridgeline weight histograms, layer activations, Grad-CAM saliency heatmaps), (3) `/admin/boundaries` (interactive 2D/3D meshgrid decision surface morphing), (4) `/admin/triage` (hard-negative mining, raw FITS HDU 1-6 inspection), (5) `/admin/exports` (volunteer audits, 4 data products, HDF5 PyTorch bundles), and (6) Complete Python hook-to-Go WebSocket streaming pipeline (`/api/admin/ws/training`) with 100-frame ring buffer.
 - **2026-10-31:** Exchange #26 recorded. User requested name simplification: renamed project from "SpectraScout" to **"Spectra"** across `SPECIFICATION.md` and database/token naming conventions (`spectra_ledger.db`, `spectra_admin_token`, etc.).
 - **2026-10-31:** Exchange #27 recorded. Modern type-safe stack upgrade: Replaced SQLite string boilerplate with **Supabase** (PostgreSQL 16 + `pgvector` + Supabase Auth + Supabase Realtime + Supabase Storage) and **`sqlc` + `pgx/v5`** compile-time code generation for the Go API Gateway. Implemented 102-channel spectral similarity querying via `vector(102)` cosine distance (`<=>`), instant live discussion synchronization via Supabase Realtime `postgres_changes`, JWT-based role authentication for `/admin`, type-safe URL query state (`nuqs`), asynchronous caching and prefetching (`@tanstack/react-query`), ultra-fast 60 FPS plotting (`uPlot`), 3D decision surfaces (`react-plotly.js`), and local developer orchestration via Supabase CLI (`supabase start`) and `Taskfile.yml`.
+- **2026-10-31:** Exchange #28 recorded. Zero-Auth & Ultra-High-Quality Institutional Blueprint: Dropped blocking login/auth for hackathon judges while maintaining clean route separation (`/explore` vs `/admin`). Implemented zero-auth session fingerprinting using implicit client telemetry IDs (`localStorage.getItem('spx_observer_id')` -> UUIDv4 + astronomical callsign like `Observer-Vega-409`) injected via `X-Observer-ID` and `X-Observer-Callsign` HTTP headers. Upgraded database schema to 6 production tables: `subjects`, `observers`, `classifications`, `discussion_threads`, `discussion_replies`, and `ml_training_runs`. Engineered ultra-high-quality toolchain: (1) Binary Float32Array streaming replacing 8-bit PNGs to eliminate posterization and quantization during client-side WebGL2 120 FPS Asinh and difference math ($t_N - t_0$), (2) End-to-end type generation via `openapi-typescript` from FastAPI OpenAPI 3.1 schemas, (3) `uv` + `ruff` for sub-3s deterministic Python environment setup (`uv.lock`), (4) `air` live-reloading for Go, (5) Radix UI unstyled primitives + `cmdk` command bar (Ctrl+K) + `TanStack Virtual`, (6) Offline resilience via `seed_benchmarks.sql` + local binary cache, and (7) Floating HUD crosshair readout (RA/Dec, MJy/sr, SNR, decoded FLAGS bitmask).
 
 ---
 
@@ -136,9 +137,9 @@ _TBD_
 - Challenge selected: SPHEREx blink/time-series web tool (NASA Space Apps).
 - *(Tech stack is still only a proposal at this point.)*
 
-## Current Direction Snapshot (as of Exchange #27; Supabase, pgvector & Modern Type-Safe Stack)
+## Current Direction Snapshot (as of Exchange #28; Zero-Auth Flagship Architecture)
 > Quick orientation for builders. The detailed reasoning is in the ★ sections below. Later exchanges override earlier ones.
-1. **Product Identity & Architecture:** **Spectra** (formerly SpectraScout / SPHEREx Spectral Explorers). Split into a **Dual-View Portal Architecture** backed by a type-safe modern backend: Supabase (PostgreSQL 16 + `pgvector` + Supabase Auth + Realtime), Go API Gateway (`api-gateway` on `:8080` with `sqlc` + `pgx/v5` and Chi router), and Python `astro-worker` (:8001):
+1. **Product Identity & Architecture:** **Spectra** (SPHEREx Spectral Explorers). Split into a **Dual-View Portal Architecture** with **Zero-Auth Route Isolation** (`/explore` for public citizen science vs `/admin` for science team Mission Control). Eliminates login friction for hackathon judges while tracking calibration and attribution via implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Callsign`). Backed by Supabase (PostgreSQL 16 + `pgvector`), Go API Gateway (`api-gateway` on `:8080` with `sqlc` + `pgx/v5` + `air`), and Python `astro-worker` (:8001 with `uv` + `astropy` + `torch`).
    - **Portal A: Public Discovery Suite (`/explore`):** 5-tab workspace for citizen scientists, replacing raw ML metrics with an interactive Talk-style discussion forum.
    - **Portal B: Admin Mission Control (`/admin`):** 5-tab restricted console for the science team to monitor active-learning model convergence, inspect layer activations/weights, hard negative mining, expert candidate escalation, and dataset export. Accessible strictly via `/admin` URL with React authentication guard (`ProtectedAdminRoute`) and Go `adminAuthMiddleware` (Bearer token).
 2. **Portal A (Public) 5 Isolated Tabs:**
@@ -2126,3 +2127,147 @@ RETURNING *;
   Used exclusively inside `/admin/boundaries` and `/admin/internals` for 3D Meshgrid Decision Surfaces and 3D Ridgeline Parameter Histograms.
 - **Supabase CLI Local Development:**
   `supabase start` provisions local Docker containers for PostgreSQL 16 with `pgvector`, Supabase Studio (UI at `localhost:54323`), Go Auth, and S3 Storage for offline development.
+
+---
+
+## ★ ZERO-AUTH & ULTRA-HIGH-QUALITY INSTITUTIONAL BLUEPRINT (Exchange #28)
+> **Context:** The user requested: *"but I also want it to be as high quality as possible, also note that for the hackathon we will not do authentication"*. Gemini validated dropping authentication as a pragmatic move for hackathon judges, substituting clean route-level separation (`/explore` vs `/admin`) and implicit session fingerprinting (`X-Observer-ID`), while upgrading the engineering stack to institutional-grade scientific quality (Binary Float32 streaming, `uv`, `air`, `openapi-typescript`, `cmdk`, and `seed_benchmarks.sql`).
+
+### 1. Zero-Auth Identity: Seamless Session Fingerprinting
+- **The Problem:** Eliminating login screens removes barriers for judges, but the active-learning loop, Bayesian consensus, and discussion feeds still require associating classifications, votes, and calibration scores with an observer.
+- **The Solution (Implicit Client Telemetry ID):**
+  1. On first mount, React checks `localStorage.getItem('spx_observer_id')`.
+  2. If empty, it generates a persistent UUIDv4 alongside a readable astronomical callsign (e.g. `Observer-Vega-409`). An optional 1-click edit popover in the Discussion composer allows custom callsigns without login.
+  3. Every API call automatically attaches custom HTTP headers:
+     ```http
+     X-Observer-ID: 7b3d1f8a-4092-4e8c-a1e9-5cf287a911e3
+     X-Observer-Callsign: Observer-Vega-409
+     ```
+  4. Backend automatically creates or updates the `observers` table row on write operations (`POST /api/classify`, `POST /api/discussions`).
+  5. Route Separation: Public discovery tools reside at `/explore`; administrative ML telemetry and candidate promotion reside at `/admin`. Replies posted from the `/admin` view are automatically badged with `posted_from_admin = TRUE`.
+
+### 2. Five Ultra-High-Quality Institutional Tooling Upgrades
+
+| Tooling Upgrade | Technical Implementation | Scientific & Quality Impact |
+|---|---|---|
+| **A. End-to-End Type Generation** | FastAPI OpenAPI 3.1 JSON $ightarrow$ `npx openapi-typescript http://localhost:8001/openapi.json -o ./web-client/src/types/api.d.ts` | Complete cross-stack compile-time contract safety. Changing a Python Pydantic field or Go struct immediately flags breaking changes in React at compile time. |
+| **B. Binary Float32 Tensor Streaming** | `astro-worker` packs aligned 6-band cutout matrices as raw IEEE-754 `Float32Array` buffers (or compressed Arrow/MessagePack tensors) alongside JSON metadata. | Eliminates 8-bit Base64 PNG quantization and posterization. WebGL2 fragment shaders compute 32-bit floating point Asinh stretch and difference subtraction ($t_N - t_0$) at 120 FPS with true scientific dynamic range. |
+| **C. `uv` + `Ruff` for Python Worker** | `uv init`, `uv add astropy pyvo reproject fastapi torch scikit-learn` with locked hashes in `uv.lock`. | Resolves and installs the heavy scientific Python stack in ~3 seconds. Zero dependency drift or C-extension compilation errors. |
+| **D. `air` Live Reload + `supabase db reset`** | `air` runs inside `api-gateway`, recompiling and restarting the Go binary in $<300\,	ext{ms}$ upon editing SQL queries or Go handlers. | Instant developer turnaround with 100% reproducible database schemas and seeds. |
+| **E. Institutional UI Primitives** | Radix UI unstyled primitives + `cmdk` command palette (Ctrl+K / Cmd+K) + `TanStack Virtual` + `uPlot`. | Rock-solid keyboard accessibility, virtualized feeds for thousands of threads, and $<1.5\,	ext{ms}$ per-frame Canvas rendering for 102-band spectra. |
+
+### 3. Refined Zero-Auth Database Schema (6 Production Tables)
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 1. Sky Subjects (Pre-seeded Benchmarks + Active-Learning Queue + On-Demand Cache)
+CREATE TABLE subjects (
+    subject_id TEXT PRIMARY KEY,               -- e.g., 'benchmark_wise_0855' or 'spx_j085510-071442'
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,                    -- 'benchmark', 'queue_anomaly', 'user_explored'
+    ra DOUBLE PRECISION NOT NULL,
+    dec DOUBLE PRECISION NOT NULL,
+    fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
+    recommended_tab TEXT NOT NULL,             -- 'comparator', 'spectrophotometer', 'ice_studio'
+    is_calibration BOOLEAN NOT NULL DEFAULT FALSE,
+    expert_ground_truth TEXT,                  -- Ground truth class for calibration feedback
+    spectrum_vector vector(102) NOT NULL,      -- Normalized 102-channel flux vector for pgvector cosine search
+    redshift_z DOUBLE PRECISION DEFAULT 0.0,
+    ice_column_densities JSONB DEFAULT '{}'::jsonb, -- Precomputed N(H2O), N(CO2), N(CO) in cm^-2
+    ai_anomaly_score DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    ai_predicted_class TEXT NOT NULL,
+    ai_probabilities JSONB NOT NULL DEFAULT '{}'::jsonb, -- Class probability distribution from PyTorch
+    ai_explanation TEXT NOT NULL,
+    classification_count INT NOT NULL DEFAULT 0,
+    consensus_class TEXT,
+    consensus_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    shannon_entropy DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    verification_status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'consensus_reached', 'verified_discovery', 'artifact'
+    data_release TEXT NOT NULL DEFAULT 'SPHEREx_QR3',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_subjects_spatial ON subjects (ra, dec);
+CREATE INDEX idx_subjects_priority ON subjects (recommended_tab, shannon_entropy DESC, ai_anomaly_score DESC);
+
+-- 2. Observer Profiles (Zero-Auth Implicit Sessions)
+CREATE TABLE observers (
+    observer_id TEXT PRIMARY KEY,              -- Client-generated UUID from X-Observer-ID header
+    callsign TEXT NOT NULL,                    -- e.g., 'Observer-Vega-409'
+    total_classifications INT NOT NULL DEFAULT 0,
+    calibration_seen INT NOT NULL DEFAULT 0,
+    calibration_correct INT NOT NULL DEFAULT 0,
+    reliability_weight DOUBLE PRECISION NOT NULL DEFAULT 0.85,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. Structured Classifications (Feeds Active-Learning & Consensus Engine)
+CREATE TABLE classifications (
+    id BIGSERIAL PRIMARY KEY,
+    subject_id TEXT NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    observer_id TEXT NOT NULL REFERENCES observers(observer_id) ON DELETE CASCADE,
+    tab_workflow TEXT NOT NULL,                -- 'comparator', 'spectrophotometer', 'ice_studio'
+    primary_class TEXT NOT NULL,
+    feature_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    motion_telemetry JSONB,                    -- {"pm_arcsec_yr": 8.1, "pa_deg": 262.4, "cadence": "6m"}
+    ice_mask_pixels JSONB,                     -- Painted pixel coordinates and integrated optical depth
+    confidence DOUBLE PRECISION NOT NULL,
+    observer_weight_snapshot DOUBLE PRECISION NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 4. Observation Discussion Threads (Tab 5 Public Feed)
+CREATE TABLE discussion_threads (
+    thread_id BIGSERIAL PRIMARY KEY,
+    subject_id TEXT REFERENCES subjects(subject_id) ON DELETE SET NULL,
+    observer_id TEXT NOT NULL,
+    observer_callsign TEXT NOT NULL,
+    channel TEXT NOT NULL,                     -- 'movers', 'spectra', 'ices', 'artifacts', 'discoveries'
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    hashtags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ra DOUBLE PRECISION NOT NULL,
+    dec DOUBLE PRECISION NOT NULL,
+    fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
+    state_hash_url TEXT NOT NULL,              -- Deep-link restoring exact Tab, RGB mixer, mode, and pixel
+    preview_metrics JSONB NOT NULL DEFAULT '{}'::jsonb, -- Inline snapshot of dipole SNR & key spectral dips
+    upvotes INT NOT NULL DEFAULT 0,
+    is_science_team_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    admin_verification_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 5. Discussion Replies
+CREATE TABLE discussion_replies (
+    reply_id BIGSERIAL PRIMARY KEY,
+    thread_id BIGINT NOT NULL REFERENCES discussion_threads(thread_id) ON DELETE CASCADE,
+    observer_id TEXT NOT NULL,
+    observer_callsign TEXT NOT NULL,
+    posted_from_admin BOOLEAN NOT NULL DEFAULT FALSE, -- Automatically true if reply is posted from /admin
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 6. Admin Model Training Runs (Persists Training History for /admin Tabs 1, 2, 3)
+CREATE TABLE ml_training_runs (
+    run_id TEXT PRIMARY KEY,
+    model_architecture TEXT NOT NULL,          -- 'dipole_convnet_3d', 'spectral_resnet_102', 'feature_svm'
+    hyperparameters JSONB NOT NULL,
+    epochs_completed INT NOT NULL DEFAULT 0,
+    final_train_loss DOUBLE PRECISION,
+    final_val_loss DOUBLE PRECISION,
+    final_val_f1 DOUBLE PRECISION,
+    telemetry_frames JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of epoch packets (curves, histograms, meshgrids)
+    status TEXT NOT NULL DEFAULT 'running',    -- 'running', 'completed', 'aborted'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 4. High-Quality Polish Features
+
+1. **Instant Command Palette (`cmdk` via `Ctrl+K` / `Cmd+K`):**
+   A universal shortcut bar accessible from any tab or route. Allows jumping immediately to coordinates, typing target names, selecting any of the 5 NASA benchmark systems, switching canvas modes (`Blink`, `Diff`, `Stack`), or navigating directly to `/admin/dynamics`.
+2. **Pre-Computed Benchmark Seed (`seed_benchmarks.sql` + Local Binary Cache):**
+   Running `task db:up` immediately populates the 5 benchmark systems, 20 active-learning queue candidates, and 6 sample discussion threads into Supabase PostgreSQL, and pre-renders their Float32 arrays to disk. Even with complete network loss at the hackathon venue, every single feature (including 3D boundary morphing and pgvector search) executes at 60 FPS offline.
+3. **Interactive Hover-Crosshair HUD:**
+   Hovering over any pixel in Tab 2 or Tab 3 renders a live monospace telemetry HUD displaying equatorial coordinates $(RA, Dec)$, surface brightness in $	ext{MJy/sr}$, local Signal-to-Noise Ratio ($	ext{SNR} = I/\sigma$), and decoded 12-bit FLAGS bitmask status.
