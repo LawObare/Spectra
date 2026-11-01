@@ -30,6 +30,12 @@
       "sourceType": "github",
       "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
       "computedHash": "e14e276241805c97dbcfe40dcbea1a3035269cc7293cac4b1832dda41a835e60"
+    },
+    "spectra-protocol": {
+      "source": "local",
+      "sourceType": "local",
+      "skillPath": ".agents/skills/spectra-protocol/SKILL.md",
+      "computedHash": "99a66b699145a1e7156134a503d35243f14947043a04f1b267b79cdbf7b5afc7"
     }
   }
 }
