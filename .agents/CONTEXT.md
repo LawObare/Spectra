@@ -2473,3 +2473,26 @@ To ensure that **any** agent working in the repository—whether running via Ant
 - **`.agents/skills/spectra-protocol/SKILL.md`:** Updated and mirrored across `.claude`, `.codemaker`, `.goose`, `.junie`, `.kilocode`, and `.kiro`.
 - **[`README.md`](README.md):** Synchronized badges, architecture, and recomputed benchmark target coordinates.
 - **[`prerequisites.md`](prerequisites.md):** Updated backend architecture roles.
+
+---
+
+## ★ UNIFIED SPECIFICATION v3.0.0-PROD: RESTORING EXHAUSTIVE PERSONALITY (Exchange #35)
+> **Context:** The user instructed: *"I'm seeing alot of things from version 2.5 were redacted, the newer version was meant to unify with the old one not completely replace it. Version two was massively comprehensive. I don't want to lose that personality in version3"*.
+
+### 1. Unification Synthesis
+- **The Problem:** The initial transition to v3.0 condensed `SPECIFICATION.md` to ~600 lines, inadvertently truncating the exhaustive ASCII wireframes, detailed shader implementations, component hierarchies, keyboard shortcut maps, and rich narrative personality of v2.5.
+- **The Solution:** Fully unified the two documents into an authoritative 2,495-line master blueprint (`v3.0.0-PROD`).
+- **Retained from v2.5:**
+  - Complete 1,000-line frontend component breakdown (ASCII mockups, Zustand state stores, WebGL2 shader pipelines, `uPlot` chart configs, and Admin Mission Control tabs 1–5).
+  - Exhaustive developer orchestration (`Taskfile.yml`), offline venue resilience guarantee, local port tables, and production hosting topology.
+  - Complete mathematical formulations for Asinh stretching, inverse-variance coaddition, TAN-SIP WCS reprojection, and molecular optical depth integration.
+- **Unified with v3.0 Ground Truth:**
+  - Full 19-point corrective audit table and 5 core scientific principles in Section 1.
+  - Verified archive facts `[V]`, Day-0 Spike S1 items `[?]`, and recomputed benchmark coordinates (Barnard's Star, WISE 0855, Epsilon Indi B $1/\cos\delta$ 46″ fix, RW Aurigae, R Draconis).
+  - Wavelength-matched frame grouping $S(e, b)$ and coverage matrix rules.
+  - IRSA Cutout Service as primary ingestion path with S3 byte-range fallback.
+  - Little-Endian Binary Tensor Format specification (`[epoch, band, y, x]`).
+  - Native PSF centroid fitting for scientific proper motion measurement.
+  - Zero-auth cryptographic `observer_key` hash in database.
+  - In-memory NumPy cosine similarity for spectral matching in P0.
+  - Testable acceptance hypotheses and risk mitigation matrix.
