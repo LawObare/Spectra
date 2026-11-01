@@ -3,7 +3,7 @@
 **Document Version:** 2.5.0-PROD  
 **Target Mission:** NASA SPHEREx (Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer)  
 **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA) — SPHEREx Quick Release 3 (QR3 / DOI: 10.26131/IRSA662)  
-**System Repository:** `Panoptic-Beta` / `Spectra`
+**System Repository:** `Spectra`
 
 ---
 
