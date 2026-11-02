@@ -266,7 +266,19 @@ Spectra/
 │   │   ├── reproject.py           # reproject_exact North-Up tangent engine
 │   │   ├── wave.py                # HDU 6 smile inversion & bandpass solver
 │   │   ├── centroid.py            # Native per-exposure PSF centroid fitter
+│   │   ├── similarity.py          # Vectorized in-memory NumPy cosine similarity
 │   │   └── injector.py            # Synthetic proper-motion source injector
+│   ├── ml/                        # Real Machine Learning & Telemetry Engine
+│   │   ├── models.py              # DipoleConvNet3D, SpectralResNet102, AstroFeatureSVM
+│   │   ├── trainer.py             # PyTorch training loop (150ms epoch cadence, AdamW, CosineAnnealing)
+│   │   ├── telemetry.py           # Forward/backward instrumentation hooks, 40-bin histogram downsamplers
+│   │   ├── meshgrid.py            # 25x25x25 3D decision boundary grid evaluator
+│   │   ├── dataset.py             # PyTorch Dataset combining 30 benchmarks + citizen classifications
+│   │   ├── export.py              # HDF5 dataset exporter & PyTorch weights serialization
+│   │   └── weights/               # Pre-trained baseline weights (.pt) for instant 60 FPS demo playback
+│   │       ├── dipole_convnet_3d.pt
+│   │       ├── spectral_resnet_102.pt
+│   │       └── feature_svm.pkl
 │   ├── db/                        # Database Access Layer
 │   │   ├── schema.sql             # PostgreSQL DDL migrations
 │   │   ├── seed_benchmarks.sql    # 5 NASA benchmark target seeds
@@ -275,13 +287,21 @@ Spectra/
 ├── web-client/                    # React 18 + Vite 5 + TypeScript SPA
 │   ├── src/
 │   │   ├── components/            # UI Components & Global Command Header
-│   │   ├── tabs/                  # Public Workspaces
+│   │   ├── tabs/                  # Public Citizen Science Workspaces (/explore)
 │   │   │   ├── CelestialNav.tsx   # Tab 1: Aladin Lite v3 WebGL2 dome
 │   │   │   ├── Comparator.tsx     # Tab 2: WebGL2 Float32 difference player
 │   │   │   ├── SpectroLab.tsx     # Tab 3: 102-channel uPlot visualizer
 │   │   │   ├── IceStudio.tsx      # Tab 4: SPLICES point-source ice lab
 │   │   │   └── Discussions.tsx    # Tab 5: Real-time forum & feed
-│   │   ├── admin/                 # Hidden Mission Control Suite (/admin)
+│   │   ├── admin/                 # Hidden Mission Control & ML Observability Suite (/admin)
+│   │   │   ├── AdminLayout.tsx    # Navigation chrome & token authorization barrier
+│   │   │   ├── TrainingDynamics.tsx   # Tab 1: Scalar loss & learning curves (uPlot)
+│   │   │   ├── ActivationInspector.tsx # Tab 2: 3D ridgeline weight histograms & feature maps
+│   │   │   ├── DecisionBoundaries.tsx  # Tab 3: Dynamic 3D decision boundary animator (Plotly WebGL)
+│   │   │   ├── HardNegativeTriage.tsx  # Tab 4: Disagreement triage queue (|P_AI - P_Human|)
+│   │   │   ├── DataProductExports.tsx  # Tab 5: 1-click community data product exporter
+│   │   │   └── hooks/
+│   │   │       └── useAdminTelemetry.ts # WebSocket hook & 50-frame ring-buffer state
 │   │   ├── shaders/               # WebGL2 GLSL Shaders
 │   │   │   ├── float32_stretch.vert
 │   │   │   └── float32_stretch.frag # Asinh & signed difference math
@@ -411,6 +431,61 @@ flowchart TD
    - **Automated Compile-Time SQL Verification:** Replaces Go's `sqlc` build-time validation via `backend/tests/test_sql.py` in CI, which parses and executes `EXPLAIN` on all parameterized queries in `queries.py` against `schema.sql` before deployment.
    - **Cold Boot Optimization:** Employs lazy dynamic imports for heavy ML libraries (`torch`, `scipy`) inside `/admin` route handlers. Top-level public routes import strictly `fastapi`, `numpy`, and `astropy.io.fits`, achieving `<600 ms` cold starts.
    - **Memory Management & Fragmentation Shield:** Employs `astropy.io.fits.open(..., memmap=True)` to map bytes directly from OS cache, allocates contiguous Float32 buffers (`np.empty(..., dtype=np.float32)`), and enforces a 1.0 GB byte-capped limit on `cachetools.LRUCache`.
+
+### 4.3 Machine Learning & Observability Subsystem (`backend/ml/` & `/admin`)
+To support Phase 3 AI research and evaluators testing model training dynamics, the platform includes a complete, real PyTorch machine learning subsystem and a dedicated 5-tab administrative mission control portal.
+
+```
++----------------------------------------------------------------------------------------------------+
+|                                    MISSION CONTROL PORTAL (/admin)                                 |
+|  [Header: Admin Status: Read-Only Default | ADMIN_MUTATIONS_ENABLED: False | Token Gate: Locked]   |
++----------------------------------------------------------------------------------------------------+
+|  [Tab 1: Dynamics Studio]  [Tab 2: Activation Inspector]  [Tab 3: Boundary 3D]                     |
+|  [Tab 4: Hard Negative Triage]  [Tab 5: Data Product Exporter]                                     |
++--------------------------------------------------+-------------------------------------------------+
+| REAL-TIME TRAINING RUN VIEW (65% Width)          | ACTIVE MODEL & TELEMETRY DECK (35% Width)       |
+|                                                  |                                                 |
+| [uPlot Scalar Curves: Train/Val Loss, F1]        | Architecture: DipoleConvNet3D                   |
+| [Epoch Scrubber: 0 ... 40 (150ms / epoch)]       | Batch Size: 16 | Optimizer: AdamW (lr=1e-3)     |
+| [3D Weight & Gradient Ridgeline Histograms]      | [Start Live Training Run (Token Required)]      |
+| [Probe Target: WISE 0855 Feature Activations]    | [Replay Pre-Computed Checkpoint (Instant Demo)] |
+| [Plotly WebGL 25x25x25 3D Decision Boundary]     |                                                 |
+|                                                  | [Hard-Negative Disagreement Triage Queue]       |
+|                                                  | - ID: spx_j0855 | Human: Y-Dwarf | AI: Artifact |
+|                                                  | [Inspect Raw FITS HDUs 1-6] [Promote Candidate] |
++--------------------------------------------------+-------------------------------------------------+
+```
+
+#### 1. The Three Real Machine Learning Architectures (`backend/ml/models.py`)
+Rather than mock animations, the backend defines and trains three concrete PyTorch architectures:
+1. **`DipoleConvNet3D` (Spatiotemporal Time-Domain Classifier):**
+   - Ingests multi-epoch tangent cutouts as 5D tensors: $[B, C=1, T=\text{epochs}, H=32, W=32]$.
+   - Employs 3D convolutions (`Conv3d`) across temporal passes to simultaneously learn proper motion centroid shifts and flux variations.
+   - Classifies targets into: `moving_brown_dwarf`, `variable_star`, `dipole_artifact`, `unresolved_binary`.
+2. **`SpectralResNet102` (Hyperspectral 1D Residual Classifier):**
+   - Ingests 102-channel flux vectors: $[B, C=1, L=102]$.
+   - Uses 1D residual blocks with skip connections to detect sharp molecular troughs (e.g. $3.32\,\mu\text{m}$ $\text{CH}_4$, $3.05\,\mu\text{m}$ $\text{H}_2\text{O}$ ice, $4.27\,\mu\text{m}$ $\text{CO}_2$ ice) against smooth stellar continua.
+   - Classifies cold brown dwarfs by spectral type (L, T, Y) and estimates photometric redshifts $z$.
+3. **`AstroFeatureSVM` (Calibrated RBF Decision Boundary Model):**
+   - Fast classifier trained on a 3D feature space: $[X: \text{IR Color } D_5/D_2, Y: \text{Centroid Motion SNR } \Delta S/\sigma, Z: \text{Ice Optical Depth } \tau_{3.05} + \tau_{4.27}]$.
+   - Visualized in Tab 3 via a dynamic 3D probability meshgrid.
+
+#### 2. Live Training & Instrumentation Loop (`backend/ml/trainer.py` & `telemetry.py`)
+- **Paced Human-Observable Training:** The training loop runs with a deliberate $150\,\text{ms}$ inter-epoch pause. Over 40 epochs (~6 seconds total), human evaluators can watch loss curves descend and decision boundaries warp in real time.
+- **Compact Bounded Telemetry Packets (<20 KB):** Forward and backward hooks compress training state before transmission:
+  - *Scalar Metrics:* 6 floats (`train_loss`, `val_loss`, `val_f1`, `lr`, `grad_norm`, `overfit_flag`).
+  - *Weight Histograms:* Layer weights downsampled via `np.histogram(..., bins=40)` to 160 integer counts total.
+  - *Probe Activations:* Feature map activations for pinned benchmark WISE 0855 downsampled to $16 \times 16$ Float16 arrays.
+  - *3D Decision Meshgrid:* Class probabilities evaluated across a $25 \times 25 \times 25$ feature grid, quantized to `Uint8` ($0-255$).
+- **Ring-Buffer Replay:** The WebSocket hub (`/api/admin/ws/training`) caches the last 100 epoch frames. When an admin connects or refreshes mid-run, recent epochs are instantly replayed.
+- **Pre-Computed Checkpoints (`backend/ml/weights/`):** Shipped with pre-trained weights (`dipole_convnet_3d.pt`, `spectral_resnet_102.pt`) for immediate 60 FPS demo playback without requiring live GPU/CPU retraining.
+
+#### 3. Administrative Workspaces Breakdown (`web-client/src/admin/`)
+- **Tab 1: Training Dynamics Studio (`TrainingDynamics.tsx`):** Real-time scalar curves for loss, accuracy, and gradient norms rendered via `uPlot`.
+- **Tab 2: Parameter Updates & Activation Inspector (`ActivationInspector.tsx`):** 3D ridgeline weight histograms and probe feature maps.
+- **Tab 3: Decision Boundary Animator (`DecisionBoundaries.tsx`):** Interactive 3D probability isosurfaces rendered via `plotly.js-gl3d-dist` (lazy-loaded to keep bundle $<500\,\text{KB}$).
+- **Tab 4: Disagreement Triage & Hard-Negative Queue (`HardNegativeTriage.tsx`):** Inspects targets where citizen consensus contradicts AI predictions ($|P_{\text{AI}} - P_{\text{Human}}| > 0.5$).
+- **Tab 5: Data Product Exporters (`DataProductExports.tsx`):** 1-click generation of the 4 official SPHEREx community catalogs (CSV, VOTable, JSON, FITS) and PyTorch HDF5 training bundles.
 
 ---
 
