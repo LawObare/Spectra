@@ -2496,3 +2496,60 @@ To ensure that **any** agent working in the repository—whether running via Ant
   - Zero-auth cryptographic `observer_key` hash in database.
   - In-memory NumPy cosine similarity for spectral matching in P0.
   - Testable acceptance hypotheses and risk mitigation matrix.
+
+
+---
+
+## ★ EXPERT REVIEW RESOLUTION & SPECIFICATION HARDENING (Exchange #36)
+> **Context:** The user requested an honest evaluation of an expert review of `v3.0.0-PROD` and instructed: *"yes"* to implement all suggested corrections and restore essential dependencies while preserving the full narrative personality.
+
+### 1. The 14 Reviewer Corrections & Enhancements Implemented
+1. **Payload Arithmetic Corrected (14 B/px):**
+   - Corrected formula: $14\,\text{bytes/pixel}$ ($4\,\text{B flux} + 4\,\text{B variance} + 4\,\text{B flags} + 2\,\text{B n\_exp}$).
+   - Recomputed payloads for 3 epochs $\times$ 6 bands ($252\,\text{bytes/pixel}$):
+     - $180''$ ($29 \times 29\,\text{px}$): $\mathbf{0.21\,\text{MB}}$
+     - $300''$ ($48 \times 48\,\text{px}$): $\mathbf{0.58\,\text{MB}}$
+     - $600''$ ($97 \times 97\,\text{px}$): $\mathbf{2.37\,\text{MB}}$
+   - High-bandwidth transfer warning banner threshold moved from $300''$ to $600''$.
+2. **Data-Honesty Tags `[?]` & Catalogue Epoch Warning Restored:**
+   - Tagged HDU 2 `FLAGS` table as `[?]` and clarified 32-bit `uint32` containing 12 documented active mission mask bits (including bit 17 `PERSISTENCE` and bit 22 `GHOST`).
+   - Tagged WISE 0855 "~0.5 mJy" flux and "undetectable in D1–D3" with `[?]`.
+   - Added explicit warning: *"Confirm epoch of the catalogue position [?]; an uncorrected epoch shifts the centre by up to ~100″!"*
+3. **Continuous Integration (CI) Coordinate Grounding Check:**
+   - Script `benchmarks/build.py` re-pulls Gaia DR3 and SIMBAD coordinates at build time; CI fails if recomputed benchmark centers differ from the ground-truth table by $>1''$ ($0.16\,\text{pixel}$).
+4. **Task-Based Asynchronous Cutout Pipeline (§3.1):**
+   - Replaced fragile synchronous cutout calls with `POST /api/cutout` $\to$ `task_id` $\to$ `GET /api/cutout/progress/{task_id}` (SSE stream) $\to$ `GET /api/cutout/{task_id}/tensor` (binary Float32 little-endian stream).
+5. **Adaptive Wavelength Matching Algorithm:**
+   - Scales window fractional half-width $w_b$ per band based on resolving power $R_b$ ($w_b \approx 1/R_b$). If passes have sparse coverage, adaptively widens $w_b$ per target until every available epoch has $N \ge 1$ matched exposures, attaching an `[Adaptive Window]` badge if widened.
+6. **Native Per-Exposure PSF Centroiding Engine:**
+   - Avoids resampled tangent mosaics for scientific motion measurement. Executes per exposure in native detector pixel space using HDU 5 empirical PSF.
+   - Maps cutout back to parent detector coordinates $(x_{\text{parent}}, y_{\text{parent}})$ to select the correct local empirical PSF zone.
+   - Resamples oversampled PSF kernels at trial sub-pixel phase $(x - x_0, y - y_0)$.
+   - Combines centroids across exposures via inverse-covariance weighting $\vec{r}(e, b) = (\sum \mathbf{\Sigma}_i^{-1})^{-1} \sum \mathbf{\Sigma}_i^{-1} \vec{r}_i$.
+   - Difference of Gaussians (DoG) matched filter retained strictly as an interactive visual display aid.
+7. **Point-Source Photometry & Surface Brightness Conversion:**
+   - Surface brightness $I_\nu$ ($\text{MJy/sr}$) converted to flux density $F_\nu$ (Janskys):
+     $$F_\nu [\text{Jy}] = I_\nu [\text{MJy/sr}] \times 10^6 \times \Omega_{\text{px}} [\text{sr}], \quad \Omega_{\text{px}} \approx 9.023 \times 10^{-10}\,\text{sr}$$
+8. **Synthetic Source Injector Engine (`synth_a` & `synth_b`):**
+   - Ingests $(\alpha_0, \delta_0)$, $(\mu_\alpha^*, \mu_\delta)$, reference epoch $t_0$, apparent magnitude, and spectral class.
+   - Propagates spherical motion $\Delta\alpha(t_k) = \frac{\mu_\alpha^* (t_k - t_0)}{\cos \delta(t_k)}$.
+   - Injects PSF-convolved flux into HDU 1 and Poisson noise into HDU 3 with `is_synthetic = True` for active-learning calibration.
+9. **Database Schema Dependencies Restored (§5.1):**
+   - Added `heartbeat` table for container & IRSA connectivity telemetry.
+   - Updated `subjects.spectrum_array REAL[] NOT NULL` (in-memory NumPy cosine in P0; pgvector optional P3).
+   - Fixed foreign key constraints in `classifications`, `discussion_threads`, and `discussion_replies`.
+   - Added `author_handle`, `moderator_verified`, and character length limits (120 for titles, 4000 for thread bodies, 2000 for replies).
+10. **Section 5.3 Complete REST & Realtime SSE API Specification:**
+    - Documented all 12 endpoints: `/api/cutout` (task request, SSE progress, binary tensor), `/api/resolve`, `/api/spectrum`, `/api/classify`, `/api/queue/next`, `/api/forum/stream` (SSE), `/api/forum/threads`, `/api/forum/replies`, `/api/admin/export/{format}`, `/api/health`, and `/api/health/live`.
+11. **Dual-Texture WebGL2 Signed Difference Shader:**
+    - Replaced one-sided clamping with symmetric stretch mapped around mid-grey ($0.5$):
+      `display = clamp(0.5 + 0.5 * stretched_diff, 0.0, 1.0);`
+      Prevents negative dipole lobes from being clipped to black.
+12. **RW Aurigae Acceptance State Normalized:**
+    - Updated acceptance criterion to neutral: *"Centroid shift $<0.3\,\text{px}$ (stationary). Report whatever light curve and optical/NIR flux levels are measured per band with errors; do not treat an astrophysical flux variation as a pass/fail test."*
+13. **Production Deployment & Hugging Face Hardening (§10):**
+    - Pinned `uv:0.4.29` and `--no-install-project` in Dockerfile.
+    - Set valid HF Space frontmatter colors (`indigo` and `blue`).
+    - Added heavy job concurrency lock (`asyncio.Lock` returning HTTP 409 Conflict), rate limiting (60 writes/min), and 4.0 GB memory cap.
+14. **Section 12 Authoritative Scientific Sources Appended:**
+    - Added 8 official archive documentation references linking IRSA data access, PSF tutorials, AWS Open Data, and SPLICES catalog.
