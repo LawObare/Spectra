@@ -45,6 +45,18 @@ All AI agents automatically load [`AGENTS.md`](AGENTS.md) (`GEMINI.md` / `CLAUDE
    - Run `git status --short` and `git diff --stat origin/develop...HEAD` to confirm zero stray files or lockfile churn.
    - Run the [`code-review`](.agents/skills/code-review/SKILL.md) skill against `origin/develop` (Standards + Spec axes) and fix all findings.
    - Post the **5-Block Technical Handover Summary** ([`AGENTS.md` §7.3](AGENTS.md#L172-L188)) to the PR (`--base develop`) and Issue `#<N>`, squash-merge into `develop`, and close Issue `#<N>` via `gh issue close <N>`.
+5. **Strict Commit Hygiene & Message Templates ([`AGENTS.md` §8](AGENTS.md#L204-L265), [`.gitmessage`](.gitmessage), [`.githooks/commit-msg`](.githooks/commit-msg)):**
+   - Every commit is validated by `.githooks/commit-msg` and must follow:
+     ```text
+     <type>(<role>-<scope>): <imperative summary> (#<issue-id>)
+
+     Spec-Anchor: SPECIFICATION.md §<X.Y>
+     Role-Owner: E<1-6> (role:E<1-6>-<domain>)
+     Changes:
+     - <path/to/file>: <concise description of changes & exported symbols>
+     Verification: <exact pytest / ruff / npm run build output>
+     ```
+   - Never run blind `git add .` or commit single-line/WIP messages (`wip`, `fix`, `update`).
 
 ---
 
