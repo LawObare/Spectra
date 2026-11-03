@@ -29,7 +29,7 @@ The scientific problem addressed by this platform stems from a fundamental diver
 4. **Resolution of the Single-Screen vs. Tabbed Dilemma:** Multi-pane dashboards displaying 102-channel spectra, 3D globes, and blinking canvases simultaneously cause severe visual fatigue. The system isolates each tool into a full-screen dedicated tab while maintaining zero state loss via a global Zustand store and URL hash persistence.
 5. **Dual-Portal Route Isolation:** Active users are not exposed to machine learning agent training internals. The platform is partitioned into a public exploration and community discussion portal (`/explore`) and a hidden, token-authenticated administrative mission control console (`/admin`).
 6. **Integration of Citizen Science Infrastructure:** Full integration of Talk-style discussion boards, peer-review channels, volunteer calibration sets, and official DOI-linked mission catalog exports.
-7. **Zero-Auth Institutional Quality Pivot:** Dropped blocking authentication screens for hackathon evaluation while retaining clean route separation (`/explore` vs `/admin`). Integrated implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Key`), binary Float32 tensor streaming (eliminating 8-bit PNG quantization), `uv` + `ruff`, `air`, `openapi-typescript`, `cmdk`, and pre-seeded offline benchmark data products.
+7. **Zero-Auth Institutional Quality Pivot:** Dropped blocking authentication screens for hackathon evaluation while retaining clean route separation (`/explore` vs `/admin`). Integrated implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Key`), binary Float32 tensor streaming (eliminating 8-bit PNG quantization), `uv` + `ruff`, `openapi-typescript`, `cmdk`, and pre-seeded offline benchmark data products.
 8. **The v3.0 Ground-Truth & Astrophysical Corrections:** Fixed proper motion spherical trigonometry for Epsilon Indi B (added missing $1/\cos \delta$, eliminating a 46″ pointing error), instituted wavelength-matched differencing across survey passes (eliminating spurious dipoles caused by Linear Variable Filters), replaced S3 byte-range thrashing with server-side IRSA cutouts as the primary ingestion path, dropped 408 MB `pgvector` from P0 to protect Supabase free-tier quotas, and consolidated backend operations into a lean single FastAPI service.
 
 ### 1.3 The 19 Corrective Audits (v2.5 to v3.0 Evolution Log)
@@ -216,7 +216,7 @@ flowchart TD
         AdminRoute["/admin/* -> Token-Guarded Admin Console"]
     end
     
-    subgraph StateAndChrome["Global Client State (Zustand + URL Hash)"]
+    subgraph StateAndChrome["Global Client State (Zustand + nuqs Query State)"]
         NavHeader["Global Navigation Header: Coords, 5 Benchmark Pills, FoV, Share/Embed, Cmd+K"]
         Store[(Central Telemetry Store: ra, dec, fov, matrices, spectrum, flags, synthetic_params)]
     end
@@ -225,7 +225,7 @@ flowchart TD
         Tab1["Tab 1: Celestial Navigator (Aladin Lite v3 WebGL2 3D Globe + Camera Dive)"]
         Tab2["Tab 2: Time-Domain Comparator (Canvas Blink / Diff / Super-Bands / Raw vs Rectified)"]
         Tab3["Tab 3: Spectrophotometric Lab (102-Band Plot / Photo-z / Redshift Slider / Unmixing)"]
-        Tab4["Tab 4: Molecular & Ice Studio (Tau-Norm / Column Densities / Spatial Brush / EBL Mask)"]
+        Tab4["Tab 4: Molecular & Ice Studio (Point-Source SPLICES Stars / Tau-Norm / Column Densities)"]
         Tab5["Tab 5: Observation Discussions (Talk Forum / Embedded URL Snapshots / #tags)"]
     end
 
@@ -370,10 +370,10 @@ To minimize network transfer latency over constrained mobile and venue networks 
 
 ## 4. Backend Engineering & Scientific Processing Pipeline
 
-### 4.1 Python Science Microservice (`astro-worker`)
-- **Language / Environment:** Python 3.11+, FastAPI, Uvicorn (Bound strictly to internal loopback `127.0.0.1:7860`).
+### 4.1 Scientific Processing Pipeline (`backend/science/`)
+- **Language / Environment:** Python 3.11+, FastAPI, Uvicorn (`0.0.0.0:7860`).
 - **Fast Package Management & Formatting:** `uv` (Astral) + `Ruff`.
-  - Cold environment resolution & dependency lock in $<3\,	ext{seconds}$ via `uv init && uv add astropy pyvo reproject fastapi torch scikit-learn pillow fsspec s3fs requests`.
+  - Cold environment resolution & dependency lock in $<3\,\text{seconds}$ via `uv init && uv add astropy pyvo reproject fastapi torch scikit-learn pillow fsspec s3fs requests`.
   - Exact binary hashes locked in `uv.lock`, eliminating C-extension compilation errors across different operating systems.
 - **Dependencies:** `astropy>=6.1.3`, `pyvo>=1.5.2`, `reproject>=0.14.0`, `numpy>=2.1.1`, `scipy>=1.14.1`, `torch>=2.4.0`, `scikit-learn>=1.5.0`, `pillow>=10.4.0`, `fsspec>=2024.6.1`, `s3fs>=2024.6.1`, `requests>=2.32.3`.
 
@@ -389,10 +389,20 @@ URL: https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr2&POS=circle+{ra}+{d
          |
          +--> Returns VOTable with t_min, t_max, detector_id, s_region, access_url, s3_uri
          |
-[Byte-Range MEF Ingestion via astropy.io.fits + fsspec]
-URI: s3://nasa-irsa-spherex/qr2/... (Anon=True, HTTP Range requests)
+[Server-Side MEF Cutout Ingestion (Primary) / S3 Range Reader (Fallback)]
+Primary: <access_url>?center={ra},{dec}&size={fov_deg} (IRSA Cutout Service)
+Fallback: s3://nasa-irsa-spherex/qr2/... via astropy.io.fits + fsspec
          |
-         +--> Slices bounding box [y_min:y_max, x_min:x_max] for HDUs 1, 2, 3, 4, 6
+         +--> Extracts cropped HDUs 1 (IMAGE), 2 (FLAGS), 3 (VARIANCE), plus full HDU 5 (PSF) & HDU 6 (WCS-WAVE)
+         |
+[Wavelength-Matched Frame Selection (Pre-Reprojection Filter)]
+Evaluates HDU 6 WAVE-TAB at target native detector coordinates (x_det, y_det).
+Groups exposures dynamically by survey pass boundaries (MJD) AND wavelength window [lambda_0(1-w), lambda_0(1+w)].
+Discards unmatched exposures BEFORE expensive spherical polygon reprojection.
+         |
+[Synthetic Source Injection Module (If synth_a or synth_b params provided)]
+Evaluates proper motion displacement for epoch t_k. Uses empirical PSF from HDU 5 to inject
+simulated point-source flux into native HDU 1 and propagated error into HDU 3.
          |
 [Master Synthetic WCS Header Construction]
 CRVAL1 = ra, CRVAL2 = dec
@@ -400,16 +410,11 @@ CDELT1 = -0.00172222 deg (-6.2 arcsec), CDELT2 = +0.00172222 deg (+6.2 arcsec)
 CTYPE1 = 'RA---TAN', CTYPE2 = 'DEC--TAN', CROTA2 = 0.0 (True North-Up, East-Left)
 NAXIS1 = NAXIS2 = int(fov_arcsec / 6.2)
          |
-[Dual-Engine Reprojection via reproject]
-HDU 1 (IMAGE) & HDU 3 (VARIANCE): reproject_exact (Flux-conserving spherical polygon area intersection; reproject_interp is non-conservative)
+[Dual-Engine Reprojection via reproject (Offloaded to ProcessPoolExecutor)]
+HDU 1 (IMAGE) & HDU 3 (VARIANCE): reproject_exact (Flux-conserving spherical polygon area intersection)
 HDU 2 (FLAGS): reproject_interp(order='nearest-neighbor') (Preserves integer bitmask values!)
          |
-[Synthetic Source Injection Module (If synth_a or synth_b params provided)]
-Evaluates proper motion displacement for epoch t_k. Uses empirical PSF from HDU 5 to inject
-simulated point-source flux into HDU 1 and propagated error into HDU 3.
-         |
-[Wavelength-Matched Frame Selection & Inverse-Variance Coaddition]
-Exposures grouped dynamically by survey pass boundaries (MJD) AND wavelength window [lambda_0(1-w), lambda_0(1+w)].
+[Inverse-Variance Coaddition per (Epoch, Band)]
 S(e, b) is the set of exposures in pass e, detector b whose central lambda at target pixel matches band b.
 I_coadd(x, y) = [SUM(I_k / sigma_k^2)] / [SUM(1 / sigma_k^2)] over unflagged pixels k in S(e, b).
 Difference mode strictly restricted to exposures within the same band window.
@@ -426,7 +431,7 @@ alongside JSON metadata. Eliminates Base64 encoding overhead (saving 33% bandwid
 
 ##### 2. WCS-WAVE Hyperspectral Extraction Pipeline (`GET /api/spectrum`)
 1. **Target Coordinate Resolution:** Input master pixel $(x_{\text{master}}, y_{\text{master}})$ is mapped to astronomical coordinates $(\alpha, \delta)$ via `master_wcs.pixel_to_world()`.
-2. **Detector Space Lookup:** For each individual exposure covering the coordinate, $(\alpha, \delta)$ is translated to native detector pixel $(x_{\text{det}}, y_{\text{det}})$ using that exposure's raw spatial WCS (`TAN-SIP`). When extracting from cutout sub-arrays, parent detector coordinates are restored using standard FITS sub-array offset keywords (`CRPIX1A`, `CRPIX2A`).
+2. **Detector Space Lookup:** For each individual exposure covering the coordinate, $(\alpha, \delta)$ is translated to native detector pixel $(x_{\text{det}}, y_{\text{det}})$ using that exposure's raw spatial WCS (`TAN-SIP`). When extracting from cutout sub-arrays, parent detector coordinates are restored using the FITS cutout offset keywords (`CRPIX1A`/`CRPIX2A`, `LTV1`/`LTV2`, or shifted `CRPIX1`/`CRPIX2`, verified in Spike S1).
 3. **Linear Variable Filter Smile Inversion:** Query HDU 6 (`WCS-WAVE` `WAVE-TAB`). Perform 2D bilinear interpolation across the tabular grid:
    $$\lambda_k = \mathcal{I}_{\text{WAVE}}(x_{\text{det}}, y_{\text{det}}), \quad \Delta\lambda_k = \mathcal{I}_{\text{DWAVE}}(x_{\text{det}}, y_{\text{det}})$$
 4. **PSF Point-Source Photometry & Surface Brightness to Jy Conversion:**
@@ -459,7 +464,7 @@ alongside JSON metadata. Eliminates Base64 encoding overhead (saving 33% bandwid
 ### 4.2 Unified FastAPI Mission Engine & Ledger Architecture (`backend/`)
 Spectra operates as a **single, unified FastAPI backend service** running on port `7860`, built with Python 3.11+ and orchestrated via `uv`. The architecture merges high-performance scientific image processing, database ledger operations, zero-auth session management, and real-time streaming into a single, cohesive process.
 
-- **Unified Single Process:** Runs under Uvicorn (`uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 2`), completely eliminating the legacy two-process (Go + Python) loopback architecture.
+- **Unified Single Process:** Runs under Uvicorn (`uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 1`), completely eliminating the legacy two-process (Go + Python) loopback architecture and preventing multi-worker split-brain state across in-memory task queues, SSE streams, and LRU caches.
 - **Direct Async PostgreSQL Client (`asyncpg`):** Connects directly to Supabase PostgreSQL 16 via connection pooling (`asyncpg.create_pool(min_size=2, max_size=10)`), delivering $<2\,\text{ms}$ query latency without intermediate gateway serialization.
 - **Fast Package Management & Dependency Locking:** Managed with `uv` (Astral). Environment locks in $<3\,\text{s}$ via `uv sync`, with exact wheel hashes in `uv.lock`.
 
@@ -524,7 +529,7 @@ To completely eliminate the runtime performance and type-safety trade-offs of no
      ```
    - Running in separate OS worker processes bypasses Python's Global Interpreter Lock (GIL) entirely, preventing event-loop starvation during intensive cutout reprojections.
    - **Tangent Coordinate Meshgrid Pre-Caching:** Pre-computes target world coordinates $(\alpha, \delta)$ once per master tangent grid ($w \times h$) and reuses the coordinate grid across all 6 detector bands and survey epochs, eliminating 80% of redundant spherical coordinate transformations.
-   - Uvicorn runs with `--workers 2`, utilizing both vCPUs on Hugging Face Spaces.
+   - Uvicorn runs a single async `uvloop` worker (`--workers 1`) paired with `ProcessPoolExecutor(max_workers=2)`, utilizing both vCPUs on Hugging Face Spaces for CPU-bound math while keeping `asyncio.Queue(maxsize=5)`, SSE streams, `AdminTelemetryHub`, and the 1.0 GB `LRUCache` unified in one process.
 
 2. **Automated Compile-Time SQL Verification (`backend/tests/test_sql.py`):**
    - To replace Go's `sqlc` build-time SQL compilation checks, CI (`ci.yml`) runs an automated test that loads `schema.sql` into a temporary test database and executes `EXPLAIN` against every parameterized query in `queries.py`:
@@ -550,14 +555,14 @@ To completely eliminate the runtime performance and type-safety trade-offs of no
 
 ---
 
-## 5. Complete Database Schema & Relations (Supabase PostgreSQL 16 + pgvector)
+## 5. Complete Database Schema & Relations (Supabase PostgreSQL 16)
 
 ### 5.1 DDL Schema Definition (`backend/db/schema.sql`)
 ```sql
-CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS cube;
 CREATE EXTENSION IF NOT EXISTS earthdistance;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Note: pgvector (`CREATE EXTENSION IF NOT EXISTS vector;`) is omitted in P0/P1 in favor of in-memory NumPy cosine similarity.
 
 -- 0. Heartbeat Table for Container & IRSA Connectivity Telemetry
 CREATE TABLE heartbeat (
@@ -625,7 +630,7 @@ CREATE TABLE classifications (
     primary_class TEXT NOT NULL,                       -- 'moving_brown_dwarf', 'variable_star', 'h2o_ice_cloud', etc.
     feature_tags JSONB NOT NULL DEFAULT '[]'::jsonb,   -- e.g., '["H2O_3.05um_deep", "CO2_4.27um_mod"]'
     motion_telemetry JSONB,                            -- e.g., '{"pm_arcsec_yr": 8.1, "pa_deg": 262.4, "cadence": "6m"}'
-    ice_mask_pixels JSONB,                             -- Painted pixel coordinates and integrated optical depth
+    ice_aperture_telemetry JSONB,                      -- Point-source aperture & sky annulus optical depth integration
     confidence DOUBLE PRECISION NOT NULL,              -- Continuous slider: 0.0 to 1.0
     observer_weight_snapshot DOUBLE PRECISION NOT NULL,-- Weight w_u at time of submission
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -731,7 +736,7 @@ RETURNING *;
 CREATE_CLASSIFICATION = '''
 INSERT INTO classifications (
     subject_id, observer_id, tab_workflow, primary_class,
-    feature_tags, motion_telemetry, ice_mask_pixels,
+    feature_tags, motion_telemetry, ice_aperture_telemetry,
     confidence, observer_weight_snapshot
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
@@ -972,7 +977,7 @@ flowchart LR
   - **60 FPS Scientific Canvas Rendering:** `uPlot` (<1.5ms per frame) for 102-band spectra and live WebSocket loss curves.
   - **Interactive 3D Manifolds:** `react-plotly.js` (WebGL `surface` and `isosurface`) for decision boundary morphing.
   - **Institutional UI Primitives:** Radix UI unstyled primitives + `cmdk` (Command Palette on Cmd+K / Ctrl+K) + `TanStack Virtual`.
-  - **Realtime Discussion Sync:** `@supabase/supabase-js` subscribing to PostgreSQL table changes without polling.
+  - **Realtime Discussion Sync:** Native browser `EventSource` subscribing to FastAPI Server-Sent Events (`/api/forum/stream`) with zero client database credentials.
 
 #### 6.1.1 Routing Topology & Application Code Splitting
 The root router (`react-router-dom` v6) partitions the frontend into two completely distinct chunks:
@@ -1087,10 +1092,10 @@ export interface TelemetryState {
   manualRedshiftZ: number;
   activeFeatureRulers: string[]; // ['H2O', 'CH4', 'CO2', 'CO', 'CH3OH', 'PAH']
   
-  // Spatial Brush State (Tab 4)
-  isBrushActive: boolean;
-  brushRadiusPx: number;
-  paintedMaskPixels: [number, number][];
+  // Point-Source Ice Aperture State (Tab 4 — SPLICES Background Star Workflow)
+  apertureRadiusPx: number;
+  skyAnnulusInnerPx: number;
+  skyAnnulusOuterPx: number;
   
   // Ingested Cutout Data Payload
   loadedCutout: {
@@ -1111,9 +1116,7 @@ export interface TelemetryState {
   setProbedPixel: (pixel: { x: number; y: number } | null) => void;
   setManualRedshiftZ: (z: number) => void;
   toggleFeatureRuler: (rulerKey: string) => void;
-  setBrushState: (active: boolean, radius?: number) => void;
-  addMaskPixels: (pixels: [number, number][]) => void;
-  clearMaskPixels: () => void;
+  setIceAperture: (apertureRadiusPx: number, innerPx?: number, outerPx?: number) => void;
   fetchCutout: () => Promise<void>;
   fetchSpectrum: (xPx?: number, yPx?: number) => Promise<void>;
 }
@@ -1265,35 +1268,35 @@ In Tab 2 (Time-Domain Comparator), standard 8-bit Base64 PNGs introduce severe b
    To keep initial bundle size $<500\,	ext{KB}$, the full 3.5 MB `plotly.js` library is strictly excluded. Admin 3D boundary and internal modules dynamically import `plotly.js-gl3d-dist` (<400 KB) only when Tab 3 or Tab 2 of `/admin` is mounted.
 
 #### 6.1.6 Live Discussion Synchronization via FastAPI SSE Feed
-Inside Tab 5 (Observation Discussions), the discussion feed avoids polling by subscribing directly to PostgreSQL row events:
+Inside Tab 5 (Observation Discussions), the discussion feed avoids polling and holds zero Supabase browser keys by subscribing to the FastAPI SSE endpoint (`/api/forum/stream`):
 ```typescript
 // src/hooks/useRealtimeDiscussions.ts
 import { useEffect } from 'react';
-import { supabase } from '../lib/supabaseClient';
 import { useQueryClient } from '@tanstack/react-query';
 
 export function useRealtimeDiscussions(channel: string) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    const threadSubscription = supabase
-      .channel(`public:discussion_threads:${channel}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'discussion_threads', filter: `channel=eq.${channel}` },
-        (payload) => {
-          queryClient.invalidateQueries({ queryKey: ['discussions', channel] });
-        }
-      )
-      .subscribe();
+    const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
+    const es = new EventSource(`${baseUrl}/api/forum/stream?channel=${encodeURIComponent(channel)}`);
+
+    const handleEvent = () => {
+      queryClient.invalidateQueries({ queryKey: ['discussions', channel] });
+    };
+
+    es.addEventListener('new_thread', handleEvent);
+    es.addEventListener('new_reply', handleEvent);
+    es.addEventListener('upvote_update', handleEvent);
+    es.addEventListener('moderator_verified', handleEvent);
 
     return () => {
-      supabase.removeChannel(threadSubscription);
+      es.close();
     };
   }, [channel, queryClient]);
 }
 ```
-Whenever a citizen scientist submits a candidate or an admin attaches a verification badge, it broadcasts instantly across all active browser sessions.
+Whenever a citizen scientist submits a candidate or a moderator attaches a `[Moderator]` verification badge, it broadcasts instantly across all active browser sessions.
 
 #### 6.1.4 Global Keyboard Shortcuts & Accessibility Standards
 The `useKeyboardTelemetry` hook binds global listener events to `window`:
@@ -1314,12 +1317,12 @@ Mounted persistently at the top of the viewport in `/explore` (fixed `56px` heig
 
 ```
 +-------------------------------------------------------------------------------------------------------------------------------+
-| [Spectra LOGO // QR3] | [Universal Search Bar: RA/Dec or Target Name] | [5 Benchmark Target Pills] | [Tabs] | [Share]   |
+| [Spectra LOGO // QR2] | [Universal Search Bar: RA/Dec or Target Name] | [5 Benchmark Target Pills] | [Tabs] | [Share]   |
 +-------------------------------------------------------------------------------------------------------------------------------+
 ```
 
 #### Detailed Element Specifications:
-1. **Brand Marker:** "Spectra // SPHEREx QR2 (Community Product)" with live backend connectivity status dot (Green = Go API & Python Worker connected; Amber = Running in Local Synthetic Cache mode).
+1. **Brand Marker:** "Spectra // SPHEREx QR2 (Community Product)" with live backend connectivity status dot (Green = Unified FastAPI Engine connected; Amber = Running in Local Static Benchmark Cache mode).
 2. **Universal Coordinate & Target Command Input:**
    - Input accepts decimal degrees (`133.7374, -7.2404`), sexagesimal string (`08h54m56.98s -07d14m25.4s`), or plain-text target names (`WISE 0855`, `Barnard's Star`, `NGC 2264`).
    - Integrated Sexagesimal Parser:
@@ -1593,9 +1596,9 @@ The citizen-science collaboration hub modeled on Zooniverse Talk, connecting raw
 | #variable (98)       | [Load in Workbench ->]                               | - AstroVolunteer_92 (Author)    |
 |                      |                                                      | - Stargazer_Ken                 |
 |                      |------------------------------------------------------| - Elena_Galaxy                  |
-|                      | User: ScienceTeam_DrSarah [Science Team] * 1 hr ago  | - NovaHunter                    |
+|                      | User: Moderator_DrSarah [Moderator] * 1 hr ago       | - NovaHunter                    |
 |                      | "Candidate verified. Escalated to Keck NIRSPEC queue!|                                 |
-|                      | Official candidate logged in Citizen Catalog."       | [Open FITS Header Metadata]     |
+|                      | Logged in Community Candidate Catalog."              | [Open FITS Header Metadata]     |
 +----------------------+------------------------------------------------------+---------------------------------+
 ```
 
@@ -1773,7 +1776,7 @@ Renders the step-by-step morphing of classification boundaries across input spac
   Displays the raw data extensions side-by-side (`IMAGE`, `FLAGS`, `VARIANCE`, `ZODI`, `PSF`, `WCS-WAVE`) to resolve ambiguities.
 - **One-Click Actions:**
   - `[Add to Hard-Negative Buffer]`: Pushes the misclassified subject into the training queue with higher sample weighting.
-  - `[Verify & Promote to Official Candidate Catalog]`: Updates database status to `verified_discovery` and writes an official Science Team badge and reply to the linked public discussion thread in Tab 5.
+  - `[Verify & Promote to Community Candidate Catalog]`: Updates database status to `verified_discovery` and writes a `[Moderator]` badge and reply to the linked public discussion thread in Tab 5.
 
 ---
 
@@ -1782,12 +1785,12 @@ Renders the step-by-step morphing of classification boundaries across input spac
   Plots histograms of volunteer Bayesian weights ($w_u \in [0.1, 1.0]$) and ROC curves (True Positive Rate vs. False Positive Rate on synthetic injected controls).
 - **Gold-Standard Calibration Pool Manager:**
   Upload, inspect, or adjust the baseline classification of gold-standard control subjects.
-- **Mission Data Product Exporters (The 4 Official Deliverables):**
-  1. *Citizen Candidate Catalog* (`GET /api/admin/export?product=candidates` $\r\rightarrow$ CSV, VOTable, JSON)
-  2. *Ice Feature Atlas* (`GET /api/admin/export?product=ices` $\r\rightarrow$ CSV, FITS)
-  3. *Variability Alert List* (`GET /api/admin/export?product=variability` $\r\rightarrow$ CSV, JSON)
-  4. *Artifact Atlas* (`GET /api/admin/export?product=artifacts` $\r\rightarrow$ JSON, HDF5)
-  5. *PyTorch HDF5 Training Dataset* (`GET /api/admin/export?product=ml-dataset` $\r\rightarrow$ HDF5 tensor bundle with `DataLoader` integration script).
+- **Mission Data Product Exporters (The 4 Community Deliverables):**
+  1. *Community Candidate Catalog* (`GET /api/admin/export/csv?product=candidates` $\rightarrow$ CSV, VOTable, JSON)
+  2. *Ice Feature Atlas* (`GET /api/admin/export/csv?product=ices` $\rightarrow$ CSV, FITS)
+  3. *Variability Alert List* (`GET /api/admin/export/csv?product=variability` $\rightarrow$ CSV, JSON)
+  4. *Artifact Atlas* (`GET /api/admin/export/json?product=artifacts` $\rightarrow$ JSON, HDF5)
+  5. *PyTorch HDF5 Training Dataset* (`GET /api/admin/export/fits?product=ml-dataset` $\rightarrow$ HDF5 tensor bundle with `DataLoader` integration script).
 
 ---
 
@@ -1796,30 +1799,30 @@ Renders the step-by-step morphing of classification boundaries across input spac
 To deliver real-time loss curves, weight histograms, activation maps, and meshgrid decision surfaces at 10–20 FPS without locking the Python process or freezing browser rendering, the architecture implements an asynchronous **Hook-to-WebSocket Fan-Out Pipeline**:
 
 ```
-[PyTorch Training Loop (astro-worker)]
+[PyTorch Training Loop (backend/ml/trainer.py)]
          |
          +--> PyTorch Forward Hook (Captures Probe Sample Layer Activations)
          +--> PyTorch Backward Hook (Captures Grad-CAM Gradients & Layer Histograms)
-         +--> Meshgrid Predictor (Evaluates 60x60 Feature Probability Matrix)
+         +--> Meshgrid Predictor (Evaluates 60x60 / 25x25x25 Feature Probability Matrix)
          |
          v
-[Asynchronous Non-Blocking Socket Emitter (127.0.0.1:9002)]
-Format: Compact NDJSON Frame (<24 KB per epoch)
+[Compact Epoch Telemetry Builder (backend/ml/telemetry.py)]
+Format: Compact JSON Frame (<20 KB per epoch)
          |
          v
-[Go API Gateway Telemetry Hub (goroutine)]
-Route: GET /api/admin/ws/training
+[FastAPI Administrative WebSocket Hub (backend/admin_ws.py)]
+Route: WS /api/admin/ws/training
          |
-         +--> Checks origin and WebSocket parameters (Zero-Auth Route Isolation)
+         +--> Verifies server-held ADMIN_TOKEN (when mutations/live runs enabled)
          +--> Maintains Ring Buffer of last 100 epochs (prevents state loss on tab switch)
          +--> Broadcasts frames to active admin WebSocket clients
          |
          v
-[React Admin Mission Control (useAdminTrainingSocket)]
-Renderers: Chart.js / uPlot (Loss), Three.js (Weight Ridges), Plotly WebGL (Meshgrid)
+[React Admin Mission Control (useAdminTelemetry)]
+Renderers: uPlot (Loss), Plotly WebGL (Weight Ridges & 3D Meshgrid)
 ```
 
-#### 1. Python Instrumentation Hook (`astro-worker/ml_telemetry.py`):
+#### 1. Python Instrumentation Hook (`backend/ml/telemetry.py`):
 ```python
 import torch
 import numpy as np
@@ -2005,32 +2008,18 @@ To guarantee maximum engineering velocity and eliminate the risk of a partially 
 - **Explicit Cut Order if Time Runs Short:** P3 Model Lab $\rightarrow$ Tab 4 Molecular Studio $\rightarrow$ Admin triage $\rightarrow$ Tab 5 forum polish $\rightarrow$ Tab 3 template overlays. **NEVER CUT P0.** On completion of each phase, the system reaches a 100% self-contained, testable, and demonstrable milestone before work begins on the next phase.
 
 ```mermaid
-gantt
-    title Spectra Sequential Priority-Gated Implementation Roadmap (v3.0.0-PROD)
-    dateFormat  YYYY-MM-DD
-    section Phase 1 (P0: Core NASA Challenge Foundation — 22-27 Person-Days)
-    Day-0 Spikes (S1 IRSA, S2 Benchmarks, S3 Cutout vs S3):active, p0_spike, 2026-11-01, 3d
-    Unified FastAPI Mission Engine on :7860 (uv + asyncpg):p1_1, after p0_spike, 4d
-    Local Supabase DB + Seed Benchmarks (5 Targets)       :p1_2, after p1_1, 2d
-    Tab 1: Aladin Lite v3 WebGL2 Celestial Navigator      :p1_3, after p1_2, 3d
-    Tab 2: Float32 WebGL2 Comparator + Asinh + Diff Mode  :p1_4, after p1_3, 5d
-    Milestone Gate 1 Verification (100% Core Challenge)   :milestone, m1, after p1_4, 0d
-    section Phase 2 (P1: Science Differentiator)
-    HDU 6 WCS-WAVE Hyperspectral Extractor (102 Channels) :p2_1, after m1, 3d
-    In-Memory NumPy Cosine Similarity (<20 ms)            :p2_2, after p2_1, 2d
-    Tab 3: Spectrophotometric Lab (uPlot 60 FPS)          :p2_3, after p2_2, 3d
-    Tab 5: Observation Discussions + FastAPI SSE Feed     :p2_4, after p2_3, 3d
-    Milestone Gate 2 Verification (Science Validated)     :milestone, m2, after p2_4, 0d
-    section Phase 3 (P2: Institutional Polish & Control)
-    Tab 4: Point-Source Ice Studio (SPLICES A-Values)     :p3_1, after m2, 3d
-    Admin Console Tabs 1-5 (Dynamics, 3D Meshgrids)       :p3_2, after p3_1, 4d
-    FastAPI Training WebSocket Telemetry Stream           :p3_3, after p3_2, 2d
-    Milestone Gate 3 Verification (Mission Flagship)      :milestone, m3, after p3_3, 0d
-    section Phase 4 (Production Deployment & Hardening)
-    Single-Stage uv Dockerfile on HF Spaces (:7860)       :p4_1, after m3, 1d
-    Cloudflare Pages Static CDN + Pre-Cached Fallbacks    :p4_2, after p4_1, 1d
-    cron-job.org Supabase Heartbeat Keep-Alive Loop       :p4_3, after p4_2, 1d
-    Milestone Gate 4 Verification (Production Deployed)   :milestone, m4, after p4_3, 0d
+flowchart TD
+    Spike["Day-0 Spikes (3 pd): S1 IRSA Config, S2 Benchmark Coverage, S3 Cutout vs S3"]
+    P1["Phase 1 (P0 — 22-27 pd): FastAPI :7860 + Local Supabase + Tab 1 (Aladin v3 MOC) + Tab 2 (WebGL2 Float32 Diff)"]
+    G1{{"Milestone Gate 1: 100% Core NASA Challenge Verified"}}
+    P2["Phase 2 (P1 — 13 pd): HDU 6 WCS-WAVE 102-ch Extractor + NumPy Cosine (<20 ms) + Tab 3 (uPlot) + Tab 5 (SSE Forum)"]
+    G2{{"Milestone Gate 2: Science & Community Verified"}}
+    P3["Phase 3 (P2 — 12 pd): Tab 4 (SPLICES Point-Source Ice Studio) + Admin Console Tabs 1-5 + WS Telemetry"]
+    G3{{"Milestone Gate 3: Institutional Suite Verified"}}
+    P4["Phase 4 (Deploy — 3 pd): HF Space uv Dockerfile (:7860) + Cloudflare Pages CDN + Supabase RLS + Keep-Alive"]
+    G4{{"Milestone Gate 4: Production & Offline Mirror Ready"}}
+
+    Spike --> P1 --> G1 --> P2 --> G2 --> P3 --> G3 --> P4 --> G4
 ```
 
 ---
@@ -2339,7 +2328,7 @@ CMD ["./start.sh"]
 set -euo pipefail
 
 echo "[Spectra] Launching Unified FastAPI Mission Engine on 0.0.0.0:7860"
-exec uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 2 --timeout-keep-alive 30
+exec uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 1 --timeout-keep-alive 30
 ```
 
 #### 10.4.5 Heavy Job Concurrency Lock & Rate Limiting
@@ -2397,13 +2386,11 @@ async def health_keep_alive():
 
 ### 10.5 Frontend Deployment (Cloudflare Pages)
 1. **Project settings:** Connect the GitHub repo → Framework preset *Vite* → Root directory `web-client` → Build command `npm ci && npm run build` → Output directory `dist` → env `NODE_VERSION=20`.
-2. **Environment variables (build-time, inlined by Vite):**
+2. **Environment variables (build-time, inlined by Vite — ZERO database keys in browser):**
    | Variable | Value |
    |---|---|
    | `VITE_API_BASE_URL` | `https://<hf-user>-spectra-mission-engine.hf.space` |
    | `VITE_WS_BASE_URL` | `wss://<hf-user>-spectra-mission-engine.hf.space` |
-   | `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
-   | `VITE_SUPABASE_ANON_KEY` | `<anon key>` (public by design; protected by RLS, Section 10.3) |
 3. **SPA routing:** `web-client/public/_redirects`
    ```
    /*    /index.html   200
@@ -2501,28 +2488,28 @@ Large binaries (benchmark `.f32`, `.pt` weights) over 10 MB must be tracked with
 | Live training (Dipole ConvNet + 1D-ResNet + SVM), batch 32 | 1–3 GB | Keep models small; 2 vCPU trains ~seconds/epoch on hundreds of samples. |
 | **Total headroom** | **> 8 GB free** | No OOM risk. |
 
-Guardrails: one concurrent training run (HTTP `409` if another is active); max epochs 50; worker request timeout 25 s; gateway rate-limit with `github.com/go-chi/httprate` (e.g. 60 req/min per `X-Observer-ID` or IP on write endpoints, 10 req/min on `/api/admin/retrain`).
+Guardrails: one concurrent training run (HTTP `409` if another is active); max epochs 50; worker request timeout 25 s; FastAPI in-memory token-bucket rate limiter (60 req/min per `X-Observer-ID` or IP on write endpoints, 10 req/min on `/api/admin/retrain`).
 
 ### 10.9 Zero-Auth Exposure Risks & Mitigations
 | Risk | Mitigation |
 |---|---|
-| Anyone discovering `/admin` can trigger retraining, promote candidates, or post "verified" replies. | Rate limits (10.8); single training run lock; `ADMIN_MUTATIONS_ENABLED=true` kill-switch makes `/api/admin/*` mutations return `403` without a redeploy (Space restart only); all admin mutations logged with `X-Observer-ID`. |
-| Direct table writes via the public anon key. | RLS on all tables, SELECT-only for discussion tables (10.3). |
+| Anyone discovering `/admin` can trigger retraining, promote candidates, or post "verified" replies. | Rate limits (10.8); single training run lock; `ADMIN_MUTATIONS_ENABLED=false` read-only default makes `/api/admin/*` mutations return `403` unless explicitly enabled and accompanied by server-held `ADMIN_TOKEN`; all admin mutations logged with `X-Observer-ID`. |
+| Direct table writes or reads via PostgREST. | Zero Supabase credentials in browser bundle; RLS enabled on all tables with zero `anon` policies (10.3). |
 | Spam in Tab 5. | Body length caps (title ≤ 120, body ≤ 4,000 chars), per-observer rate limit, server-side HTML escaping (Markdown rendered with sanitization on the client). |
 | DB growth past 500 MB. | Downsampled telemetry frames; nightly `DELETE` of `user_explored` subjects older than 30 days with no classifications. |
 | Keep-alive pinging policy. | Light 5-minute health checks are within normal monitoring use; if HF changes its policy, upgrade to a paid always-on CPU Space or move the same container to Fly.io / Google Cloud Run (`min-instances=1`) with no code changes (it only needs `PORT`). |
 
 ### 10.10 Deployment Runbook & Verification
-1. Create Supabase project → run schema, seeds, heartbeat table, RLS policies, Realtime publication.
-2. Create HF Space (Docker, blank, `cpu-basic`) → add secrets/variables (10.4.5) → add `HF_TOKEN` + `HF_USER` to GitHub → run `deploy-backend.yml`.
+1. Create Supabase project → run schema, seeds, heartbeat table, and lockdown RLS policies.
+2. Create HF Space (Docker, blank, `cpu-basic`) → add secrets/variables (10.4.6) → add `HF_TOKEN` + `HF_USER` to GitHub → run `deploy-backend.yml`.
 3. Wait for build → verify:
-   - `curl https://<hf-user>-spectra-mission-engine.hf.space/api/health` returns `200` with `"supabase":"updated"` and `"py_worker":"ok"`.
+   - `curl https://<hf-user>-spectra-mission-engine.hf.space/api/health` returns `200` with `"supabase":"updated"` and `"engine":"fastapi"`.
    - `SELECT last_ping FROM heartbeat;` shows the new timestamp.
 4. Create Cloudflare Pages project with env vars → deploy → open `https://spectra.pages.dev/explore`.
 5. Smoke tests:
    - The 5 benchmark pills load instantly (CDN fallback) and then refresh from the API.
    - Type an arbitrary RA/Dec → cutout plays in Tab 2 (live IRSA path).
-   - Post in Tab 5 from two browsers → the second sees it live (Realtime + RLS SELECT).
+   - Post in Tab 5 from two browsers → the second sees it live via FastAPI SSE (`/api/forum/stream`).
    - Open `/admin/dynamics` → start a training run → loss curve streams over WSS.
    - Run `curl -X POST https://<project-ref>.supabase.co/rest/v1/subjects -H "apikey: <anon>"` and confirm it is rejected (RLS works).
 6. Configure cron-job.org (5 min) and confirm `heartbeat.yml` is enabled.
