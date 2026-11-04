@@ -11,8 +11,13 @@ export interface BenchmarkPill {
   dec: number;
   preset?: 'brown_dwarf' | 'true_nir' | 'water_ice' | 'comet_outgassing' | 'custom';
   description: string;
+  category?: 'SPHEREx Verification' | 'Deep Field' | 'Galactic / Nebular' | 'Extragalactic';
 }
 
+/**
+ * Reference Calibration Targets (SPECIFICATION.md §1.1, §4.0)
+ * Exported for search resolution and calibration verification across workspaces.
+ */
 export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
   {
     id: 'barnard',
@@ -21,7 +26,8 @@ export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
     ra: 269.44639,
     dec: 4.76676,
     preset: 'true_nir',
-    description: 'M4V high proper motion (+10.39"/yr North)',
+    description: 'M4V high proper motion (+10.39"/yr North, 1.68 px/yr)',
+    category: 'SPHEREx Verification',
   },
   {
     id: 'wise0855',
@@ -30,7 +36,8 @@ export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
     ra: 133.73712,
     dec: -7.24038,
     preset: 'brown_dwarf',
-    description: 'Y4 brown dwarf (8.15"/yr West, faint <3.5um)',
+    description: 'Y4 sub-brown dwarf (8.15"/yr West, thermal peak in D5/D6)',
+    category: 'SPHEREx Verification',
   },
   {
     id: 'eps_indi_b',
@@ -39,16 +46,18 @@ export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
     ra: 331.09566,
     dec: -56.80031,
     preset: 'brown_dwarf',
-    description: 'T1+T6 unresolved binary (4.68"/yr SE, 1/cos(dec) corrected)',
+    description: 'T1+T6 binary (4.68"/yr SE, 1/cos(dec) astrometric test)',
+    category: 'SPHEREx Verification',
   },
   {
     id: 'rw_aur',
     name: 'RW Aurigae',
     label: 'RW Aurigae',
     ra: 76.95647,
-    dec: 30.40130,
+    dec: 30.4013,
     preset: 'comet_outgassing',
-    description: 'T Tauri variable flashing monopole (>1.5 mag dimming)',
+    description: 'T Tauri variable (>1.5 mag optical/NIR occultation dimming)',
+    category: 'SPHEREx Verification',
   },
   {
     id: 'r_dra',
@@ -57,18 +66,95 @@ export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
     ra: 248.16773,
     dec: 66.75504,
     preset: 'water_ice',
-    description: 'Mira AGB pulsing monopole (245d cycle, NEP deep field)',
+    description: 'Mira AGB variable (245d pulsation cycle, NEP deep field)',
+    category: 'SPHEREx Verification',
   },
 ];
 
-const FOV_PRESETS = [60, 120, 180, 300, 600];
+/**
+ * Extended Astronomical Catalog for Instant Local Name Resolution
+ * Complements CDS Sesame (SIMBAD/NED/VizieR) and backend /api/resolve.
+ */
+export const SEARCHABLE_SKY_CATALOG: BenchmarkPill[] = [
+  ...MANDATORY_BENCHMARKS,
+  {
+    id: 'nep_tdf',
+    name: 'SPHEREx / JWST NEP Deep Field',
+    label: 'NEP Deep Field',
+    ra: 260.7,
+    dec: 65.8,
+    preset: 'true_nir',
+    description: 'North Ecliptic Pole calibration zone (>50 SPHEREx passes/yr)',
+    category: 'Deep Field',
+  },
+  {
+    id: 'sep_df',
+    name: 'SPHEREx SEP Deep Field (LMC Adjacent)',
+    label: 'SEP Deep Field',
+    ra: 90.0,
+    dec: -66.5607,
+    preset: 'water_ice',
+    description: 'South Ecliptic Pole deep coverage zone (~100 deg²)',
+    category: 'Deep Field',
+  },
+  {
+    id: 'm42_orion',
+    name: 'Orion Nebula (M42 / Trapezium)',
+    label: 'M42 Orion',
+    ra: 83.82208,
+    dec: -5.39111,
+    preset: 'water_ice',
+    description: 'Massive star-forming region; strong H2O/CO2 3.0–4.27 µm ice absorption',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'trappist1',
+    name: 'TRAPPIST-1 (2MASS J23062928-0502285)',
+    label: 'TRAPPIST-1',
+    ra: 346.62233,
+    dec: -5.04144,
+    preset: 'brown_dwarf',
+    description: 'M8V ultra-cool dwarf exoplanet host (1.10"/yr proper motion)',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'm31_core',
+    name: 'Andromeda Galaxy Nucleus (M31 / NGC 224)',
+    label: 'M31 Nucleus',
+    ra: 10.68471,
+    dec: 41.26875,
+    preset: 'true_nir',
+    description: 'Local Group spiral nucleus; stellar continuum calibration',
+    category: 'Extragalactic',
+  },
+  {
+    id: 'cdfs',
+    name: 'Chandra Deep Field South (GOODS-S)',
+    label: 'CDFS / GOODS-S',
+    ra: 53.1225,
+    dec: -27.805,
+    preset: 'true_nir',
+    description: 'Extragalactic deep survey field (z = 0.5–4.0 galaxy spectrophotometry)',
+    category: 'Extragalactic',
+  },
+  {
+    id: 'vega',
+    name: 'Vega (Alpha Lyrae / CALSPEC Standard)',
+    label: 'Vega',
+    ra: 279.23473,
+    dec: 38.78369,
+    preset: 'true_nir',
+    description: 'A0V primary spectrophotometric zero-point standard',
+    category: 'Galactic / Nebular',
+  },
+];
 
 const TABS = [
-  { id: 'navigator', label: '1. Navigator' },
-  { id: 'comparator', label: '2. Comparator' },
+  { id: 'navigator', label: '1. Sky & Spectral Search' },
+  { id: 'comparator', label: '2. Time-Domain' },
   { id: 'spectral', label: '3. Spectral Lab' },
   { id: 'ice', label: '4. Ice Studio' },
-  { id: 'discussions', label: '5. Discussions', badge: 2 },
+  { id: 'discussions', label: '5. Discussions' },
 ];
 
 /**
@@ -83,7 +169,7 @@ export function parseCoordinateInput(input: string): { ra: number; dec: number }
 
   // Pattern 1: Sexagesimal (e.g. 08h54m56.91s -07d14m25.4s or 08:54:56.91 -07:14:25.4)
   const sexaRegex =
-    /^(\d{1,2})[h:]\s*(\d{1,2})[m:]\s*(\d{1,2}(?:\.\d+)?)[s]?\s*([+-]?\d{1,2})[d:]\s*(\d{1,2})[m:]\s*(\d{1,2}(?:\.\d+)?)[s]?$/i;
+    /^(\d{1,2})[h:\s]\s*(\d{1,2})[m:\s]\s*(\d{1,2}(?:\.\d+)?)[s]?\s*([+-]?\d{1,2})[d°:\s]\s*(\d{1,2})[m':\s]\s*(\d{1,2}(?:\.\d+)?)[s"]?$/i;
   const sexaMatch = trimmed.match(sexaRegex);
   if (sexaMatch) {
     const rh = parseFloat(sexaMatch[1]);
@@ -97,7 +183,9 @@ export function parseCoordinateInput(input: string): { ra: number; dec: number }
     const ds = parseFloat(sexaMatch[6]);
     const decDeg = decSign * (dd + dm / 60 + ds / 3600);
 
-    return { ra: parseFloat(raDeg.toFixed(6)), dec: parseFloat(decDeg.toFixed(6)) };
+    if (raDeg >= 0 && raDeg <= 360 && decDeg >= -90 && decDeg <= 90) {
+      return { ra: parseFloat(raDeg.toFixed(6)), dec: parseFloat(decDeg.toFixed(6)) };
+    }
   }
 
   // Pattern 2: Decimal (e.g. 133.73712, -7.24038 or 133.73712 -7.24038)
@@ -129,18 +217,34 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
     sourceBadge,
     totalEpochs,
     setCoordinates,
-    setFov,
+    setRgbPreset,
   } = useTelemetryStore();
 
-  const { tab, setTab, setRa, setDec, setFov: setUrlFov } = useSpectraUrlState();
+  const { tab, setTab, setRa, setDec, setPreset } = useSpectraUrlState();
 
   const [searchInput, setSearchInput] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
   const [isBackendLive, setIsBackendLive] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  // Backend Health Ping (Checks /api/health/live)
+  // Close autocomplete dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsSearchFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Backend Health Ping (/api/health/live)
   useEffect(() => {
     let active = true;
     const checkHealth = async () => {
@@ -160,87 +264,143 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   }, []);
 
   // Compute 14 Bytes/Pixel Payload Gauge (SPECIFICATION.md §6.2.4)
-  // Payload (MB) = N_epochs * 6 bands * (FoV / 6.2)^2 * 14 B / 10^6
   const payloadMb = useMemo(() => {
-    const nEpochs = Math.max(1, totalEpochs || 3);
+    const nEpochs = Math.max(1, totalEpochs || 4);
     const nPixelsPerBand = Math.pow(fovArcsec / 6.2, 2);
     const totalBytes = nEpochs * 6 * nPixelsPerBand * 14;
     return totalBytes / 1e6;
   }, [fovArcsec, totalEpochs]);
 
-  // Handle Search Input Change with 350 ms Debounce
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchInput(value);
+  // Filter local catalog suggestions as user types
+  const filteredCatalog = useMemo(() => {
+    const q = searchInput.trim().toLowerCase();
+    if (!q) return SEARCHABLE_SKY_CATALOG;
+    const normQ = q.replace(/[-'\s]/g, '');
+    return SEARCHABLE_SKY_CATALOG.filter(
+      (item) =>
+        item.name.toLowerCase().replace(/[-'\s]/g, '').includes(normQ) ||
+        item.description.toLowerCase().includes(q) ||
+        `${item.ra.toFixed(4)} ${item.dec.toFixed(4)}`.includes(q)
+    );
+  }, [searchInput]);
 
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
+  const applyResolvedTarget = useCallback(
+    (
+      targetRa: number,
+      targetDec: number,
+      name: string,
+      badge: string,
+      preset?: BenchmarkPill['preset']
+    ) => {
+      setCoordinates(targetRa, targetDec, name, badge);
+      setRa(targetRa);
+      setDec(targetDec);
+      if (preset) {
+        setRgbPreset(preset);
+        setPreset(preset);
+      }
+      setSearchInput('');
+      setIsSearchFocused(false);
+    },
+    [setCoordinates, setDec, setPreset, setRa, setRgbPreset]
+  );
 
-    debounceTimerRef.current = setTimeout(async () => {
-      if (!value.trim()) return;
+  // Execute Universal Coordinate or Name Resolution (ICRS Decimal, Sexagesimal, Local Catalog, Backend /api/resolve, CDS Sesame SIMBAD/NED)
+  const executeSearchResolution = useCallback(
+    async (rawQuery: string) => {
+      const value = rawQuery.trim();
+      if (!value) return;
 
-      // 1. Try local coordinate parser first (<1 ms)
+      // 1. Direct Coordinate Parse (<1 ms)
       const parsedCoords = parseCoordinateInput(value);
       if (parsedCoords) {
-        setCoordinates(parsedCoords.ra, parsedCoords.dec, 'User Coordinate', '[User Coords]');
-        setRa(parsedCoords.ra);
-        setDec(parsedCoords.dec);
-        return;
-      }
-
-      // 2. Check local benchmark lookup map
-      const lower = value.toLowerCase().replace(/[-'\s]/g, '');
-      const matchedBenchmark = MANDATORY_BENCHMARKS.find((b) =>
-        b.name.toLowerCase().replace(/[-'\s]/g, '').includes(lower)
-      );
-      if (matchedBenchmark) {
-        setCoordinates(
-          matchedBenchmark.ra,
-          matchedBenchmark.dec,
-          matchedBenchmark.name,
-          '[NASA Benchmark (Pre-cached)]'
+        const matched = MANDATORY_BENCHMARKS.find(
+          (b) =>
+            Math.abs(b.ra - parsedCoords.ra) < 0.05 &&
+            Math.abs(b.dec - parsedCoords.dec) < 0.05
         );
-        setRa(matchedBenchmark.ra);
-        setDec(matchedBenchmark.dec);
+        applyResolvedTarget(
+          parsedCoords.ra,
+          parsedCoords.dec,
+          matched ? matched.name : `J2000 ${parsedCoords.ra.toFixed(4)}°, ${parsedCoords.dec >= 0 ? '+' : ''}${parsedCoords.dec.toFixed(4)}°`,
+          matched ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]',
+          matched?.preset
+        );
         return;
       }
 
-      // 3. Fallback to GET /api/resolve (Backend Issue #7)
+      // 2. Local Catalog Match
+      const norm = value.toLowerCase().replace(/[-'\s]/g, '');
+      const catalogHit = SEARCHABLE_SKY_CATALOG.find(
+        (item) =>
+          item.name.toLowerCase().replace(/[-'\s]/g, '').includes(norm) ||
+          item.label.toLowerCase().replace(/[-'\s]/g, '').includes(norm)
+      );
+      if (catalogHit) {
+        const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === catalogHit.id);
+        applyResolvedTarget(
+          catalogHit.ra,
+          catalogHit.dec,
+          catalogHit.name,
+          isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]',
+          catalogHit.preset
+        );
+        return;
+      }
+
+      setIsResolving(true);
       try {
-        const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ra !== undefined && data.dec !== undefined) {
-            setCoordinates(
-              data.ra,
-              data.dec,
-              data.target_name || value,
-              data.source_badge || '[Resolved Target]'
-            );
-            setRa(data.ra);
-            setDec(data.dec);
+        // 3. Try Backend /api/resolve
+        try {
+          const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (typeof data.ra === 'number' && typeof data.dec === 'number') {
+              applyResolvedTarget(
+                data.ra,
+                data.dec,
+                data.target_name || value,
+                data.source_badge || '[IRSA Live (spherex_qr2)]'
+              );
+              setIsResolving(false);
+              return;
+            }
+          }
+        } catch {
+          // Proceed to CDS Sesame resolver
+        }
+
+        // 4. Try CDS Sesame (SIMBAD / NED / VizieR) Universal Astronomical Name Resolver
+        const sesameUrl = `https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame/-oxp/SNV?${encodeURIComponent(
+          value
+        )}`;
+        const sesameRes = await fetch(sesameUrl);
+        if (sesameRes.ok) {
+          const xmlText = await sesameRes.text();
+          const jradegMatch = xmlText.match(/<jradeg>([+-]?\d+(?:\.\d+)?)<\/jradeg>/i);
+          const jdedegMatch = xmlText.match(/<jdedeg>([+-]?\d+(?:\.\d+)?)<\/jdedeg>/i);
+          const onameMatch = xmlText.match(/<oname>([^<]+)<\/oname>/i);
+          if (jradegMatch && jdedegMatch) {
+            const resolvedRa = parseFloat(jradegMatch[1]);
+            const resolvedDec = parseFloat(jdedegMatch[1]);
+            const resolvedName = onameMatch ? onameMatch[1].trim() : value;
+            if (Number.isFinite(resolvedRa) && Number.isFinite(resolvedDec)) {
+              applyResolvedTarget(
+                resolvedRa,
+                resolvedDec,
+                resolvedName,
+                '[SIMBAD / IRSA Resolved]'
+              );
+            }
           }
         }
       } catch {
-        // Backend not online or resolver failed; graceful fallback with zero crash
+        // Graceful fallback
+      } finally {
+        setIsResolving(false);
       }
-    }, 350);
-  };
-
-  const handleBenchmarkSelect = useCallback(
-    (benchmark: BenchmarkPill) => {
-      setCoordinates(
-        benchmark.ra,
-        benchmark.dec,
-        benchmark.name,
-        '[NASA Benchmark (Pre-cached)]'
-      );
-      setRa(benchmark.ra);
-      setDec(benchmark.dec);
-      setSearchInput(`${benchmark.ra.toFixed(5)}, ${benchmark.dec.toFixed(5)}`);
     },
-    [setCoordinates, setRa, setDec]
+    [applyResolvedTarget]
   );
 
   const prefetchBenchmark = useCallback((name: string) => {
@@ -274,23 +434,25 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between border-b border-[#1E2530] bg-[#0F131A] px-4 font-sans text-xs text-[#E6ECF2] select-none">
-      {/* 1. Brand & Institutional Source Attribution */}
-      <div className="flex items-center gap-3">
+    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-[#1E2530] bg-[#0F131A] px-4 font-sans text-xs text-[#E6ECF2] select-none">
+      {/* 1. Brand & Archive Status */}
+      <div className="flex items-center gap-3 shrink-0">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-tight text-[#E6ECF2]">Spectra</span>
-          <span className="text-[11px] text-[#94A3B8]">SPHEREx QR2 · Community Product</span>
+          <span className="hidden sm:inline text-[11px] text-[#94A3B8]">
+            SPHEREx Spectral Archive
+          </span>
         </div>
 
         <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
 
-        {/* Backend Engine Status */}
+        {/* Archive Connection Badge */}
         <div
           className="flex items-center gap-1.5 rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-0.5 text-[11px] text-[#94A3B8]"
           title={
             isBackendLive
-              ? 'Unified FastAPI science engine connected (port 7860)'
-              : 'Running from pre-cached benchmark tensors'
+              ? 'FastAPI science engine online (port 7860)'
+              : 'Archive local tensor & catalog engine active'
           }
         >
           <svg className="h-2 w-2 shrink-0" viewBox="0 0 8 8" aria-hidden="true">
@@ -298,196 +460,244 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
               cx="4"
               cy="4"
               r="3.5"
-              fill={isBackendLive ? '#22C55E' : '#F59E0B'}
+              fill={isBackendLive ? '#22C55E' : '#38BDF8'}
             />
           </svg>
-          <span>{isBackendLive ? 'Live API' : 'Local cache'}</span>
+          <span>{isBackendLive ? 'Live API' : 'Archive Ready'}</span>
         </div>
 
-        {/* Data Honesty Source Attribution */}
+        {/* Data Provenance Badge */}
         <div
-          className={`hidden xl:flex items-center rounded-sm border px-2 py-0.5 font-mono text-[11px] tabular-nums ${
-            sourceBadge.includes('NASA Benchmark')
-              ? 'border-[#38BDF8]/40 bg-[#151B24] text-[#E6ECF2]'
-              : sourceBadge.includes('Synthetic')
-              ? 'border-[#F59E0B]/40 bg-[#151B24] text-[#F59E0B]'
-              : 'border-[#1E2530] bg-[#151B24] text-[#94A3B8]'
-          }`}
+          className="hidden 2xl:flex items-center rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-0.5 font-mono text-[11px] tabular-nums text-[#94A3B8]"
+          title="Active dataset provenance"
         >
           {sourceBadge}
         </div>
       </div>
 
-      {/* 2. Universal Coordinate / Target Input & Calibration Targets */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex items-center">
+      {/* 2. Universal Coordinate & Object Name Resolver (SIMBAD / NED / ICRS / Catalog) */}
+      <div ref={searchContainerRef} className="relative flex-1 max-w-md">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            executeSearchResolution(searchInput);
+          }}
+          className="relative flex items-center"
+        >
           <label htmlFor="spectra-coord-search" className="sr-only">
-            Search coordinates (decimal or sexagesimal) or target name
+            Search sky coordinates (J2000 decimal or sexagesimal) or astronomical object name
           </label>
+          <svg
+            className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#94A3B8]"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+          </svg>
           <input
             id="spectra-coord-search"
             type="text"
             value={searchInput}
-            onChange={handleSearchChange}
+            onFocus={() => setIsSearchFocused(true)}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setIsSearchFocused(true);
+            }}
             placeholder={
               activeTargetName
-                ? `${activeTargetName} (${ra.toFixed(4)}°, ${dec.toFixed(4)}°)`
-                : 'RA/Dec or object name (e.g. WISE 0855)...'
+                ? `${activeTargetName} (${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°) — Search RA/Dec or object...`
+                : 'Search RA/Dec, HMS/DMS, or object name (SIMBAD/IRSA)...'
             }
-            className="w-[250px] rounded-sm border border-[#1E2530] bg-[#080A0F] py-1 pl-2.5 pr-10 font-mono text-xs tabular-nums text-[#E6ECF2] placeholder-[#94A3B8] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#38BDF8]"
+            className="w-full rounded-sm border border-[#1E2530] bg-[#080A0F] py-1.5 pl-8 pr-16 font-mono text-xs tabular-nums text-[#E6ECF2] placeholder-[#94A3B8] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#38BDF8]"
           />
-          <button
-            type="button"
-            onClick={onOpenCommandPalette}
-            className="absolute right-1.5 rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#94A3B8] transition-colors duration-150 hover:border-[#38BDF8] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-            title="Open command palette (⌘K / Ctrl+K)"
-            aria-label="Open command palette"
-          >
-            ⌘&nbsp;K
-          </button>
-        </div>
+          <div className="absolute right-1.5 flex items-center gap-1">
+            {isResolving && (
+              <span className="px-1 font-sans text-[10px] text-[#38BDF8]">Resolving…</span>
+            )}
+            <button
+              type="button"
+              onClick={onOpenCommandPalette}
+              className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#94A3B8] transition-colors duration-150 hover:border-[#38BDF8] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+              title="Open command palette (⌘K / Ctrl+K)"
+              aria-label="Open command palette"
+            >
+              ⌘&nbsp;K
+            </button>
+          </div>
+        </form>
 
-        {/* 3. Calibration Presets Dropdown (clean, non-flooded, acts as proof/test suite) */}
-        <div className="flex items-center gap-1.5">
-          <label htmlFor="benchmark-preset-select" className="sr-only">
-            Calibration Targets
-          </label>
-          <select
-            id="benchmark-preset-select"
-            value={
-              MANDATORY_BENCHMARKS.find(
-                (b) => Math.abs(ra - b.ra) < 0.005 && Math.abs(dec - b.dec) < 0.005
-              )?.id || ''
-            }
-            onChange={(e) => {
-              const selected = MANDATORY_BENCHMARKS.find((b) => b.id === e.target.value);
-              if (selected) {
-                handleBenchmarkSelect(selected);
-              }
-            }}
-            className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1 text-xs text-[#E6ECF2] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-          >
-            <option value="" disabled>
-              Calibration Presets...
-            </option>
-            {MANDATORY_BENCHMARKS.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} ({b.description})
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Search Resolver Autocomplete & Coordinate Format Helper Popover */}
+        {isSearchFocused && (
+          <div className="absolute left-0 right-0 top-9 z-50 max-h-80 overflow-y-auto rounded-sm border border-[#1E2530] bg-[#0F131A] p-1.5">
+            <div className="flex items-center justify-between border-b border-[#1E2530] px-2 py-1 text-[10px] text-[#94A3B8]">
+              <span>Enter J2000 decimal, sexagesimal (HH:MM:SS ±DD:MM:SS), or SIMBAD object name</span>
+              <span className="font-mono">↵ Enter</span>
+            </div>
+
+            {parseCoordinateInput(searchInput) && (
+              <button
+                type="button"
+                onClick={() => executeSearchResolution(searchInput)}
+                className="mt-1 flex w-full items-center justify-between rounded-sm border border-[#38BDF8]/50 bg-[#151B24] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] hover:bg-[#38BDF8]/15"
+              >
+                <span>Go to J2000 coordinates</span>
+                <span className="font-mono text-[#38BDF8]">
+                  {parseCoordinateInput(searchInput)?.ra.toFixed(5)}°,{' '}
+                  {parseCoordinateInput(searchInput)?.dec.toFixed(5)}°
+                </span>
+              </button>
+            )}
+
+            <div className="mt-1 flex flex-col gap-0.5">
+              {filteredCatalog.map((item) => {
+                const isCurrent =
+                  Math.abs(ra - item.ra) < 0.01 && Math.abs(dec - item.dec) < 0.01;
+                const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === item.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onMouseEnter={() => {
+                      if (isBench) prefetchBenchmark(item.name);
+                    }}
+                    onClick={() =>
+                      applyResolvedTarget(
+                        item.ra,
+                        item.dec,
+                        item.name,
+                        isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]',
+                        item.preset
+                      )
+                    }
+                    className={`flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left transition-colors duration-150 ${
+                      isCurrent
+                        ? 'bg-[#151B24] text-[#E6ECF2]'
+                        : 'text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-medium text-[#E6ECF2]">{item.name}</span>
+                        {item.category && (
+                          <span className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-1 py-0.2 text-[10px] text-[#94A3B8]">
+                            {item.category}
+                          </span>
+                        )}
+                      </div>
+                      <div className="truncate text-[11px] text-[#94A3B8]">
+                        {item.description}
+                      </div>
+                    </div>
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-[#38BDF8]">
+                      {item.ra.toFixed(3)}° {item.dec >= 0 ? `+${item.dec.toFixed(3)}` : item.dec.toFixed(3)}°
+                    </span>
+                  </button>
+                );
+              })}
+
+              {searchInput.trim().length > 1 && !parseCoordinateInput(searchInput) && (
+                <button
+                  type="button"
+                  onClick={() => executeSearchResolution(searchInput)}
+                  className="mt-1 flex w-full items-center justify-between rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] hover:border-[#38BDF8]"
+                >
+                  <span>
+                    Query SIMBAD / NED / IRSA resolver for &ldquo;{searchInput.trim()}&rdquo;
+                  </span>
+                  <span className="font-mono text-[11px] text-[#38BDF8]">Resolve ↵</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 4. FoV Selector & 14 B/px Payload Readout */}
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-1.5">
-          <label htmlFor="spectra-fov-select" className="text-[11px] text-[#94A3B8]">
-            Cutout FoV
-          </label>
-          <select
-            id="spectra-fov-select"
-            value={fovArcsec}
-            onChange={(e) => {
-              const val = Number(e.target.value);
-              setFov(val);
-              setUrlFov(val);
-            }}
-            className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-1.5 py-1 font-mono text-xs tabular-nums text-[#E6ECF2] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-          >
-            {FOV_PRESETS.map((f) => (
-              <option key={f} value={f}>
-                {f}&quot; ({f / 60}&apos;)
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* 14 B/px Tensor Payload Readout */}
+      {/* 3. Workspace Tab Switcher & Share */}
+      <div className="flex items-center gap-2.5 shrink-0">
+        {/* Compact Tensor Memory Readout */}
         <div
-          className={`flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums ${
+          className={`hidden xl:flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums ${
             payloadMb >= 2.0
               ? 'border-[#F59E0B] bg-[#151B24] text-[#F59E0B]'
               : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8]'
           }`}
-          title={`Uncompressed tensor: ${totalEpochs || 3} epochs × 6 bands × ${(
-            fovArcsec / 6.2
-          ).toFixed(1)}² px × 14 B/px`}
+          title={`Cutout FoV: ${fovArcsec}" · Uncompressed float32 tensor payload (${
+            totalEpochs || 4
+          } passes × 6 bands × 14 B/px)`}
         >
+          <span>{fovArcsec}&quot;</span>
+          <span className="text-[#1E2530]">|</span>
           <span>{payloadMb.toFixed(2)}&nbsp;MB</span>
-          {payloadMb >= 2.0 && <span className="font-sans text-[10px]">High payload</span>}
         </div>
-      </div>
 
-      {/* 5. 5 Workspace Tab Switcher */}
-      <nav
-        aria-label="Workspaces"
-        className="flex items-center gap-0.5 rounded-sm border border-[#1E2530] bg-[#080A0F] p-0.5"
-      >
-        {TABS.map((t) => {
-          const isActive = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              aria-current={isActive ? 'page' : undefined}
-              className={`relative rounded-sm px-2.5 py-1 text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
-                isActive
-                  ? 'border border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border border-transparent text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
-            >
-              {t.label}
-              {t.badge && (
-                <span className="ml-1.5 rounded-sm border border-[#1E2530] bg-[#0F131A] px-1 font-mono text-[10px] tabular-nums text-[#94A3B8]">
-                  {t.badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* 6. Share & Embed Exporter Dropdown */}
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setIsShareOpen(!isShareOpen)}
-          aria-expanded={isShareOpen}
-          className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+        <nav
+          aria-label="Workspaces"
+          className="flex items-center gap-0.5 rounded-sm border border-[#1E2530] bg-[#080A0F] p-0.5"
         >
-          Share
-        </button>
+          {TABS.map((t) => {
+            const isActive = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative rounded-sm px-2.5 py-1 text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
+                  isActive
+                    ? 'border border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
+                    : 'border border-transparent text-[#94A3B8] hover:text-[#E6ECF2]'
+                }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
 
-        {isShareOpen && (
-          <div className="absolute right-0 top-9 z-50 w-64 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
-            <div className="mb-2 text-xs font-medium text-[#E6ECF2]">
-              Share current view state
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                onClick={handleCopyLink}
-                className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-              >
-                Copy deep link URL
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyIframe}
-                className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-              >
-                Copy iframe embed (?embed=1)
-              </button>
-            </div>
-            {shareFeedback && (
-              <div role="status" aria-live="polite" className="mt-2 text-[11px] text-[#22C55E]">
-                {shareFeedback}
+        {/* Share & Embed Exporter Dropdown */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsShareOpen(!isShareOpen)}
+            aria-expanded={isShareOpen}
+            className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+          >
+            Share
+          </button>
+
+          {isShareOpen && (
+            <div className="absolute right-0 top-9 z-50 w-64 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
+              <div className="mb-2 text-xs font-medium text-[#E6ECF2]">
+                Share current view state
               </div>
-            )}
-          </div>
-        )}
+              <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                >
+                  Copy deep link URL
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyIframe}
+                  className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                >
+                  Copy iframe embed (?embed=1)
+                </button>
+              </div>
+              {shareFeedback && (
+                <div role="status" aria-live="polite" className="mt-2 text-[11px] text-[#22C55E]">
+                  {shareFeedback}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );
