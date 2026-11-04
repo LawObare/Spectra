@@ -197,6 +197,96 @@ export const SEARCHABLE_SKY_CATALOG: BenchmarkPill[] = [
     description: 'A0V primary spectrophotometric zero-point standard',
     category: 'Galactic / Nebular',
   },
+  {
+    id: 'sgra_star',
+    name: 'Sagittarius A* (Galactic Center)',
+    label: 'Sagittarius A*',
+    ra: 266.41682,
+    dec: -29.00782,
+    preset: 'true_nir',
+    description: 'Supermassive black hole at the dynamical center of the Milky Way',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'm1_crab',
+    name: 'Crab Nebula (M1 / NGC 1952)',
+    label: 'M1 Crab Nebula',
+    ra: 83.63308,
+    dec: 22.0145,
+    preset: 'true_nir',
+    description: 'Supernova remnant with central pulsar powering synchrotron nebula',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'm45_pleiades',
+    name: 'Pleiades (M45 / Seven Sisters)',
+    label: 'M45 Pleiades',
+    ra: 56.75,
+    dec: 24.1167,
+    preset: 'true_nir',
+    description: 'Open cluster embedded in bright reflection nebulosity',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'm104_sombrero',
+    name: 'Sombrero Galaxy (M104 / NGC 4594)',
+    label: 'M104 Sombrero',
+    ra: 189.99763,
+    dec: -11.62305,
+    preset: 'true_nir',
+    description: 'Unbarred spiral galaxy with prominent circumstellar dust lane',
+    category: 'Extragalactic',
+  },
+  {
+    id: 'm33_triangulum',
+    name: 'Triangulum Galaxy (M33 / NGC 598)',
+    label: 'M33 Triangulum',
+    ra: 23.4621,
+    dec: 30.65994,
+    preset: 'true_nir',
+    description: 'Third-largest member of the Local Group; rich in starburst HII complexes',
+    category: 'Extragalactic',
+  },
+  {
+    id: 'betelgeuse',
+    name: 'Betelgeuse (Alpha Orionis)',
+    label: 'Betelgeuse',
+    ra: 88.79294,
+    dec: 7.40706,
+    preset: 'water_ice',
+    description: 'Red supergiant pulsating variable with circumstellar molecular dust shells',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'sirius',
+    name: 'Sirius (Alpha Canis Majoris)',
+    label: 'Sirius',
+    ra: 101.28716,
+    dec: -16.71612,
+    preset: 'true_nir',
+    description: 'Brightest star in night sky; A1V + DA white dwarf binary',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'proxima',
+    name: 'Proxima Centauri (Alpha Centauri C)',
+    label: 'Proxima Centauri',
+    ra: 217.42894,
+    dec: -62.67949,
+    preset: 'brown_dwarf',
+    description: 'M5.5Ve flare star and closest known star to the Solar System (1.30 pc)',
+    category: 'Galactic / Nebular',
+  },
+  {
+    id: 'polaris',
+    name: 'Polaris (Alpha Ursae Minoris)',
+    label: 'Polaris',
+    ra: 37.95456,
+    dec: 89.26411,
+    preset: 'true_nir',
+    description: 'North celestial pole Classical Cepheid variable standard',
+    category: 'Galactic / Nebular',
+  },
 ];
 
 const TABS = [
@@ -400,9 +490,14 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
 
       setIsResolving(true);
       try {
-        // 3. Try Backend /api/resolve
+        // 3. Try Backend /api/resolve (with 1.5s timeout)
         try {
-          const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`);
+          const backendCtrl = new AbortController();
+          const backendTimer = setTimeout(() => backendCtrl.abort(), 1500);
+          const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`, {
+            signal: backendCtrl.signal,
+          });
+          clearTimeout(backendTimer);
           if (res.ok) {
             const data = await res.json();
             if (typeof data.ra === 'number' && typeof data.dec === 'number') {
@@ -420,11 +515,14 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           // Proceed to CDS Sesame resolver
         }
 
-        // 4. Try CDS Sesame (SIMBAD / NED / VizieR) Universal Astronomical Name Resolver
+        // 4. Try CDS Sesame (SIMBAD / NED / VizieR) Universal Astronomical Name Resolver (with 2.5s timeout)
+        const sesameCtrl = new AbortController();
+        const sesameTimer = setTimeout(() => sesameCtrl.abort(), 2500);
         const sesameUrl = `https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame/-oxp/SNV?${encodeURIComponent(
           value
         )}`;
-        const sesameRes = await fetch(sesameUrl);
+        const sesameRes = await fetch(sesameUrl, { signal: sesameCtrl.signal });
+        clearTimeout(sesameTimer);
         if (sesameRes.ok) {
           const xmlText = await sesameRes.text();
           const jradegMatch = xmlText.match(/<jradeg>([+-]?\d+(?:\.\d+)?)<\/jradeg>/i);
