@@ -59,7 +59,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'tab-navigator',
       category: 'Workspaces',
-      label: 'Switch to Tab 1: Celestial Navigator (3D Dome)',
+      label: 'Open Tab 1: Celestial navigator (sky survey view)',
       perform: () => {
         setTab('navigator');
         onClose();
@@ -68,7 +68,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'tab-comparator',
       category: 'Workspaces',
-      label: 'Switch to Tab 2: Time-Domain Comparator (Blinker)',
+      label: 'Open Tab 2: Time-domain comparator (multi-epoch blinker)',
       perform: () => {
         setTab('comparator');
         onClose();
@@ -77,7 +77,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'tab-spectral',
       category: 'Workspaces',
-      label: 'Switch to Tab 3: Spectrophotometric Lab (102-Band)',
+      label: 'Open Tab 3: Spectrophotometric lab (102-band)',
       perform: () => {
         setTab('spectral');
         onClose();
@@ -86,7 +86,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'tab-ice',
       category: 'Workspaces',
-      label: 'Switch to Tab 4: Molecular & Ice Studio (A-Values)',
+      label: 'Open Tab 4: Molecular and ice studio (lab A-values)',
       perform: () => {
         setTab('ice');
         onClose();
@@ -95,7 +95,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'tab-discussions',
       category: 'Workspaces',
-      label: 'Switch to Tab 5: Observation Discussions & Community Feed',
+      label: 'Open Tab 5: Observation discussions and candidate feed',
       perform: () => {
         setTab('discussions');
         onClose();
@@ -106,7 +106,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'mode-blink',
       category: 'Render Modes',
-      label: 'Switch to Blink Mode',
+      label: 'Set comparator to blink mode',
       shortcut: '1',
       perform: () => {
         setRenderMode('blink');
@@ -116,7 +116,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'mode-diff',
       category: 'Render Modes',
-      label: 'Switch to Pairwise Signed Difference Mode',
+      label: 'Set comparator to wavelength-matched difference mode',
       shortcut: '2',
       perform: () => {
         setRenderMode('difference');
@@ -126,7 +126,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'mode-coadd',
       category: 'Render Modes',
-      label: 'Switch to Inverse-Variance Co-Add Stack Mode',
+      label: 'Set comparator to inverse-variance co-add stack',
       shortcut: '3',
       perform: () => {
         setRenderMode('coadd');
@@ -138,7 +138,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'ctrl-play-pause',
       category: 'Viewer Controls',
-      label: 'Toggle Pass Playback (Play / Pause)',
+      label: 'Toggle epoch pass playback (play / pause)',
       shortcut: 'Space',
       perform: () => {
         togglePlayback();
@@ -148,7 +148,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'ctrl-invert-grayscale',
       category: 'Viewer Controls',
-      label: 'Toggle Inverted Grayscale Colormap',
+      label: 'Toggle inverted grayscale colormap',
       shortcut: 'I',
       perform: () => {
         toggleInvertGrayscale();
@@ -158,7 +158,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'ctrl-reset-view',
       category: 'Viewer Controls',
-      label: 'Reset Zoom, Pan & Crosshairs to Center',
+      label: 'Reset zoom, pan, and crosshairs to field center',
       shortcut: 'R',
       perform: () => {
         resetView();
@@ -210,18 +210,35 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-[15vh] backdrop-blur-sm select-none"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command palette"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-[#080A0F]/80 pt-[14dvh] select-none"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl overflow-hidden rounded-xl border border-[#1E2633] bg-[#090C10] shadow-2xl font-mono text-sm"
+        className="w-full max-w-xl overflow-hidden rounded-sm border border-[#1E2530] bg-[#0F131A] font-sans text-xs text-[#E6ECF2]"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         {/* Command Search Input */}
-        <div className="flex items-center border-b border-[#1E2633] px-3">
-          <span className="text-slate-400 mr-2 text-xs">🔍</span>
+        <div className="flex items-center border-b border-[#1E2530] bg-[#151B24] px-3">
+          <svg
+            className="mr-2.5 h-3.5 w-3.5 shrink-0 text-[#94A3B8]"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+          </svg>
+          <label htmlFor="spectra-cmdk-input" className="sr-only">
+            Filter targets, workspaces, and viewer commands
+          </label>
           <input
+            id="spectra-cmdk-input"
             ref={inputRef}
             type="text"
             value={query}
@@ -229,55 +246,58 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
-            placeholder="Type a target, workspace tab, or shortcut..."
-            className="w-full bg-transparent py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none"
+            placeholder="Filter targets, workspaces, or viewer actions..."
+            className="w-full bg-transparent py-2.5 text-xs text-[#E6ECF2] placeholder-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#38BDF8]"
           />
-          <kbd className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-400">
-            ESC
+          <kbd className="rounded-sm border border-[#1E2530] bg-[#0F131A] px-1.5 py-0.5 font-mono text-[10px] text-[#94A3B8]">
+            Esc
           </kbd>
         </div>
 
         {/* Action List */}
-        <div className="max-h-[360px] overflow-y-auto p-2">
+        <div className="max-h-[340px] overflow-y-auto p-1.5" role="listbox">
           {filteredActions.length === 0 ? (
-            <div className="py-6 text-center text-xs text-slate-500">
-              No matching commands or benchmarks found.
+            <div className="py-6 text-center text-xs text-[#94A3B8]">
+              No matching targets or commands. Clear the filter or enter decimal/sexagesimal coordinates in the header search bar.
             </div>
           ) : (
             filteredActions.map((action, idx) => {
               const isSelected = idx === selectedIndex;
               return (
-                <div
+                <button
                   key={action.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
                   onClick={action.perform}
                   onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`flex cursor-pointer items-center justify-between rounded px-3 py-2 text-xs transition-colors ${
+                  className={`flex w-full items-center justify-between rounded-sm px-2.5 py-2 text-left text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
                     isSelected
-                      ? 'bg-cyan-950/70 text-[#00F0FF] border border-cyan-500/30'
-                      : 'text-slate-300 hover:bg-slate-900/60'
+                      ? 'border border-[#38BDF8] bg-[#151B24] text-[#E6ECF2]'
+                      : 'border border-transparent text-[#94A3B8] hover:bg-[#151B24]/60 hover:text-[#E6ECF2]'
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-                      [{action.category}]
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-28 shrink-0 text-[11px] text-[#94A3B8]">
+                      {action.category}
                     </span>
-                    <span>{action.label}</span>
+                    <span className="text-[#E6ECF2]">{action.label}</span>
                   </div>
                   {action.shortcut && (
-                    <kbd className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                    <kbd className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-[#94A3B8]">
                       {action.shortcut}
                     </kbd>
                   )}
-                </div>
+                </button>
               );
             })
           )}
         </div>
 
         {/* Footer */}
-        <div className="border-t border-[#1E2633] px-3 py-1.5 text-[10px] text-slate-500 flex justify-between">
-          <span>↑↓ to navigate • ↵ to select • ESC to close</span>
-          <span>SPECTRA COMMAND PALETTE</span>
+        <div className="flex justify-between border-t border-[#1E2530] bg-[#080A0F] px-3 py-1.5 text-[11px] text-[#94A3B8]">
+          <span>Up/Down to select · Enter to run · Esc to close</span>
+          <span>Spectra command palette</span>
         </div>
       </div>
     </div>
