@@ -507,75 +507,77 @@ export const CelestialNavigator: React.FC = () => {
       // Dynamically tiles photographic survey plates covering the active viewport
       const octave = getZoomOctave(fovDeg);
       const { plateSizeDeg, pixscale, level } = octave;
-      const decStepDeg = plateSizeDeg * 0.95;
+      const decStepDeg = plateSizeDeg;
       const minDec = Math.max(-88.5, Math.floor((centerDec - halfFovY * 1.05) / decStepDeg) * decStepDeg);
       const maxDec = Math.min(88.5, Math.ceil((centerDec + halfFovY * 1.05) / decStepDeg) * decStepDeg);
 
       const now = Date.now();
 
-      // Only query new tiles if user is not actively dragging or panning
-      if (!dragRef.current.active) {
-        let tilesRequestedThisFrame = 0;
-        const maxTilesPerFrame = 6;
+      // Request and update visible plates in cache (both moving and stationary)
+      let tilesRequestedThisFrame = 0;
+      const maxTilesPerFrame = 8;
 
-        for (let pDec = minDec; pDec <= maxDec; pDec += decStepDeg) {
-          const cosPDec = Math.max(0.1, Math.cos((pDec * Math.PI) / 180));
-          const raStepDeg = (plateSizeDeg * 0.95) / cosPDec;
-          const minRa = Math.floor((centerRa - raSpan * 1.05) / raStepDeg) * raStepDeg;
-          const maxRa = Math.ceil((centerRa + raSpan * 1.05) / raStepDeg) * raStepDeg;
+      for (let pDec = minDec; pDec <= maxDec; pDec += decStepDeg) {
+        const cosPDec = Math.max(0.1, Math.cos((pDec * Math.PI) / 180));
+        const raStepDeg = plateSizeDeg / cosPDec;
+        const minRa = Math.floor((centerRa - raSpan * 1.05) / raStepDeg) * raStepDeg;
+        const maxRa = Math.ceil((centerRa + raSpan * 1.05) / raStepDeg) * raStepDeg;
 
-          for (let pRa = minRa; pRa <= maxRa; pRa += raStepDeg) {
-            const normRa = ((pRa % 360) + 360) % 360;
-            const plateKey = `${state.activeSurvey}_L${level}_${normRa.toFixed(3)}_${pDec.toFixed(3)}`;
-            const plate = plateCacheRef.current.get(plateKey);
+        for (let pRa = minRa; pRa <= maxRa; pRa += raStepDeg) {
+          const normRa = ((pRa % 360) + 360) % 360;
+          const plateKey = `${state.activeSurvey}_L${level}_${normRa.toFixed(3)}_${pDec.toFixed(3)}`;
+          const plate = plateCacheRef.current.get(plateKey);
 
-            if (!plate) {
-              if (tilesRequestedThisFrame < maxTilesPerFrame) {
-                tilesRequestedThisFrame++;
-                const img = new Image();
-                const newPlate: PhotographicPlate = {
-                  key: plateKey,
-                  img,
-                  loaded: false,
-                  error: false,
-                  ra: normRa,
-                  dec: pDec,
-                  sizeDeg: plateSizeDeg,
-                  pixscale,
-                  lastUsed: now,
-                };
-                plateCacheRef.current.set(plateKey, newPlate);
-                img.onload = () => {
-                  newPlate.loaded = true;
-                };
-                img.onerror = () => {
-                  newPlate.error = true;
-                };
-                img.src = getCutoutTileUrl(state.activeSurvey, normRa, pDec, pixscale, 512);
-              }
-            } else {
-              plate.lastUsed = now;
+          if (!plate) {
+            if (tilesRequestedThisFrame < maxTilesPerFrame) {
+              tilesRequestedThisFrame++;
+              const img = new Image();
+              const newPlate: PhotographicPlate = {
+                key: plateKey,
+                img,
+                loaded: false,
+                error: false,
+                ra: normRa,
+                dec: pDec,
+                sizeDeg: plateSizeDeg,
+                pixscale,
+                lastUsed: now,
+              };
+              plateCacheRef.current.set(plateKey, newPlate);
+              img.onload = () => {
+                newPlate.loaded = true;
+              };
+              img.onerror = () => {
+                newPlate.error = true;
+              };
+              img.src = getCutoutTileUrl(state.activeSurvey, normRa, pDec, pixscale, 512);
             }
+          } else {
+            plate.lastUsed = now;
           }
         }
       }
 
-      // LRU cache eviction with 150-plate ceiling and 20s retention grace period
-      if (plateCacheRef.current.size > 150) {
+      // LRU cache eviction with 200-plate ceiling and 30s retention grace period
+      if (plateCacheRef.current.size > 200) {
         const entries = Array.from(plateCacheRef.current.entries());
         entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-        for (let i = 0; i < entries.length - 120; i++) {
-          // Never evict plates touched within last 20 seconds
-          if (now - entries[i][1].lastUsed > 20000) {
+        for (let i = 0; i < entries.length - 150; i++) {
+          if (now - entries[i][1].lastUsed > 30000) {
             plateCacheRef.current.delete(entries[i][0]);
           }
         }
       }
 
-      // Render all loaded photographic plates for active survey intersecting viewport
-      // Sort plates by size descending so wider base plates render before high-res overlays
+      // Render only the active octave level plates plus immediate parent level for smooth progressive loading
+      // Filter out distant levels so lower-res tiles do not show through as blurred artifacts
       const loadedPlates = Array.from(plateCacheRef.current.values()).filter(
-        (p) => p.loaded && !p.error && (p.key.startsWith(state.activeSurvey) || state.activeSurvey === 'ls-dr10')
+        (p) =>
+          p.loaded &&
+          !p.error &&
+          (p.key.startsWith(state.activeSurvey) || state.activeSurvey === 'ls-dr10') &&
+          p.sizeDeg >= plateSizeDeg * 0.95 &&
+          p.sizeDeg <= plateSizeDeg * 3.5
       );
       loadedPlates.sort((a, b) => b.sizeDeg - a.sizeDeg);
 
