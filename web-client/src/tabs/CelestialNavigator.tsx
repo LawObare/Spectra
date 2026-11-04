@@ -513,7 +513,12 @@ export const CelestialNavigator: React.FC = () => {
             const clickedRa = Number(obj.ra);
             const clickedDec = Number(obj.dec);
             if (Number.isFinite(clickedRa) && Number.isFinite(clickedDec)) {
-              handleCameraDive(clickedRa, clickedDec, obj.data?.name, obj.data?.preset);
+              // Select target without redirecting
+              const name = obj.data?.name || `Target ${clickedRa.toFixed(4)}°, ${clickedDec.toFixed(4)}°`;
+              setCoordinates(clickedRa, clickedDec, name, obj.data?.isBenchmark ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]');
+              setRa(clickedRa);
+              setDec(clickedDec);
+              if (obj.data?.preset) setPreset(obj.data.preset);
             }
           });
         }
@@ -939,21 +944,10 @@ export const CelestialNavigator: React.FC = () => {
           />
         )}
 
-        {/* Layer 4: Center Cutout Extraction Footprint Reticle */}
-        <div
-          style={{
-            width: `${reticleSizePx}px`,
-            height: `${reticleSizePx}px`,
-          }}
-          className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center border border-[#38BDF8]/70"
-        >
-          <div className="absolute h-2.5 w-px bg-[#38BDF8] -top-1.5" />
-          <div className="absolute h-2.5 w-px bg-[#38BDF8] -bottom-1.5" />
-          <div className="absolute w-2.5 h-px bg-[#38BDF8] -left-1.5" />
-          <div className="absolute w-2.5 h-px bg-[#38BDF8] -right-1.5" />
-          <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-sm border border-[#1E2530] bg-[#0F131A] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-[#E6ECF2]">
-            {fovArcsec}&quot; cutout footprint
-          </span>
+        {/* Layer 4: Minimal Center Crosshairs (Non-intrusive 16px reticle, no fixed bounding box) */}
+        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
+          <div className="h-4 w-px bg-[#38BDF8]/60" />
+          <div className="absolute w-4 h-px bg-[#38BDF8]/60" />
         </div>
 
         {/* Hovered Source Inspection Popover */}
@@ -974,101 +968,50 @@ export const CelestialNavigator: React.FC = () => {
             aria-live="polite"
             className="pointer-events-none absolute left-1/2 top-6 z-40 -translate-x-1/2 rounded-sm border border-[#38BDF8] bg-[#0F131A] px-4 py-2 text-xs text-[#E6ECF2]"
           >
-            Extracting <span className="font-mono tabular-nums">{fovArcsec}&quot;</span> cutout at{' '}
+            Opening <span className="font-mono tabular-nums">{fovArcsec}&quot;</span> cutout at{' '}
             <span className="font-mono tabular-nums">
               {ra.toFixed(4)}°, {dec.toFixed(4)}°
             </span>{' '}
-            into comparator...
+            in comparator...
           </div>
         )}
 
-        {/* Top-Right Instrument Controls: Zoom & Calibration Targets */}
+        {/* Top-Right Clean Sky Controls (Zoom & Field reset only, no duplicate benchmark panel) */}
         <div
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
-          className="absolute right-4 top-4 z-30 flex flex-col items-end gap-2 cursor-default"
+          className="absolute right-4 top-4 z-30 flex items-center rounded-sm border border-[#1E2530] bg-[#0F131A]"
+          role="group"
+          aria-label="Sky zoom controls"
         >
-          {/* Zoom Controls */}
-          <div className="flex items-center rounded-sm border border-[#1E2530] bg-[#0F131A]" role="group" aria-label="Sky zoom controls">
-            <button
-              type="button"
-              onClick={() => handleZoomByFactor(0.65)}
-              className="px-2.5 py-1 font-mono text-xs text-[#E6ECF2] transition-colors duration-150 hover:bg-[#151B24] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-              title="Zoom in"
-              aria-label="Zoom in"
-            >
-              +
-            </button>
-            <span className="h-4 w-px bg-[#1E2530]" aria-hidden="true" />
-            <button
-              type="button"
-              onClick={() => handleZoomByFactor(1.5)}
-              className="px-2.5 py-1 font-mono text-xs text-[#E6ECF2] transition-colors duration-150 hover:bg-[#151B24] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-              title="Zoom out"
-              aria-label="Zoom out"
-            >
-              −
-            </button>
-            <span className="h-4 w-px bg-[#1E2530]" aria-hidden="true" />
-            <button
-              type="button"
-              onClick={handleResetZoom}
-              className="px-2 py-1 text-[11px] text-[#94A3B8] transition-colors duration-150 hover:bg-[#151B24] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-              title="Reset field of view to 12°"
-            >
-              Reset 12°
-            </button>
-          </div>
-
-          {/* Calibration Target Selector Panel */}
-          <div className="w-52 rounded-sm border border-[#1E2530] bg-[#0F131A] p-2">
-            <div className="mb-1.5 px-1 text-[11px] font-medium text-[#94A3B8]">
-              Calibration targets
-            </div>
-            <div className="flex flex-col gap-1">
-              {MANDATORY_BENCHMARKS.map((b) => {
-                const isSelected =
-                  Math.abs(ra - b.ra) < 0.01 && Math.abs(dec - b.dec) < 0.01;
-                return (
-                  <div key={b.id} className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onMouseEnter={() =>
-                        setHoveredBeacon({
-                          name: b.name,
-                          description: b.description,
-                          ra: b.ra,
-                          dec: b.dec,
-                          preset: b.preset,
-                        })
-                      }
-                      onMouseLeave={() => setHoveredBeacon(null)}
-                      onClick={() => {
-                        setCoordinates(b.ra, b.dec, b.name, '[NASA Benchmark (Pre-cached)]');
-                        setRa(b.ra);
-                        setDec(b.dec);
-                      }}
-                      className={`flex-1 truncate rounded-sm border px-2 py-1 text-left text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
-                        isSelected
-                          ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                          : 'border-transparent text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]'
-                      }`}
-                    >
-                      {b.name}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCameraDive(b.ra, b.dec, b.name, b.preset)}
-                      className="shrink-0 rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-1 text-[10px] text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-                      title={`Open ${b.name} cutout in time-domain comparator`}
-                    >
-                      Open
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => handleZoomByFactor(0.65)}
+            className="px-2.5 py-1 font-mono text-xs text-[#E6ECF2] transition-colors duration-150 hover:bg-[#151B24] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+            title="Zoom in"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+          <span className="h-4 w-px bg-[#1E2530]" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={() => handleZoomByFactor(1.5)}
+            className="px-2.5 py-1 font-mono text-xs text-[#E6ECF2] transition-colors duration-150 hover:bg-[#151B24] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+            title="Zoom out"
+            aria-label="Zoom out"
+          >
+            −
+          </button>
+          <span className="h-4 w-px bg-[#1E2530]" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={handleResetZoom}
+            className="px-2.5 py-1 text-xs text-[#94A3B8] transition-colors duration-150 hover:bg-[#151B24] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+            title="Reset field of view to 12°"
+          >
+            Reset 12°
+          </button>
         </div>
 
         {/* Bottom-Right Angular Scale Bar */}
