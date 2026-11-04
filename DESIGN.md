@@ -21,8 +21,8 @@ Every element in the UI must directly serve one of these five actions:
 1. **Pan & zoom across an immersed sky field (`Tab 1: Celestial Navigator`):** Scroll continuously in all directions ($0^\circ\text{–}360^\circ$ RA, $-90^\circ\text{ to }+90^\circ$ Dec) and zoom smoothly from wide-field survey context ($12^\circ\text{–}45^\circ$) down to arcminute cutout patches ($1'\text{–}10'$) without ever viewing the sky as an external 3D toy ball.
 2. **Jump to exact coordinates or calibration targets (`Global Header` / `⌘K`):** Enter decimal degrees, sexagesimal strings (`HHhMMmSS.Ss ±DDdMMmSS.Ss`), or object names, or select one of the 5 NASA benchmark targets (*Barnard's Star*, *WISE 0855-0714*, *Epsilon Indi B*, *RW Aurigae*, *R Draconis*).
 3. **Verify field observability before extraction (`Instrument Status Strip`):** Read live cursor/center J2000 coordinates, angular FoV, SPHEREx pass count, MJD window, Gaia DR3 proper-motion vectors, and uncompressed tensor payload size (`MB`).
-4. **Extract and compare multi-epoch cutouts (`Tab 2: Time-Domain Comparator`):** Open the selected sky patch in the WebGL2 Float32 blinker/differencer at the chosen FoV (`60"`–`600"`).
-5. **Inspect 102-channel spectra, ice column densities, or community consensus (`Tabs 3–5`) and share reproducible URLs.**
+4. **Extract and compare multi-epoch cutouts (`Tab 2: Time-Domain Comparator`):** Open the selected sky patch in the WebGL2 Float32 blinker/differencer (fixed baseline, pairwise step, median-subtracted), inspect the 6-band mini-SED sparkline, verify optical counterparts against Pan-STARRS PS1, and measure proper motion vectors.
+5. **Inspect 102-channel spectra, ice column densities, or community consensus with 1-click classification tags (`Tabs 3–5`) and share reproducible URLs.**
 
 ---
 
