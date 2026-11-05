@@ -45,7 +45,7 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
-type PhotographicSurveyId = 'unwise-neo7' | '2mass-color' | 'ls-dr10' | 'dss2-color';
+type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'panstarrs-color' | 'dss2-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
@@ -57,29 +57,29 @@ interface PhotographicSurveySpec {
 
 const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
-    id: 'unwise-neo7',
-    hipsId: 'CDS/P/unWISE/color-W2-W1W2-W1',
-    label: 'unWISE Infrared',
+    id: 'allwise-color',
+    hipsId: 'P/allWISE/color',
+    label: 'AllWISE Infrared',
     badge: 'NASA 3.4 & 4.6 µm (All-Sky)',
     description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of NASA WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
   },
   {
     id: '2mass-color',
-    hipsId: 'CDS/P/2MASS/color',
+    hipsId: 'P/2MASS/color',
     label: '2MASS Near-IR',
     badge: 'J/H/Ks (All-Sky)',
     description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
-    id: 'ls-dr10',
-    hipsId: 'CDS/P/DESI-Legacy-Surveys/DR10/color',
-    label: 'Legacy Survey DR10',
-    badge: 'Optical (Resolved Galaxies)',
-    description: 'DESI Legacy Imaging Surveys DR10 (g, r, z). Resolves galaxy spiral arms, stellar bulges, and star-forming regions.',
+    id: 'panstarrs-color',
+    hipsId: 'P/PanSTARRS/DR1/color-z-zg-g',
+    label: 'Pan-STARRS DR1',
+    badge: 'Deep Optical (Resolved Galaxies)',
+    description: 'Pan-STARRS DR1 high-resolution optical sky survey resolving galaxies and nebulae with extreme clarity.',
   },
   {
     id: 'dss2-color',
-    hipsId: 'CDS/P/DSS2/color',
+    hipsId: 'P/DSS2/color',
     label: 'DSS2 Optical',
     badge: 'Palomar/UKST (All-Sky)',
     description: 'Digitized Sky Survey 2 full-sphere optical photographic mosaic covering 100% of both hemispheres.',
@@ -278,7 +278,7 @@ export const CelestialNavigator: React.FC = () => {
   const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(true);
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(true);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
-  const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('unwise-neo7');
+  const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('allwise-color');
   const [selectedBandFilter, setSelectedBandFilter] = useState<string>('ALL');
   const [hoveredObsId, setHoveredObsId] = useState<string | null>(null);
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
