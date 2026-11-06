@@ -14,6 +14,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { CelestialNavigator } from './tabs/CelestialNavigator';
 import { TimeDomainComparator } from './tabs/TimeDomainComparator';
 import { ObservationDiscussions } from './tabs/ObservationDiscussions';
+import { Button, Badge, Select } from './components/ui';
 
 /**
  * Spectra Root Application Component
@@ -123,35 +124,35 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-[#080A0F] font-sans text-xs text-[#E6ECF2]">
+    <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground">
       {/* Left 70%: 102-Channel WCS-WAVE Spectrum Canvas */}
       <div className="flex flex-1 flex-col overflow-hidden p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E2530] bg-[#0F131A] px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-2.5">
           <div>
-            <h2 className="text-xs font-semibold text-[#E6ECF2]">
+            <h2 className="text-xs font-semibold text-foreground">
               102-Channel SPHEREx Spectrophotometric Extraction (HDU 6 WCS-WAVE)
             </h2>
-            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-[#94A3B8]">
-              Target: <strong className="text-[#E6ECF2]">{activeTargetName || 'Field Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · 0.75–5.00 µm
+            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+              Target: <strong className="text-foreground">{activeTargetName || 'Field Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · 0.75–5.00 µm
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-1 font-mono text-[11px] tabular-nums text-[#38BDF8]">
+            <Badge variant="sky" className="font-mono text-[11px] tabular-nums">
               Cosine Similarity S_cos = {cosineSimilarity.toFixed(4)}
-            </span>
-            <button
-              type="button"
+            </Badge>
+            <Button
+              variant="outline"
+              size="xs"
               onClick={() => setTab('navigator')}
-              className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] hover:border-[#38BDF8]"
             >
               ← Sky Search
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* SVG High-Precision Spectral Plot */}
-        <div className="relative mt-3 flex-1 rounded-sm border border-[#1E2530] bg-[#06080D] p-4">
+        <div className="relative mt-3 flex-1 rounded-sm border border-border bg-background p-4">
           <svg className="h-full w-full" viewBox="0 0 920 400" preserveAspectRatio="none">
             {/* Horizontal Flux Gridlines */}
             {[0.2, 0.4, 0.6, 0.8].map((frac) => {
@@ -275,34 +276,35 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
       </div>
 
       {/* Right 30%: Spectral Template Matcher & Redshift Controls */}
-      <aside className="flex w-[360px] shrink-0 flex-col border-l border-[#1E2530] bg-[#0F131A] p-4 gap-4 overflow-y-auto">
+      <aside className="flex w-[360px] shrink-0 flex-col border-l border-border bg-card p-4 gap-4 overflow-y-auto">
         <div>
-          <h3 className="text-xs font-semibold text-[#E6ECF2]">
+          <h3 className="text-xs font-semibold text-foreground">
             Template Cross-Correlation & Redshift
           </h3>
           <div className="mt-2">
-            <label htmlFor="spec-template-select" className="block text-[11px] text-[#94A3B8]">
+            <label htmlFor="spec-template-select" className="block text-[11px] text-muted-foreground">
               Reference Spectral Library Template
             </label>
-            <select
+            <Select
               id="spec-template-select"
+              sizeVariant="sm"
               value={selectedTemplate}
               onChange={(e) => setSelectedTemplate(e.target.value)}
-              className="mt-1 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-2.5 py-1.5 text-xs text-[#E6ECF2] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+              className="mt-1 w-full bg-background"
             >
               <option value="M4V_DWARF">IRTF SpeX: M4V–M8V Red Dwarf Continuum</option>
               <option value="T_Y_DWARF">Sonora Bobcat: T/Y Ultracool Brown Dwarf (CH4/NH3)</option>
               <option value="ICE_PROTOSTAR">SPLICES: Embedded Protostar (H2O + CO2 Ice)</option>
               <option value="AGN_QSO">Extragalactic: Rest-Frame Hα + [OIII] Emitter</option>
-            </select>
+            </Select>
           </div>
 
           <div className="mt-3">
             <div className="flex justify-between text-[11px]">
-              <label htmlFor="spec-z-slider" className="text-[#94A3B8]">
+              <label htmlFor="spec-z-slider" className="text-muted-foreground">
                 Redshift z (λ_obs = λ_rest · (1 + z))
               </label>
-              <span className="font-mono tabular-nums text-[#38BDF8]">
+              <span className="font-mono tabular-nums text-primary">
                 z = {manualRedshiftZ.toFixed(3)}
               </span>
             </div>
@@ -318,15 +320,15 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
                 setManualRedshiftZ(val);
                 setZ(val);
               }}
-              className="mt-1.5 w-full accent-[#38BDF8]"
+              className="mt-1.5 w-full accent-primary"
             />
           </div>
         </div>
 
         {/* Channel Table Sample */}
-        <div className="flex-1 overflow-y-auto rounded-sm border border-[#1E2530] bg-[#080A0F]">
+        <div className="flex-1 overflow-y-auto rounded-sm border border-border bg-background">
           <table className="w-full border-collapse text-left font-mono text-[11px] tabular-nums">
-            <thead className="sticky top-0 bg-[#151B24] text-[10px] text-[#94A3B8]">
+            <thead className="sticky top-0 bg-secondary text-[10px] text-muted-foreground">
               <tr>
                 <th className="py-1.5 pl-2.5">Ch</th>
                 <th className="py-1.5">Band</th>
@@ -334,11 +336,11 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
                 <th className="py-1.5 pr-2.5 text-right">F_ν (MJy/sr)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1E2530]/60">
+            <tbody className="divide-y divide-border/60">
               {channels.slice(0, 30).map((c) => (
-                <tr key={c.ch} className="text-[#E6ECF2]">
-                  <td className="py-1 pl-2.5 text-[#94A3B8]">{c.ch}</td>
-                  <td className="py-1 text-[#38BDF8]">{c.band}</td>
+                <tr key={c.ch} className="text-foreground">
+                  <td className="py-1 pl-2.5 text-muted-foreground">{c.ch}</td>
+                  <td className="py-1 text-primary">{c.band}</td>
                   <td className="py-1 text-right">{c.lambdaUm.toFixed(3)}</td>
                   <td className="py-1 pr-2.5 text-right">
                     {c.fluxMjy.toFixed(2)} ± {c.sigmaMjy.toFixed(2)}
@@ -409,28 +411,28 @@ const LiveMolecularIceWorkbench: React.FC = () => {
   }, [co2Depth, coDepth, h2oDepth]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-[#080A0F] font-sans text-xs text-[#E6ECF2]">
+    <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground">
       <div className="flex flex-1 flex-col p-4 overflow-y-auto gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E2530] bg-[#0F131A] px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-2.5">
           <div>
-            <h2 className="text-xs font-semibold text-[#E6ECF2]">
+            <h2 className="text-xs font-semibold text-foreground">
               SPHEREx SPLICES Molecular & Interstellar Ice Column Density Integrator
             </h2>
-            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-[#94A3B8]">
-              Sightline: <strong className="text-[#E6ECF2]">{activeTargetName || 'Point Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · τ(λ) = −ln(F_obs / F_cont)
+            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+              Sightline: <strong className="text-foreground">{activeTargetName || 'Point Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · τ(λ) = −ln(F_obs / F_cont)
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
             onClick={() => setTab('navigator')}
-            className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] hover:border-[#38BDF8]"
           >
             ← Sky Search
-          </button>
+          </Button>
         </div>
 
         {/* Optical Depth tau(lambda) Profile */}
-        <div className="h-72 rounded-sm border border-[#1E2530] bg-[#06080D] p-4">
+        <div className="h-72 rounded-sm border border-border bg-background p-4">
           <svg className="h-full w-full" viewBox="0 0 860 240" preserveAspectRatio="none">
             <line x1="50" y1="30" x2="830" y2="30" stroke="#94A3B8" strokeWidth="1" />
             <line x1="50" y1="30" x2="50" y2="210" stroke="#94A3B8" strokeWidth="1" />
@@ -474,9 +476,9 @@ const LiveMolecularIceWorkbench: React.FC = () => {
         </div>
 
         {/* Laboratory A-Value Column Density Table */}
-        <div className="rounded-sm border border-[#1E2530] bg-[#0F131A]">
+        <div className="rounded-sm border border-border bg-card">
           <table className="w-full border-collapse text-left font-mono text-xs tabular-nums">
-            <thead className="border-b border-[#1E2530] bg-[#151B24] font-sans text-[11px] text-[#94A3B8]">
+            <thead className="border-b border-border bg-secondary font-sans text-[11px] text-muted-foreground">
               <tr>
                 <th className="py-2 pl-3">Ice Species & Matrix</th>
                 <th className="py-2">Center λ</th>
@@ -487,15 +489,15 @@ const LiveMolecularIceWorkbench: React.FC = () => {
                 <th className="py-2 pr-3 text-right">Abundance (% H2O)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1E2530]">
+            <tbody className="divide-y divide-border/60">
               {iceBands.map((b) => (
-                <tr key={b.species} className="text-[#E6ECF2]">
+                <tr key={b.species} className="text-foreground">
                   <td className="py-2 pl-3 font-sans font-medium">{b.species}</td>
-                  <td className="py-2 text-[#38BDF8]">{b.lambdaCenterUm.toFixed(2)} µm</td>
-                  <td className="py-2 text-[#94A3B8]">{b.detector}</td>
-                  <td className="py-2 text-right text-[#94A3B8]">{b.aValue}</td>
+                  <td className="py-2 text-primary">{b.lambdaCenterUm.toFixed(2)} µm</td>
+                  <td className="py-2 text-muted-foreground">{b.detector}</td>
+                  <td className="py-2 text-right text-muted-foreground">{b.aValue}</td>
                   <td className="py-2 text-right">{b.tauPeak.toFixed(2)}</td>
-                  <td className="py-2 text-right text-[#22C55E]">
+                  <td className="py-2 text-right text-emerald-400">
                     {b.columnDensity.toExponential(2)}
                   </td>
                   <td className="py-2 pr-3 text-right">{b.ratioH2O.toFixed(1)}%</td>
@@ -507,15 +509,15 @@ const LiveMolecularIceWorkbench: React.FC = () => {
       </div>
 
       {/* Right Controls */}
-      <aside className="flex w-[340px] shrink-0 flex-col border-l border-[#1E2530] bg-[#0F131A] p-4 gap-4">
-        <h3 className="text-xs font-semibold text-[#E6ECF2]">
+      <aside className="flex w-[340px] shrink-0 flex-col border-l border-border bg-card p-4 gap-4">
+        <h3 className="text-xs font-semibold text-foreground">
           Continuum-Divided Optical Depth Fitters
         </h3>
 
         <div>
           <div className="flex justify-between text-[11px]">
-            <label htmlFor="ice-h2o">H2O 3.05 µm Peak Optical Depth (τ)</label>
-            <span className="font-mono text-[#38BDF8]">{h2oDepth.toFixed(2)}</span>
+            <label htmlFor="ice-h2o" className="text-muted-foreground">H2O 3.05 µm Peak Optical Depth (τ)</label>
+            <span className="font-mono text-primary">{h2oDepth.toFixed(2)}</span>
           </div>
           <input
             id="ice-h2o"
@@ -525,7 +527,7 @@ const LiveMolecularIceWorkbench: React.FC = () => {
             step={0.01}
             value={h2oDepth}
             onChange={(e) => setH2oDepth(Number(e.target.value))}
-            className="mt-1 w-full accent-[#38BDF8]"
+            className="mt-1 w-full accent-primary"
           />
         </div>
 
@@ -657,7 +659,7 @@ export const PublicExplorerPortal: React.FC = () => {
   });
 
   return (
-    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-[#080A0F] font-sans text-[#E6ECF2]">
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background font-sans text-foreground">
       {/* Fixed Global Command Header (56px) - hidden when embedded */}
       {!isEmbed && (
         <GlobalCommandHeader
@@ -693,7 +695,7 @@ export default function App() {
         <BrowserRouter>
           <Suspense
             fallback={
-              <div className="flex min-h-dvh items-center justify-center bg-[#080A0F] font-sans text-xs text-[#94A3B8]">
+              <div className="flex min-h-dvh items-center justify-center bg-background font-sans text-xs text-muted-foreground">
                 Loading Spectra workbench...
               </div>
             }
