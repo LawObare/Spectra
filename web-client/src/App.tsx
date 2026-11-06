@@ -13,6 +13,7 @@ import {
 import { CommandPalette } from './components/CommandPalette';
 import { MissionLaunchpad } from './components/MissionLaunchpad';
 import { MajorDiscovery } from './components/MajorDiscoveriesData';
+import { CandidateCatalogDrawer, CatalogTarget } from './components/CandidateCatalogDrawer';
 import { CelestialNavigator } from './tabs/CelestialNavigator';
 import { TimeDomainComparator } from './tabs/TimeDomainComparator';
 import { ObservationDiscussions } from './tabs/ObservationDiscussions';
@@ -606,6 +607,7 @@ export const PublicExplorerPortal: React.FC = () => {
   } = useSpectraUrlState();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [isMissionBriefingActive, setIsMissionBriefingActive] = useState(false);
+  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
 
   const handleLaunchWorkstationFromBriefing = (targetTab: string = 'comparator') => {
     setTab(targetTab as any);
@@ -623,6 +625,19 @@ export const PublicExplorerPortal: React.FC = () => {
     }
     setTab(discovery.launchTab);
     setIsMissionBriefingActive(false);
+  };
+
+  const handleSelectCatalogTarget = (target: CatalogTarget) => {
+    const store = useTelemetryStore.getState();
+    store.setCoordinates(target.ra, target.dec, target.name, target.status);
+    setRa(target.ra);
+    setDec(target.dec);
+    if (target.preset) {
+      store.setRgbPreset(target.preset);
+      setPreset(target.preset);
+    }
+    setTab(target.launchTab);
+    setIsCatalogOpen(false);
   };
 
   // Hydrate Zustand TelemetryStore from URL query parameters on deep-link load / URL navigation
@@ -693,6 +708,7 @@ export const PublicExplorerPortal: React.FC = () => {
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           onToggleMissionBriefing={() => setIsMissionBriefingActive((prev) => !prev)}
           isMissionBriefingActive={isMissionBriefingActive}
+          onOpenCatalog={() => setIsCatalogOpen(true)}
         />
       )}
 
@@ -700,6 +716,15 @@ export const PublicExplorerPortal: React.FC = () => {
       <CommandPalette
         isOpen={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
+      />
+
+      {/* Authoritative SPHEREx Source Catalog Drawer (Synchronized with Canvas) */}
+      <CandidateCatalogDrawer
+        isOpen={isCatalogOpen}
+        onClose={() => setIsCatalogOpen(false)}
+        onSelectTarget={handleSelectCatalogTarget}
+        activeRa={urlRa}
+        activeDec={urlDec}
       />
 
       {/* Main Content: Option A Mission Launchpad or Active Workstation */}
@@ -712,7 +737,9 @@ export const PublicExplorerPortal: React.FC = () => {
         ) : (
           <>
             {tab === 'navigator' && <CelestialNavigator />}
-            {tab === 'comparator' && <TimeDomainComparator />}
+            {tab === 'comparator' && (
+              <TimeDomainComparator onOpenCatalog={() => setIsCatalogOpen(true)} />
+            )}
             {tab === 'spectral' && <LiveSpectrophotometricWorkbench />}
             {tab === 'ice' && <LiveMolecularIceWorkbench />}
             {tab === 'discussions' && <ObservationDiscussions />}
