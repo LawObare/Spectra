@@ -665,7 +665,6 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
             )}
             title="Toggle between NASA SPHEREx Mission Launchpad and Workstation"
           >
-            <span className="text-[10px]">🚀</span>
             <span>{isMissionBriefingActive ? 'Sky Workstation' : 'Mission Briefing'}</span>
           </button>
         )}
