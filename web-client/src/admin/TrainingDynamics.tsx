@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { useAdminTelemetry, Hyperparameters } from './hooks/useAdminTelemetry';
+import { Button, Badge, Select, Input } from '../components/ui';
+import { cn } from '../lib/utils';
 
 /**
  * Tab 1: Training Dynamics & Loss Studio (/admin/dynamics)
@@ -114,7 +116,7 @@ export const TrainingDynamics: React.FC = () => {
       ctx.fillStyle = '#F59E0B';
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'right';
-      ctx.fillText('⚠️ Overfitting Region (d/dt L_val > 0)', width - padRight - 8, padTop + 14);
+      ctx.fillText('Overfitting region (d/dt L_val > 0)', width - padRight - 8, padTop + 14);
     }
 
     // Optimal early stopping line
@@ -285,119 +287,125 @@ export const TrainingDynamics: React.FC = () => {
   }, [currentMetrics.global_grad_norm]);
 
   return (
-    <div className="flex flex-col h-full bg-[#080A0F] text-[#E6ECF2] p-4 gap-4 overflow-y-auto">
+    <div className="flex flex-col h-full bg-background text-foreground p-4 gap-4 overflow-y-auto">
       {/* TOP CONTROLLER: Hyperparameter Configuration & Run Triggers */}
-      <div className="rounded border border-[#1E2530] bg-[#0F131A] p-4 shadow-md">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1E2530] pb-3 mb-3">
+      <div className="rounded-sm border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-3 mb-3">
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <h2 className="text-xs font-semibold tracking-wider uppercase text-[#38BDF8]">
-              TOP CONTROLLER: Hyperparameter Configuration & Run Triggers
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <h2 className="text-xs font-semibold tracking-wide text-foreground">
+              Hyperparameter configuration & run triggers
             </h2>
             {isDemoMode && (
-              <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono text-amber-400 border border-amber-500/20">
-                Deterministic Simulator Active
-              </span>
+              <Badge variant="amber" className="font-mono text-[10px]">
+                Deterministic simulator active
+              </Badge>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <Button
+              size="sm"
+              variant={isRunning && !isPaused ? 'secondary' : 'default'}
               onClick={isRunning ? pauseTrainingRun : (isPaused ? resumeTrainingRun : startTrainingRun)}
-              className="rounded bg-[#38BDF8] px-3 py-1.5 text-xs font-medium text-[#080A0F] hover:bg-[#0284C7] transition"
             >
-              {isRunning && !isPaused ? '⏸ PAUSE AFTER EPOCH' : isPaused ? '▶ RESUME RUN' : '🚀 START LIVE TRAINING RUN'}
-            </button>
-            <button
+              {isRunning && !isPaused ? 'Pause after epoch' : isPaused ? 'Resume run' : 'Start live training run'}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
               onClick={abortTrainingRun}
-              className="rounded border border-[#EF4444]/40 bg-[#EF4444]/10 px-3 py-1.5 text-xs font-medium text-[#EF4444] hover:bg-[#EF4444]/20 transition"
             >
-              ⏹ ABORT / ROLLBACK
-            </button>
+              Abort / rollback
+            </Button>
           </div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
           <div>
-            <label className="block text-[11px] text-[#94A3B8] mb-1">Architecture</label>
-            <select
+            <label className="block text-[11px] text-muted-foreground mb-1">Architecture</label>
+            <Select
+              sizeVariant="sm"
+              className="w-full"
               value={hyperparams.model}
               onChange={(e) => setHyperparams({ ...hyperparams, model: e.target.value as Hyperparameters['model'] })}
-              className="w-full rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] focus:border-[#38BDF8] focus:outline-none"
             >
               <option value="DipoleConvNet3D">Dipole ConvNet 3D</option>
               <option value="SpectralResNet102">Spectral 1D-ResNet</option>
               <option value="AstroFeatureSVM">AstroFeature SVM</option>
-            </select>
+            </Select>
           </div>
 
           <div>
-            <label className="block text-[11px] text-[#94A3B8] mb-1">Batch Size</label>
-            <select
+            <label className="block text-[11px] text-muted-foreground mb-1">Batch size</label>
+            <Select
+              sizeVariant="sm"
+              className="w-full"
               value={hyperparams.batchSize}
               onChange={(e) => setHyperparams({ ...hyperparams, batchSize: Number(e.target.value) })}
-              className="w-full rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] focus:border-[#38BDF8] focus:outline-none"
             >
               <option value="16">16 stamps</option>
               <option value="32">32 stamps</option>
               <option value="64">64 stamps</option>
               <option value="128">128 stamps</option>
-            </select>
+            </Select>
           </div>
 
           <div>
-            <label className="block text-[11px] text-[#94A3B8] mb-1">Learning Rate</label>
-            <select
+            <label className="block text-[11px] text-muted-foreground mb-1">Learning rate</label>
+            <Select
+              sizeVariant="sm"
+              className="w-full"
               value={hyperparams.lr}
               onChange={(e) => setHyperparams({ ...hyperparams, lr: Number(e.target.value) })}
-              className="w-full rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] focus:border-[#38BDF8] focus:outline-none"
             >
               <option value="0.001">1e-3</option>
               <option value="0.0003">3e-4</option>
               <option value="0.0001">1e-4 (Default)</option>
               <option value="0.00001">1e-5</option>
-            </select>
+            </Select>
           </div>
 
           <div>
-            <label className="block text-[11px] text-[#94A3B8] mb-1">Optimizer</label>
-            <select
+            <label className="block text-[11px] text-muted-foreground mb-1">Optimizer</label>
+            <Select
+              sizeVariant="sm"
+              className="w-full"
               value={hyperparams.optimizer}
               onChange={(e) => setHyperparams({ ...hyperparams, optimizer: e.target.value as Hyperparameters['optimizer'] })}
-              className="w-full rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] focus:border-[#38BDF8] focus:outline-none"
             >
               <option value="AdamW">AdamW (Decay 0.01)</option>
               <option value="Adam">Adam</option>
               <option value="SGD">SGD + Momentum (0.9)</option>
-            </select>
+            </Select>
           </div>
 
           <div>
-            <label className="block text-[11px] text-[#94A3B8] mb-1">Total Epochs</label>
-            <input
+            <label className="block text-[11px] text-muted-foreground mb-1">Total epochs</label>
+            <Input
               type="number"
               value={hyperparams.totalEpochs}
               disabled
-              className="w-full rounded border border-[#1E2530] bg-[#151B24]/50 px-2 py-1 text-xs text-[#94A3B8] cursor-not-allowed"
+              className="h-7 cursor-not-allowed opacity-70"
             />
           </div>
         </div>
 
         {/* Dataset Balance Slider */}
-        <div className="mt-3 pt-3 border-t border-[#1E2530] flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
-          <div className="text-[11px] text-[#94A3B8]">
-            Dataset Balance: <span className="text-[#38BDF8] font-mono">Community Labels ({hyperparams.communityWeight}%)</span> vs <span className="text-emerald-400 font-mono">Gold Anchors ({100 - hyperparams.communityWeight}%)</span>
+        <div className="mt-3 pt-3 border-t border-border flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+          <div className="text-[11px] text-muted-foreground">
+            Dataset balance: <span className="text-primary font-mono">Community labels ({hyperparams.communityWeight}%)</span> vs <span className="text-emerald-400 font-mono">Gold anchors ({100 - hyperparams.communityWeight}%)</span>
           </div>
           <div className="flex items-center gap-3 w-full md:w-1/2">
-            <span className="text-[10px] text-[#64748B]">Community (0%)</span>
+            <span className="text-[10px] text-muted-foreground">Community (0%)</span>
             <input
               type="range"
               min="0"
               max="100"
               value={hyperparams.communityWeight}
               onChange={(e) => setHyperparams({ ...hyperparams, communityWeight: Number(e.target.value) })}
-              className="flex-1 accent-[#38BDF8] cursor-pointer"
+              className="flex-1 accent-primary cursor-pointer"
             />
-            <span className="text-[10px] text-[#64748B]">Gold (100%)</span>
+            <span className="text-[10px] text-muted-foreground">Gold (100%)</span>
           </div>
         </div>
       </div>
@@ -405,42 +413,44 @@ export const TrainingDynamics: React.FC = () => {
       {/* DUAL PANEL: Left 50% Curves, Right 50% Confusion Matrix */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-[420px]">
         {/* LEFT PANEL: Live Scalar Learning Curves */}
-        <div className="flex flex-col rounded border border-[#1E2530] bg-[#0F131A] p-4 shadow-md">
-          <div className="flex items-center justify-between border-b border-[#1E2530] pb-2 mb-2">
+        <div className="flex flex-col rounded-sm border border-border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between border-b border-border pb-2 mb-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-[#38BDF8]">
-                Scalar Learning Curves
+              <span className="text-xs font-semibold text-foreground">
+                Scalar learning curves
               </span>
-              <span className="text-[11px] font-mono text-[#94A3B8]">
+              <span className="text-[11px] font-mono text-muted-foreground">
                 Epoch {activeEpoch} / {totalEpochs} ({Math.round((activeEpoch / totalEpochs) * 100)}%)
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[#64748B]">Scrub:</span>
+              <span className="text-[10px] text-muted-foreground">Scrub:</span>
               <input
                 type="range"
                 min="1"
                 max={totalEpochs}
                 value={activeEpoch}
                 onChange={(e) => scrubToEpoch(Number(e.target.value))}
-                className="w-24 accent-[#38BDF8] cursor-pointer"
+                className="w-24 accent-primary cursor-pointer"
               />
             </div>
           </div>
 
           {/* Overfitting alert badge */}
           {overfittingAnalysis.isOverfitting && (
-            <div className="mb-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-300 flex items-center justify-between">
+            <div className="mb-2 rounded-sm border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-300 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span>⚠️</span>
+                <Badge variant="amber" className="text-[10px]">Alert</Badge>
                 <span>{overfittingAnalysis.message}</span>
               </div>
-              <button
+              <Button
+                size="xs"
+                variant="outline"
                 onClick={() => scrubToEpoch(overfittingAnalysis.optimalCheckpoint)}
-                className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-200 hover:bg-amber-500/30 transition"
+                className="border-amber-500/30 text-amber-200 hover:bg-amber-500/20"
               >
-                Jump to Ep {overfittingAnalysis.optimalCheckpoint}
-              </button>
+                Jump to epoch {overfittingAnalysis.optimalCheckpoint}
+              </Button>
             </div>
           )}
 
@@ -451,27 +461,27 @@ export const TrainingDynamics: React.FC = () => {
               onMouseMove={handleCanvasMouseMove}
               onMouseLeave={handleCanvasMouseLeave}
               onClick={handleCanvasClick}
-              className="absolute inset-0 h-full w-full rounded border border-[#1E2530] cursor-crosshair"
+              className="absolute inset-0 h-full w-full rounded-sm border border-border cursor-crosshair"
             />
           </div>
 
           {/* Metric footer */}
-          <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#1E2530] pt-2 text-center text-xs">
-            <div className="rounded bg-[#151B24] p-1.5">
-              <div className="text-[10px] text-[#94A3B8]">Macro F1-Score</div>
+          <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-2 text-center text-xs">
+            <div className="rounded-sm bg-secondary/60 p-2 border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Macro F1-Score</div>
               <div className="text-sm font-mono font-bold text-emerald-400">
-                {(currentMetrics.val_f1 * 100).toFixed(1)}% <span className="text-[10px] text-emerald-300">(+3.8% gain)</span>
+                {(currentMetrics.val_f1 * 100).toFixed(1)}% <span className="text-[10px] text-emerald-300/80">(+3.8% gain)</span>
               </div>
             </div>
-            <div className="rounded bg-[#151B24] p-1.5">
-              <div className="text-[10px] text-[#94A3B8]">Train Loss</div>
-              <div className="text-sm font-mono font-bold text-[#38BDF8]">
+            <div className="rounded-sm bg-secondary/60 p-2 border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Train Loss</div>
+              <div className="text-sm font-mono font-bold text-primary">
                 {currentMetrics.train_loss.toFixed(4)}
               </div>
             </div>
-            <div className="rounded bg-[#151B24] p-1.5">
-              <div className="text-[10px] text-[#94A3B8]">Val Loss</div>
-              <div className="text-sm font-mono font-bold text-[#F59E0B]">
+            <div className="rounded-sm bg-secondary/60 p-2 border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Val Loss</div>
+              <div className="text-sm font-mono font-bold text-amber-400">
                 {currentMetrics.val_loss.toFixed(4)}
               </div>
             </div>
@@ -479,44 +489,44 @@ export const TrainingDynamics: React.FC = () => {
         </div>
 
         {/* RIGHT PANEL: Telemetry & Live 3x3 Confusion Matrix */}
-        <div className="flex flex-col rounded border border-[#1E2530] bg-[#0F131A] p-4 shadow-md">
-          <div className="flex items-center justify-between border-b border-[#1E2530] pb-2 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#38BDF8]">
-              Telemetry & Confusion Matrix (Validation Split)
+        <div className="flex flex-col rounded-sm border border-border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between border-b border-border pb-2 mb-3">
+            <span className="text-xs font-semibold text-foreground">
+              Telemetry & confusion matrix (validation split)
             </span>
-            <div className="text-[11px] font-mono text-[#94A3B8]">
-              Lr: <span className="text-[#E6ECF2]">{currentMetrics.lr.toExponential(2)}</span>
+            <div className="text-[11px] font-mono text-muted-foreground">
+              Learning rate: <span className="text-foreground">{currentMetrics.lr.toExponential(2)}</span>
             </div>
           </div>
 
           {/* Global Gradient L2 Norm Status */}
           <div className="mb-4 grid grid-cols-2 gap-3 text-xs">
-            <div className="rounded border border-[#1E2530] bg-[#151B24] p-2.5">
-              <div className="text-[11px] text-[#94A3B8]">Global Gradient L2 Norm</div>
+            <div className="rounded-sm border border-border bg-secondary/40 p-2.5">
+              <div className="text-[11px] text-muted-foreground">Global Gradient L2 Norm</div>
               <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-sm font-mono font-bold text-[#E6ECF2]">
+                <span className="text-sm font-mono font-bold text-foreground">
                   ||∇_θ L||₂ = {currentMetrics.global_grad_norm.toFixed(4)}
                 </span>
                 <span className={`text-[11px] font-medium ${gradNormStatus.color}`}>
                   [{gradNormStatus.text}]
                 </span>
               </div>
-              <p className="mt-1 text-[10px] text-[#64748B]">
+              <p className="mt-1 text-[10px] text-muted-foreground">
                 Stability bounds: [1e-5, 10.0]. Detects vanishing or exploding gradients.
               </p>
             </div>
 
-            <div className="rounded border border-[#1E2530] bg-[#151B24] p-2.5">
-              <div className="text-[11px] text-[#94A3B8]">Precision & Recall</div>
+            <div className="rounded-sm border border-border bg-secondary/40 p-2.5">
+              <div className="text-[11px] text-muted-foreground">Precision & Recall</div>
               <div className="mt-1 flex items-baseline gap-3">
                 <span className="font-mono text-xs text-emerald-400">
-                  Prec: <strong className="text-sm">{confusion.precision}%</strong>
+                  Precision: <strong className="text-sm">{confusion.precision}%</strong>
                 </span>
-                <span className="font-mono text-xs text-[#38BDF8]">
-                  Rec: <strong className="text-sm">{confusion.recall}%</strong>
+                <span className="font-mono text-xs text-primary">
+                  Recall: <strong className="text-sm">{confusion.recall}%</strong>
                 </span>
               </div>
-              <p className="mt-1 text-[10px] text-[#64748B]">
+              <p className="mt-1 text-[10px] text-muted-foreground">
                 Evaluated on gold validation holdout pool (N=369 subjects).
               </p>
             </div>
@@ -524,16 +534,16 @@ export const TrainingDynamics: React.FC = () => {
 
           {/* 3x3 Heatmap Grid */}
           <div className="flex-1 flex flex-col justify-center">
-            <h3 className="text-xs font-medium text-[#94A3B8] mb-2 text-center">
+            <h3 className="text-xs font-medium text-muted-foreground mb-2 text-center">
               Live K×K Confusion Matrix (Rows: Ground Truth, Cols: Model Prediction)
             </h3>
 
             <div className="overflow-x-auto">
               <table className="w-full text-center text-xs font-mono border-collapse">
                 <thead>
-                  <tr className="border-b border-[#1E2530] text-[#64748B]">
+                  <tr className="border-b border-border text-muted-foreground">
                     <th className="p-2 text-left font-sans text-[11px]">True \ Pred</th>
-                    <th className="p-2 text-[#38BDF8]">Pred Mover</th>
+                    <th className="p-2 text-primary">Pred Mover</th>
                     <th className="p-2 text-amber-400">Pred Var</th>
                     <th className="p-2 text-rose-400">Pred Art</th>
                   </tr>
@@ -543,8 +553,8 @@ export const TrainingDynamics: React.FC = () => {
                     const rowNames = ['True Mover', 'True Var', 'True Art'];
                     const rowTotals = row.reduce((a, b) => a + b, 0);
                     return (
-                      <tr key={rIdx} className="border-b border-[#1E2530]/50">
-                        <td className="p-2 text-left font-sans font-medium text-[#E6ECF2] bg-[#151B24]/40">
+                      <tr key={rIdx} className="border-b border-border/50">
+                        <td className="p-2 text-left font-sans font-medium text-foreground bg-secondary/30">
                           {rowNames[rIdx]}
                         </td>
                         {row.map((val, cIdx) => {
@@ -559,8 +569,8 @@ export const TrainingDynamics: React.FC = () => {
                               style={{ backgroundColor: bgStyle }}
                               className="p-3 transition-colors duration-200"
                             >
-                              <div className="font-bold text-[#E6ECF2] text-sm">{val}</div>
-                              <div className="text-[10px] text-[#94A3B8]">{(ratio * 100).toFixed(0)}%</div>
+                              <div className="font-bold text-foreground text-sm">{val}</div>
+                              <div className="text-[10px] text-muted-foreground">{(ratio * 100).toFixed(0)}%</div>
                             </td>
                           );
                         })}
@@ -573,19 +583,19 @@ export const TrainingDynamics: React.FC = () => {
           </div>
 
           {/* Footer controls */}
-          <div className="mt-3 flex items-center justify-between border-t border-[#1E2530] pt-2 text-xs text-[#94A3B8]">
-            <div>Playback Speed:</div>
+          <div className="mt-3 flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
+            <div>Playback speed:</div>
             <div className="flex items-center gap-1">
               {[200, 400, 800].map((ms) => (
-                <button
+                <Button
                   key={ms}
+                  size="xs"
+                  variant={playbackSpeedMs === ms ? 'default' : 'secondary'}
                   onClick={() => setPlaybackSpeedMs(ms)}
-                  className={`rounded px-2 py-0.5 text-[10px] font-mono ${
-                    playbackSpeedMs === ms ? 'bg-[#38BDF8] text-[#080A0F] font-bold' : 'bg-[#151B24] text-[#94A3B8]'
-                  }`}
+                  className="font-mono text-[10px]"
                 >
                   {ms}ms
-                </button>
+                </Button>
               ))}
             </div>
           </div>

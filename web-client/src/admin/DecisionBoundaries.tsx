@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { useAdminTelemetry } from './hooks/useAdminTelemetry';
+import { Button, Badge } from '../components/ui';
+import { cn } from '../lib/utils';
 
 /**
  * Tab 3: Decision Boundary Animator (/admin/boundaries)
@@ -284,64 +286,64 @@ export const DecisionBoundaries: React.FC = () => {
     const pSurface = project(0.4, -0.1, 0.4);
     ctx.fillStyle = '#38BDF8';
     ctx.font = '10px sans-serif';
-    ctx.fillText('◄ Dynamic Decision Surface P(Mover)=0.5', pSurface.px + 10, pSurface.py - 10);
+    ctx.fillText('Dynamic decision surface P(mover)=0.5', pSurface.px + 10, pSurface.py - 10);
   }, [rotX, rotY, zoom, activeEpoch, totalEpochs, currentFrame, showCommunityLabels, showHardNegatives]);
 
   return (
-    <div className="flex flex-col h-full bg-[#080A0F] text-[#E6ECF2] p-4 gap-4 overflow-y-auto">
+    <div className="flex flex-col h-full bg-background text-foreground p-4 gap-4 overflow-y-auto">
       {/* COORDINATE SPACE & TRAJECTORY CONTROLLER */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded border border-[#1E2530] bg-[#0F131A] p-3 shadow-md">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-sm border border-border bg-card p-3 shadow-sm">
         <div className="flex items-center gap-4 text-xs">
-          <span className="font-semibold uppercase tracking-wider text-[#38BDF8]">
-            COORDINATE SPACE:
+          <span className="font-semibold text-foreground">
+            Coordinate space:
           </span>
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <label className="flex items-center gap-1.5 cursor-pointer text-foreground">
             <input
               type="radio"
               name="coordSpace"
               checked={coordSpace === 'physical'}
               onChange={() => setCoordSpace('physical')}
-              className="accent-[#38BDF8]"
+              className="accent-primary"
             />
-            <span>3D Physical Astrophysical Axes</span>
+            <span>3D physical astrophysical axes</span>
           </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-[#94A3B8]">
+          <label className="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground">
             <input
               type="radio"
               name="coordSpace"
               checked={coordSpace === 'umap'}
               onChange={() => setCoordSpace('umap')}
-              className="accent-[#38BDF8]"
+              className="accent-primary"
             />
-            <span>102-Band UMAP Latent Space</span>
+            <span>102-band UMAP latent space</span>
           </label>
         </div>
 
         {/* Highlight Checkboxes */}
         <div className="flex items-center gap-4 text-xs">
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <label className="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground">
             <input
               type="checkbox"
               checked={showCommunityLabels}
               onChange={(e) => setShowCommunityLabels(e.target.checked)}
-              className="accent-[#38BDF8]"
+              className="accent-primary"
             />
-            <span>Newly Injected Community Labels</span>
+            <span>Newly injected community labels</span>
           </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <label className="flex items-center gap-1.5 cursor-pointer text-rose-400 hover:text-rose-300">
             <input
               type="checkbox"
               checked={showHardNegatives}
               onChange={(e) => setShowHardNegatives(e.target.checked)}
-              className="accent-[#EF4444]"
+              className="accent-rose-500"
             />
-            <span className="text-[#EF4444]">Misclassified Hard Negatives</span>
+            <span>Misclassified hard negatives</span>
           </label>
         </div>
       </div>
 
       {/* 3D WEBGL/CANVAS DECISION SURFACE VIEWPORT */}
-      <div className="relative flex-1 min-h-[460px] rounded border border-[#1E2530] bg-[#080A0F] shadow-inner overflow-hidden flex flex-col">
+      <div className="relative flex-1 min-h-[460px] rounded-sm border border-border bg-background shadow-inner overflow-hidden flex flex-col">
         {/* Interactive 3D Canvas */}
         <canvas
           ref={canvasRef}
@@ -353,71 +355,76 @@ export const DecisionBoundaries: React.FC = () => {
         />
 
         {/* Camera Navigation Overlay HUD */}
-        <div className="absolute top-3 left-3 pointer-events-none rounded bg-[#0F131A]/85 backdrop-blur-sm border border-[#1E2530] p-2 text-[10px] text-[#94A3B8] font-mono flex flex-col gap-1">
+        <div className="absolute top-3 left-3 pointer-events-none rounded-sm bg-card/90 backdrop-blur-sm border border-border p-2.5 text-[10px] text-muted-foreground font-mono flex flex-col gap-1 shadow-sm">
           <div>Camera: Azimuth {Math.round(rotY * 57.3)}°, Elevation {Math.round(rotX * 57.3)}°</div>
-          <div>Zoom: {(zoom * 100).toFixed(0)}% (Scroll to Zoom, Drag to Rotate)</div>
-          <div className="text-[#38BDF8]">Evaluating 25×25×25 Meshgrid (N=15,625 points)</div>
+          <div>Zoom: {(zoom * 100).toFixed(0)}% (Scroll to zoom, drag to rotate)</div>
+          <div className="text-primary">Evaluating 25×25×25 meshgrid (15,625 points)</div>
         </div>
 
         {/* Target Legend HUD */}
-        <div className="absolute top-3 right-3 pointer-events-none rounded bg-[#0F131A]/85 backdrop-blur-sm border border-[#1E2530] p-2.5 text-xs text-[#E6ECF2] flex flex-col gap-1.5">
-          <div className="text-[10px] uppercase font-semibold text-[#64748B] mb-0.5">Physical Entities</div>
+        <div className="absolute top-3 right-3 pointer-events-none rounded-sm bg-card/90 backdrop-blur-sm border border-border p-2.5 text-xs text-foreground flex flex-col gap-1.5 shadow-sm">
+          <div className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">Physical entities</div>
           <div className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 rounded-full bg-[#38BDF8]" />
-            <span>Moving Brown Dwarf / Fast Dipole (P &gt; 0.5)</span>
+            <span className="h-2 w-2 rounded-full bg-primary" />
+            <span>Moving brown dwarf / fast dipole (P &gt; 0.5)</span>
           </div>
           <div className="flex items-center gap-2 text-[11px]">
             <span className="h-2 w-2 rounded-full bg-amber-400" />
-            <span>Pulsing Variable Monopole</span>
+            <span>Pulsing variable monopole</span>
           </div>
           <div className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 rounded-full bg-[#EF4444]" />
-            <span>Misclassified Hard Negative (Artifact)</span>
+            <span className="h-2 w-2 rounded-full bg-rose-500" />
+            <span>Misclassified hard negative (artifact)</span>
           </div>
         </div>
 
         {/* BOTTOM TRAJECTORY SCRUBBER CONTROLLER (SPECIFICATION.md §6.4.4) */}
-        <div className="absolute bottom-3 inset-x-3 rounded border border-[#1E2530] bg-[#0F131A]/90 backdrop-blur-sm p-3 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <button
+        <div className="absolute bottom-3 inset-x-3 rounded-sm border border-border bg-card/90 backdrop-blur-sm p-3 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="xs"
+              variant="outline"
               onClick={() => scrubToEpoch(1)}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="First Epoch"
+              title="First epoch"
             >
-              |&lt;
-            </button>
-            <button
+              |◀
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
               onClick={() => scrubToEpoch(Math.max(1, activeEpoch - 5))}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="Step Back 5 Epochs"
+              title="Step back 5 epochs"
             >
-              &lt;&lt;
-            </button>
-            <button
+              ◀◀
+            </Button>
+            <Button
+              size="xs"
+              variant={isRunning && !isPaused ? 'secondary' : 'default'}
               onClick={isRunning && !isPaused ? pauseTrainingRun : (isPaused ? resumeTrainingRun : startTrainingRun)}
-              className="rounded bg-[#38BDF8] px-3 py-1 text-xs font-medium text-[#080A0F] hover:bg-[#0284C7] transition"
             >
-              {isRunning && !isPaused ? '⏸ Pause Trajectory' : '▶ Play Boundary Trajectory (Epoch 1 -> 50)'}
-            </button>
-            <button
+              {isRunning && !isPaused ? 'Pause trajectory' : 'Play boundary trajectory (epochs 1 → 50)'}
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
               onClick={() => scrubToEpoch(Math.min(totalEpochs, activeEpoch + 5))}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="Step Forward 5 Epochs"
+              title="Step forward 5 epochs"
             >
-              &gt;&gt;
-            </button>
-            <button
+              ▶▶
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
               onClick={() => scrubToEpoch(totalEpochs)}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="Final Epoch"
+              title="Final epoch"
             >
-              &gt;|
-            </button>
+              ▶|
+            </Button>
           </div>
 
           <div className="flex items-center gap-3 flex-1 max-w-md">
-            <span className="text-xs font-mono text-[#94A3B8] whitespace-nowrap">
-              Active Epoch: <strong className="text-[#38BDF8] text-sm">{activeEpoch}</strong> / {totalEpochs}
+            <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">
+              Active epoch: <strong className="text-foreground text-sm">{activeEpoch}</strong> / {totalEpochs}
             </span>
             <input
               type="range"
@@ -425,11 +432,11 @@ export const DecisionBoundaries: React.FC = () => {
               max={totalEpochs}
               value={activeEpoch}
               onChange={(e) => scrubToEpoch(Number(e.target.value))}
-              className="flex-1 accent-[#38BDF8] cursor-pointer"
+              className="flex-1 accent-primary cursor-pointer"
             />
           </div>
 
-          <div className="text-[11px] text-[#94A3B8]">
+          <div className="text-[11px] text-muted-foreground">
             Morph: <span className="font-mono text-emerald-400">Non-linear warp active</span>
           </div>
         </div>
