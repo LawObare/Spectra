@@ -372,7 +372,9 @@ export const ObservationDiscussions: React.FC = () => {
                   <span className="font-medium text-foreground group-hover:text-primary">
                     {arch.name}
                   </span>
-                  <span className="font-mono text-[10px] text-muted-foreground">↗</span>
+                  <svg className="h-3 w-3 text-muted-foreground group-hover:text-primary transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
                 </div>
                 <span className="mt-0.5 text-[11px] text-muted-foreground">{arch.desc}</span>
               </a>

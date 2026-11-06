@@ -1357,7 +1357,7 @@ export const CelestialNavigator: React.FC = () => {
 
         {/* 100% Native Aladin Lite v3 WebGL2 All-Sky HiPS Viewport */}
         <div
-          className="relative flex-1 w-full overflow-hidden bg-[#06080D]"
+          className="relative flex-1 w-full overflow-hidden bg-black"
         >
           {/* Aladin Lite v3 Canvas Container (Receives all drag, scroll, touch, and click events directly) */}
           <div
@@ -1367,43 +1367,43 @@ export const CelestialNavigator: React.FC = () => {
           />
 
           {!hipsReady && !hipsError && (
-            <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-sm border border-[#1E2530] bg-[#080A0F]/80 px-2.5 py-1 font-mono text-[10px] text-[#94A3B8]">
+            <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-neutral-800 bg-neutral-950/85 px-3 py-1 font-mono text-[10px] text-neutral-400 shadow-md backdrop-blur">
               Loading {PHOTOGRAPHIC_SURVEYS.find((survey) => survey.id === activeSurvey)?.label} sky imagery…
             </div>
           )}
           {hipsError && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#080A0F]/90 px-6 text-center font-mono text-xs text-[#FBBF24]">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/90 px-6 text-center font-mono text-xs text-amber-400">
               Survey imagery failed to load. Select another survey or check access to the HiPS image service.
             </div>
           )}
 
-          <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2 py-1 font-mono text-[9px] text-[#94A3B8]">
+          <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 rounded-lg border border-neutral-800 bg-neutral-950/90 px-2.5 py-1 font-mono text-[9px] text-neutral-400 backdrop-blur shadow-sm">
             <span>Gaia DR3: {gaiaStatus}</span>
-            <span className="text-[#1E2530]">|</span>
+            <span className="text-neutral-700">|</span>
             <span>SkyBot: {skybotStatus}</span>
           </div>
 
           {/* Top-Left Astrometric Compass / Status */}
-          <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2.5 py-1.5">
-            <svg className="h-7 w-7 text-[#38BDF8]" viewBox="0 0 32 32" fill="none">
-              <circle cx="16" cy="16" r="13" stroke="#1E2530" strokeWidth="1" />
-              <path d="M16 5L16 20" stroke="#38BDF8" strokeWidth="1.5" />
-              <path d="M13.5 8.5L16 4.5L18.5 8.5" stroke="#38BDF8" strokeWidth="1.5" />
-              <path d="M6 16L16 16" stroke="#94A3B8" strokeWidth="1.2" />
-              <text x="14" y="3.8" fill="#E6ECF2" fontSize="5" fontFamily="monospace">
+          <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-xl border border-neutral-800 bg-neutral-950/90 px-3 py-2 backdrop-blur shadow-sm">
+            <svg className="h-7 w-7 text-primary" viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="16" r="13" stroke="#262626" strokeWidth="1" />
+              <path d="M16 5L16 20" stroke="#288BFF" strokeWidth="1.5" />
+              <path d="M13.5 8.5L16 4.5L18.5 8.5" stroke="#288BFF" strokeWidth="1.5" />
+              <path d="M6 16L16 16" stroke="#A3A3A3" strokeWidth="1.2" />
+              <text x="14" y="3.8" fill="#FFFFFF" fontSize="5" fontFamily="monospace">
                 N
               </text>
-              <text x="1" y="17.5" fill="#94A3B8" fontSize="5" fontFamily="monospace">
+              <text x="1" y="17.5" fill="#A3A3A3" fontSize="5" fontFamily="monospace">
                 E
               </text>
             </svg>
             <div className="flex flex-col">
-              <span className="font-mono text-[10px] text-[#E6ECF2]">
+              <span className="font-mono text-[10px] text-white">
                 {detailFitsStatus === 'ready'
                   ? '2MASS Ks FITS close detail'
                   : `Aladin Lite v3 WebGL2 · ${PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'All-Sky Survey'}`}
               </span>
-              <span className="font-mono text-[10px] text-[#94A3B8]">
+              <span className="font-mono text-[10px] text-neutral-400">
                 {detailFitsStatus === 'ready'
                   ? 'CDS HiPS2FITS · 2.16 µm archival context · not SPHEREx data'
                   : detailFitsStatus === 'loading'
@@ -1416,13 +1416,13 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           {/* Bottom-Right Calibrated Angular Scale Bar */}
-          <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2.5 py-1.5">
-            <span className="font-mono text-[10px] tabular-nums text-[#E6ECF2]">
+          <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1 rounded-lg border border-neutral-800 bg-neutral-950/90 px-2.5 py-1.5 backdrop-blur shadow-sm">
+            <span className="font-mono text-[10px] tabular-nums text-white">
               Scale: {scaleBar.label} (FoV {formatFieldFov(displayFovDeg)})
             </span>
             <div
               style={{ width: `${scaleBar.widthPx}px` }}
-              className="h-1.5 border-b border-l border-r border-[#E6ECF2]"
+              className="h-1.5 border-b border-l border-r border-white"
             />
           </div>
         </div>
