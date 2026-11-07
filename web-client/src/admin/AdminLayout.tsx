@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { TrainingDynamics } from './TrainingDynamics';
 import { ActivationInspector } from './ActivationInspector';
 import { DecisionBoundaries } from './DecisionBoundaries';
+import { HardNegativeTriage } from './HardNegativeTriage';
+import { DataProductExports } from './DataProductExports';
 import { Button, Badge } from '../components/ui';
 import { cn } from '../lib/utils';
 
@@ -100,50 +102,8 @@ export const AdminLayout: React.FC = () => {
           <Route path="/dynamics" element={<TrainingDynamics />} />
           <Route path="/internals" element={<ActivationInspector />} />
           <Route path="/boundaries" element={<DecisionBoundaries />} />
-          <Route
-            path="/triage"
-            element={
-              <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md rounded-sm border border-border bg-card p-6 shadow-md">
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Tab 4: Disagreement & Escalation Queue (/admin/triage)
-                  </h3>
-                  <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                    Hard-negative triage and raw FITS HDU 1–6 verification queue mounts here (Assigned to Role E6 / Issue #28).
-                  </p>
-                  <div className="mt-4">
-                    <Link to="/admin/dynamics">
-                      <Button variant="default" size="sm">
-                        Return to Training Dynamics
-                      </Button>
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            }
-          />
-          <Route
-            path="/exports"
-            element={
-              <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md rounded-sm border border-border bg-card p-6 shadow-md">
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Tab 5: Mission Data Product Hub (/admin/exports)
-                  </h3>
-                  <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                    Calibration pool manager and the 4 SPHEREx community data product exports mount here (Assigned to Role E6 / Issue #28).
-                  </p>
-                  <div className="mt-4">
-                    <Link to="/admin/dynamics">
-                      <Button variant="default" size="sm">
-                        Return to Training Dynamics
-                      </Button>
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            }
-          />
+          <Route path="/triage" element={<HardNegativeTriage />} />
+          <Route path="/exports" element={<DataProductExports />} />
           <Route path="*" element={<Navigate to="/admin/dynamics" replace />} />
         </Routes>
       </main>
