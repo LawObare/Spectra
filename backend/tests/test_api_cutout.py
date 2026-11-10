@@ -104,3 +104,26 @@ def test_tensor_serves_binary_with_header():
     meta = json.loads(r.content[4 : 4 + L])
     assert meta["release"] == "spherex_qr2"
     assert meta["shape"] == [1, 1, 2, 2]
+
+
+def test_process_cutout_task_loads_benchmark():
+    import asyncio
+    _, cutout = _client()
+    task = {
+        "task_id": "test_barnard",
+        "ra": 269.44639,
+        "dec": 4.76676,
+        "fov_arcsec": 300,
+        "bands": None,
+        "adaptive_window": False,
+        "synth_a": None,
+        "synth_b": None,
+        "zodi_subtracted": False,
+    }
+    res = asyncio.run(cutout.process_cutout_task(task))
+    assert res["status"] == "complete"
+    cached = asyncio.run(cutout.tensor_cache.get("tensor:test_barnard"))
+    assert cached is not None
+    _, header = cached
+    assert header.get("shape") == [3, 6, 29, 29]
+    assert "Benchmark" in header.get("source_badge", "")

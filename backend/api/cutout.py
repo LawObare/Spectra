@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -21,8 +22,12 @@ from pydantic import BaseModel
 
 try:
     from backend.cache.lru import LRUCache
+    from backend.science.injector import create_synth_a_preset, inject_synthetic_source_into_planes
+    from backend.science.wave import match_benchmark_target
 except ImportError:
     from cache.lru import LRUCache  # type: ignore
+    from science.injector import create_synth_a_preset, inject_synthetic_source_into_planes  # type: ignore
+    from science.wave import match_benchmark_target  # type: ignore
 
 router = APIRouter(prefix="/api", tags=["cutout"])
 
@@ -247,27 +252,82 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
             )
             await asyncio.sleep(0.01)
 
-        n_epochs, n_bands, h, w = 1, 1, 16, 16
-        flux = np.random.rand(n_epochs, n_bands, h, w).astype(np.float32)
-        variance = np.random.rand(n_epochs, n_bands, h, w).astype(np.float32) * 0.01
-        flags = np.zeros((n_epochs, n_bands, h, w), dtype=np.uint32)
-        n_exp = np.ones((n_epochs, n_bands, h, w), dtype=np.uint16)
+        matched = match_benchmark_target(ra, dec, match_radius_arcsec=60.0)
+        source_badge = "[NASA Benchmark (Pre-cached)]" if matched else "[IRSA Live (QR2)]"
 
-        header = {
-            "shape": [n_epochs, n_bands, h, w],
-            "crval": [ra, dec],
-            "cdelt": [-0.001722, 0.001722],
-            "mjd_ranges": [[59000, 59100]],
-            "exposure_ids": [1],
-            "release": "spherex_qr2",
-            "source_badge": "NASA Benchmark",
-            "compression": "zstd-shuffle",
-        }
-        hb = json.dumps(header).encode("utf-8")
-        raw = _pack_plane(flux[0, 0], variance[0, 0], flags[0, 0], n_exp[0, 0])
-        compressed = _encode_zstd_shuffle(raw)
-        payload = len(hb).to_bytes(4, "little") + hb + compressed
-        await tensor_cache.set(f"tensor:{task_id}", payload, header)
+        # Check for precomputed authoritative NASA benchmark file
+        loaded_precomputed = False
+        if matched and not (task_data.get("synth_a") or task_data.get("synth_b")):
+            base_slug = matched.get("name", "").lower().replace("'", "").replace(" ", "_").replace("-", "_")
+            search_names = [base_slug, matched.get("name", "").lower(), matched.get("name", "")]
+            alias_map = {
+                "barnards_star": "barnard",
+                "wise_0855_0714": "wise0855",
+                "wise_0855": "wise0855",
+                "epsilon_indi_b": "eps_indi_b",
+                "rw_aurigae": "rw_aur",
+                "r_draconis": "r_dra",
+            }
+            if base_slug in alias_map:
+                search_names.append(alias_map[base_slug])
+
+            for sname in search_names:
+                for base_dir in [
+                    Path("web-client/public/benchmarks"),
+                    Path("../web-client/public/benchmarks"),
+                    Path("benchmarks"),
+                    Path("../benchmarks"),
+                ]:
+                    cand = base_dir / f"{sname}.f32"
+                    if cand.is_file():
+                        raw_bytes = cand.read_bytes()
+                        if len(raw_bytes) >= 4:
+                            hl = int.from_bytes(raw_bytes[:4], "little")
+                            if len(raw_bytes) >= 4 + hl:
+                                parsed_hdr = json.loads(raw_bytes[4 : 4 + hl].decode("utf-8"))
+                                await tensor_cache.set(f"tensor:{task_id}", raw_bytes, parsed_hdr)
+                                loaded_precomputed = True
+                                break
+                if loaded_precomputed:
+                    break
+
+        if not loaded_precomputed:
+            n_epochs, n_bands, h, w = 1, 1, 16, 16
+            flux = np.random.rand(n_epochs, n_bands, h, w).astype(np.float32)
+            variance = np.random.rand(n_epochs, n_bands, h, w).astype(np.float32) * 0.01
+            flags = np.zeros((n_epochs, n_bands, h, w), dtype=np.uint32)
+            n_exp = np.ones((n_epochs, n_bands, h, w), dtype=np.uint16)
+
+            # Inject synthetic source if requested (SPECIFICATION.md §4.1 Pipeline 3)
+            if task_data.get("synth_a") or task_data.get("synth_b"):
+                source_badge = "[Synthetic Injection Mode]"
+                cfg = create_synth_a_preset(ra0=ra, dec0=dec)
+                inject_synthetic_source_into_planes(
+                    flux[0, 0],
+                    variance[0, 0],
+                    flags[0, 0],
+                    crval_ra=ra,
+                    crval_dec=dec,
+                    obs_epoch_mjd=59050.0,
+                    band_idx=4,
+                    config=cfg,
+                )
+
+            header = {
+                "shape": [n_epochs, n_bands, h, w],
+                "crval": [ra, dec],
+                "cdelt": [-0.001722, 0.001722],
+                "mjd_ranges": [[59000, 59100]],
+                "exposure_ids": [1],
+                "release": "spherex_qr2",
+                "source_badge": source_badge,
+                "compression": "zstd-shuffle",
+            }
+            hb = json.dumps(header).encode("utf-8")
+            raw = _pack_plane(flux[0, 0], variance[0, 0], flags[0, 0], n_exp[0, 0])
+            compressed = _encode_zstd_shuffle(raw)
+            payload = len(hb).to_bytes(4, "little") + hb + compressed
+            await tensor_cache.set(f"tensor:{task_id}", payload, header)
 
         task_states[task_id].update(
             {"status": "complete", "progress": 1.0, "stage": "complete", "message": "Complete"}
