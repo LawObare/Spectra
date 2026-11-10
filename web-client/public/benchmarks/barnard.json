@@ -5,11 +5,22 @@
   "category": "benchmark",
   "ra": 269.44639,
   "dec": 4.76676,
+  "reference_epochs": {
+    "j2000_icrs": [
+      269.45208,
+      4.69336
+    ],
+    "spherex_2025_5": [
+      269.44639,
+      4.76676
+    ]
+  },
   "fov_arcsec": 180.0,
   "recommended_tab": "comparator",
   "preset": "true_nir",
   "data_release": "spherex_qr2",
   "source_badge": "NASA Benchmark (Pre-cached)",
+  "is_simulated": true,
   "is_calibration": true,
   "description": "M4V high proper motion (+10.39\"/yr North, 1.68 px/yr along PA 355.6\u00b0)",
   "expert_ground_truth": "M4V Red Dwarf",
@@ -41,20 +52,23 @@
   "survey_passes": [
     {
       "pass_id": "P1",
-      "mjd": 60750.0,
-      "date": "2025-03-15",
+      "mjd": 60810.4,
+      "mjd_end": 61053.4,
+      "date": "2025-05-15",
       "delta_years": 0.0
     },
     {
       "pass_id": "P2",
-      "mjd": 60932.0,
-      "date": "2025-09-15",
+      "mjd": 60995.2,
+      "mjd_end": 61237.9,
+      "date": "2025-11-16",
       "delta_years": 0.5
     },
     {
       "pass_id": "P3",
-      "mjd": 61115.0,
-      "date": "2026-03-15",
+      "mjd": 61178.6,
+      "mjd_end": 61360.2,
+      "date": "2026-05-18",
       "delta_years": 1.0
     }
   ],

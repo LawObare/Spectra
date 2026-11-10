@@ -90,12 +90,13 @@ CONTINUUM_WINDOWS_UM: list[tuple[float, float]] = [
     (3.70, 3.90),
 ]
 
-# Canonical 5 NASA Benchmark Targets coordinates and astrophysical spectral signatures
+# Canonical 5 NASA Benchmark Targets coordinates (Epoch 2025.5 + J2000/Discovery reference coords)
 BENCHMARK_TARGETS: dict[str, dict[str, Any]] = {
     "barnards_star": {
         "name": "Barnard's Star",
         "ra": 269.44639,
         "dec": 4.76676,
+        "alt_coords": [(269.45208, 4.69336)],  # ICRS J2000.0
         "type": "M4V",
         "features": ["TiO", "H2O", "stellar_photosphere"],
         "base_flux_jy": 0.045,
@@ -105,6 +106,10 @@ BENCHMARK_TARGETS: dict[str, dict[str, Any]] = {
         "name": "WISE 0855-0714",
         "ra": 133.73712,
         "dec": -7.24038,
+        "alt_coords": [
+            (133.78620, -7.24430),  # WISE discovery epoch ~2010.5 (Luhman 2014)
+            (133.79513, -7.24515),  # Back-propagated ICRS J2000.0
+        ],
         "type": "Y4",
         "features": ["CH4_3.3um", "H2O_steam", "cold_thermal_excess"],
         "base_flux_jy": 0.0005,
@@ -114,6 +119,7 @@ BENCHMARK_TARGETS: dict[str, dict[str, Any]] = {
         "name": "Epsilon Indi B",
         "ra": 331.09566,
         "dec": -56.80031,
+        "alt_coords": [(331.04415, -56.78284)],  # ICRS J2000.0
         "type": "T1+T6",
         "features": ["CH4_2.2um", "CH4_3.3um", "H2O_1.4um", "H2O_1.9um"],
         "base_flux_jy": 0.012,
@@ -123,6 +129,7 @@ BENCHMARK_TARGETS: dict[str, dict[str, Any]] = {
         "name": "RW Aurigae",
         "ra": 76.95647,
         "dec": 30.40130,
+        "alt_coords": [(76.95646, 30.40144)],
         "type": "T_Tauri",
         "features": ["IR_excess", "protoplanetary_dust", "variable_dimming"],
         "base_flux_jy": 0.18,
@@ -132,6 +139,7 @@ BENCHMARK_TARGETS: dict[str, dict[str, Any]] = {
         "name": "R Draconis",
         "ra": 248.16773,
         "dec": 66.75504,
+        "alt_coords": [(248.16763, 66.75497)],
         "type": "Mira_AGB",
         "features": ["CO_2.3um", "H2O_pulsation", "large_amplitude"],
         "base_flux_jy": 0.25,
@@ -374,15 +382,17 @@ def fit_chebyshev_continuum(
 
 
 def match_benchmark_target(ra: float, dec: float, match_radius_arcsec: float = 30.0) -> dict[str, Any] | None:
-    """Match sky coordinates against the 5 NASA Benchmark Targets."""
+    """Match sky coordinates against the 5 NASA Benchmark Targets (Epoch 2025.5 & J2000/Discovery)."""
     match_rad_deg = match_radius_arcsec / 3600.0
     for target in BENCHMARK_TARGETS.values():
-        d_ra = ((ra - target["ra"] + 180.0) % 360.0) - 180.0
-        d_ra_star = d_ra * math.cos(math.radians((dec + target["dec"]) / 2.0))
-        d_dec = dec - target["dec"]
-        dist = math.hypot(d_ra_star, d_dec)
-        if dist <= match_rad_deg:
-            return target
+        candidate_coords = [(target["ra"], target["dec"])] + list(target.get("alt_coords", []))
+        for c_ra, c_dec in candidate_coords:
+            d_ra = ((ra - c_ra + 180.0) % 360.0) - 180.0
+            d_ra_star = d_ra * math.cos(math.radians((dec + c_dec) / 2.0))
+            d_dec = dec - c_dec
+            dist = math.hypot(d_ra_star, d_dec)
+            if dist <= match_rad_deg:
+                return target
     return None
 
 
@@ -434,9 +444,8 @@ def generate_benchmark_sed_102(
     variance = (flux * 0.02) ** 2 + 1e-10
     flags = np.zeros(len(waves), dtype=np.int32)
 
-    # Observation MJDs across 4 survey passes (spanning 1.5 years)
-    # Reflecting real survey visit cadences for SPHEREx
-    pass_mjds = np.linspace(60750.0, 61298.0, len(waves))
+    # Observation MJDs across survey passes starting May 2025 (MJD 60789.85, survey_passes.json)
+    pass_mjds = np.linspace(60789.85, 61237.87, len(waves))
     mjd_span = [float(pass_mjds[0]), float(pass_mjds[-1])]
     is_simultaneous = False  # Multi-epoch all-sky survey is inherently non-simultaneous
 
@@ -463,7 +472,7 @@ def extract_102_channel_spectrum(
     if custom_observations and len(custom_observations) > 0:
         flux, variance, flg, mjds = bin_observations_to_102_channels(custom_observations, grid_waves)
         mjd_valid = [p.mjd for p in custom_observations]
-        mjd_span = [float(min(mjd_valid)), float(max(mjd_valid))] if mjd_valid else [60750.0, 60750.0]
+        mjd_span = [float(min(mjd_valid)), float(max(mjd_valid))] if mjd_valid else [60789.85, 60789.85]
         is_simultaneous = (mjd_span[1] - mjd_span[0]) <= 1.0
         target_name = benchmark["name"] if benchmark else None
         source_badge = "[IRSA Live (spherex_qr2)]"
@@ -479,8 +488,8 @@ def extract_102_channel_spectrum(
         flux = base_f * (grid_waves / 1.0) ** (-1.1)
         variance = (flux * 0.03) ** 2 + 1e-10
         flg = np.zeros(len(grid_waves), dtype=np.int32)
-        mjds = np.linspace(60750.0, 61115.0, len(grid_waves))
-        mjd_span = [60750.0, 61115.0]
+        mjds = np.linspace(60789.85, 61237.87, len(grid_waves))
+        mjd_span = [60789.85, 61237.87]
         is_simultaneous = False
         target_name = f"SPX J{ra:.4f}{dec:+.4f}"
         source_badge = "[Community Product]"

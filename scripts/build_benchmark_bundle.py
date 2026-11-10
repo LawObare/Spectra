@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import struct
 import sys
 from pathlib import Path
@@ -44,12 +45,41 @@ DEFAULT_CUTOUT_DIM = 29  # 29x29 pixels = ~180 arcsec at 6.2"/px
 NUM_EPOCHS = 3
 NUM_BANDS = 6  # SPHEREx D1 to D6
 
-# Survey Passes (SPECIFICATION.md §2.1, §4.0)
+# Survey Passes aligned with post-May 2025 SPHEREx survey start (backend/config/survey_passes.json)
 SURVEY_PASSES = [
-    {"pass_id": "P1", "mjd": 60750.0, "date": "2025-03-15", "delta_years": 0.0},
-    {"pass_id": "P2", "mjd": 60932.0, "date": "2025-09-15", "delta_years": 0.5},
-    {"pass_id": "P3", "mjd": 61115.0, "date": "2026-03-15", "delta_years": 1.0},
+    {"pass_id": "P1", "mjd": 60810.4, "mjd_end": 61053.4, "date": "2025-05-15", "delta_years": 0.0},
+    {"pass_id": "P2", "mjd": 60995.2, "mjd_end": 61237.9, "date": "2025-11-16", "delta_years": 0.5},
+    {"pass_id": "P3", "mjd": 61178.6, "mjd_end": 61360.2, "date": "2026-05-18", "delta_years": 1.0},
 ]
+
+# Real IRSA spherex_qr2 exposure counts per pass/band from Spike S2 (scripts/spike_s2_coverage_report.md)
+REAL_PASS_EXPOSURE_COUNTS: dict[str, list[list[int]]] = {
+    "benchmark_barnard": [
+        [24, 23, 18, 25, 22, 18],
+        [19, 19, 24, 18, 19, 24],
+        [21, 21, 20, 22, 20, 21],
+    ],
+    "benchmark_wise_0855": [
+        [22, 33, 24, 22, 33, 22],
+        [15, 15, 21, 14, 15, 21],
+        [18, 24, 22, 18, 24, 21],
+    ],
+    "benchmark_eps_indi_b": [
+        [26, 64, 52, 25, 51, 48],
+        [21, 8, 12, 19, 7, 11],
+        [23, 36, 32, 22, 29, 30],
+    ],
+    "benchmark_rw_aur": [
+        [19, 19, 19, 19, 19, 17],
+        [19, 19, 19, 19, 19, 19],
+        [19, 19, 19, 19, 19, 18],
+    ],
+    "benchmark_r_dra": [
+        [69, 76, 50, 67, 75, 46],
+        [24, 19, 45, 24, 19, 44],
+        [46, 47, 48, 45, 47, 45],
+    ],
+}
 
 # Aliases for canonical benchmark targets to ensure judge-proof client loading
 BENCHMARK_ALIASES: dict[str, list[str]] = {
@@ -103,8 +133,16 @@ def generate_benchmark_tensor(
     flags_vals = [0] * total_pixels
     n_exp_vals = [1] * total_pixels
 
-    # Standard Gaussian PSF dispersion (FWHM ~ 1.2 px = ~7.5")
-    sigma_psf = 1.2 / 2.355
+    # Standard Gaussian PSF dispersion (FWHM ~ 1.2 px = ~7.44" at 6.2"/px => sigma = 1.2 / 2.35482)
+    sigma_psf = 1.2 / 2.35482
+    # Seeded Box-Muller Gaussian PRNG per target (deterministic across builds, free of modulo lattice artifacts)
+    rng = random.Random(sum(ord(c) * (idx + 1) for idx, c in enumerate(target.subject_id)))
+
+    # Zodiacal background levels across D1..D6 (MJy/sr): scattered zodiacal light + thermal emission in D5/D6
+    zodi_bg_per_band = [0.028, 0.032, 0.030, 0.055, 0.125, 0.210]
+    pass_exp_counts = REAL_PASS_EXPOSURE_COUNTS.get(
+        target.subject_id, [[18] * NUM_BANDS for _ in range(NUM_EPOCHS)]
+    )
 
     for e, pass_info in enumerate(SURVEY_PASSES):
         dt = pass_info["delta_years"]
@@ -114,7 +152,8 @@ def generate_benchmark_tensor(
 
         for b in range(NUM_BANDS):
             base_noise = 0.35 + 0.08 * b
-            variance_val = base_noise * base_noise
+            base_var = base_noise * base_noise
+            n_coadd_exps = pass_exp_counts[e][b]
 
             # Determine astrophysical band flux per target
             target_peak_flux = 0.0
@@ -151,7 +190,11 @@ def generate_benchmark_tensor(
             else:
                 target_peak_flux = 10.0
 
-            # Render 2D spatial cutout
+            zodi_bg = zodi_bg_per_band[b]
+            # Read + sky noise amplitude scaled by sqrt(N_exp)
+            noise_sigma = 0.014 + 0.004 * b
+
+            # Render 2D spatial cutout with zodiacal background, Gaussian noise, and spatially varying variance
             for y in range(dim):
                 for x in range(dim):
                     pixel_idx = e * (NUM_BANDS * dim * dim) + b * (dim * dim) + y * dim + x
@@ -160,28 +203,42 @@ def generate_benchmark_tensor(
                     dist_sq = (x - target_x) ** 2 + (y - target_y) ** 2
                     psf_val = math.exp(-dist_sq / (2.0 * sigma_psf * sigma_psf))
 
-                    # Background sky + Gaussian noise + Point Source
-                    flux = target_peak_flux * psf_val if is_detected else 0.0
-                    flux += 0.05 * math.sin(x * 0.3 + y * 0.2)  # Mild background gradient
+                    # Stationary faint field star at (x=6, y=22) for realistic differential reference
+                    field_star_dist_sq = (x - 6.0) ** 2 + (y - 22.0) ** 2
+                    field_star_flux = (0.04 if not is_detected else 0.35) * math.exp(
+                        -field_star_dist_sq / (2.0 * sigma_psf * sigma_psf)
+                    )
+
+                    # Zodiacal background + Gaussian read/sky noise + Point Source
+                    gauss_noise = rng.gauss(0.0, noise_sigma)
+                    flux = (target_peak_flux * psf_val if is_detected else 0.0) + field_star_flux
+                    flux += zodi_bg + 0.012 * math.sin(x * 0.25 + y * 0.18) + gauss_noise
+
+                    # Spatially varying variance: read/zodi variance + Poisson photon shot variance
+                    spatial_flat_var = base_var * (
+                        1.0 + 0.06 * math.sin(0.41 * x + 0.29 * y) + 0.03 * rng.gauss(0.0, 1.0)
+                    )
+                    variance_val = max(0.005, spatial_flat_var / max(1, n_coadd_exps // 6) + 0.018 * max(flux, 0.0))
 
                     # FLAGS handling:
                     flag = 0
-                    if not is_detected:
-                        # Mark non-detection / low QE flag in D1-D3 for cold brown dwarf
-                        flag = 0  # Clean noise floor
-                    elif target.subject_id == "benchmark_barnard" and b <= 1 and dist_sq < 0.8:
-                        # Bright star core saturation: OVERFLOW (bit 1 = 2)
+                    if x == 0 or x == dim - 1 or y == 0 or y == dim - 1:
+                        # Sub-array edge reference border (Bit 5 = 32)
+                        flag |= 32
+                    if target.subject_id == "benchmark_barnard" and b <= 1 and dist_sq < 0.8:
+                        # Bright star core saturation: OVERFLOW (bit 1 = 2) verified in Spike S2
                         flag |= 2
 
                     flux_vals[pixel_idx] = float(flux)
                     var_vals[pixel_idx] = float(variance_val)
                     flags_vals[pixel_idx] = int(flag)
-                    n_exp_vals[pixel_idx] = 1 if is_detected else 0
+                    n_exp_vals[pixel_idx] = int(n_coadd_exps) if is_detected else 0
 
-    # 1. Prepare JSON Header
-    mjd_ranges = [[p["mjd"], p["mjd"] + 5.0] for p in SURVEY_PASSES]
+    # 1. Prepare JSON Header (fix _arnard truncation bug by using removeprefix("benchmark_"))
+    target_slug = target.subject_id.removeprefix("benchmark_")
+    mjd_ranges = [[p["mjd"], p["mjd_end"]] for p in SURVEY_PASSES]
     exposure_ids = [
-        [f"spx_qr2_{p['pass_id']}_d{b+1}_{target.subject_id[-6:]}" for b in range(NUM_BANDS)]
+        [f"spx_qr2_{p['pass_id']}_d{b+1}_{target_slug}" for b in range(NUM_BANDS)]
         for p in SURVEY_PASSES
     ]
     cdelt_deg = PIXEL_SCALE_ARCSEC / 3600.0
@@ -194,6 +251,8 @@ def generate_benchmark_tensor(
         "exposure_ids": exposure_ids,
         "release": "spherex_qr2",
         "source_badge": "NASA Benchmark (Pre-cached)",
+        "is_simulated": True,
+        "data_origin": "Calibrated Benchmark Model (SPHEREx QR2 Ephemeris & Spike S2 Coverage)",
         "compression": "none",
     }
     header_json = json.dumps(header_dict, separators=(",", ":")).encode("utf-8")
@@ -220,6 +279,13 @@ def generate_benchmark_metadata(target: BenchmarkDefinition) -> dict[str, Any]:
     pa_rad = math.atan2(target.pm_ra_cosdec_mas_yr, target.pm_dec_mas_yr)
     pa_deg = (math.degrees(pa_rad) + 360.0) % 360.0
 
+    ref_epochs: dict[str, Any] = {
+        "j2000_icrs": [target.ra_j2000, target.dec_j2000],
+        "spherex_2025_5": [target.expected_epoch_2025_5_ra, target.expected_epoch_2025_5_dec],
+    }
+    if target.subject_id == "benchmark_wise_0855":
+        ref_epochs["wise_discovery_2010_5"] = [133.78620, -7.24430]
+
     metadata = {
         "target_id": target.subject_id,
         "name": target.title,
@@ -227,11 +293,13 @@ def generate_benchmark_metadata(target: BenchmarkDefinition) -> dict[str, Any]:
         "category": "benchmark",
         "ra": target.expected_epoch_2025_5_ra,
         "dec": target.expected_epoch_2025_5_dec,
+        "reference_epochs": ref_epochs,
         "fov_arcsec": target.fov_arcsec,
         "recommended_tab": target.recommended_tab,
         "preset": target.preset,
         "data_release": "spherex_qr2",
         "source_badge": "NASA Benchmark (Pre-cached)",
+        "is_simulated": True,
         "is_calibration": True,
         "description": target.description,
         "expert_ground_truth": target.expert_ground_truth,
