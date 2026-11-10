@@ -319,7 +319,7 @@ export const DataProductExports: React.FC = () => {
                                 title="Copy curl CLI command"
                                 onClick={() => handleCopyCurl(prod.id, fmt.ext)}
                               >
-                                {isCopied ? '✓' : 'curl'}
+                                {isCopied ? 'COPIED' : 'curl'}
                               </Button>
                             </div>
                           );
