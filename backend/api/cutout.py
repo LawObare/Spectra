@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from typing import Any
@@ -43,6 +44,7 @@ except ImportError:
     from science.wave_match import filter_wavelength_matched_exposures  # type: ignore
 
 router = APIRouter(prefix="/api", tags=["cutout"])
+logger = logging.getLogger(__name__)
 
 # Bounded task queue (depth 5, 503 if full)
 cutout_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=5)
@@ -307,6 +309,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                             "epoch": str(exposure["epoch"]),
                             "mjd": float(exposure["mjd"]),
                             "exposure_id": str(exposure["exposure_id"]),
+                            "collection": exposure.get("collection"),
                         }
                     )
 
@@ -319,7 +322,16 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                         reproj_list = reproject_exposures_sync(
                             matched_res.matched_exposures, master_wcs, shape_out
                         )
-                        collection = str(ingest_res.get("collection") or "spherex_qr3")
+                        contributing_collections = sorted(
+                            {
+                                str(exposure["collection"])
+                                for exposure in matched_res.matched_exposures
+                                if exposure.get("collection")
+                            }
+                        )
+                        collection = " + ".join(contributing_collections) or str(
+                            ingest_res.get("collection") or "spherex_qr2"
+                        )
                         coadd_res = coadd_inverse_variance(
                             reproj_list,
                             master_wcs=master_wcs,
@@ -334,7 +346,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                         payload = coadd_res.to_bytes(compression="none")
                         await tensor_cache.set(f"tensor:{task_id}", payload, coadd_res.metadata)
                         loaded_live_irsa = True
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 live_error = str(exc)
                 logger.exception("Live IRSA cutout processing failed for task %s", task_id)
                 loaded_live_irsa = False
