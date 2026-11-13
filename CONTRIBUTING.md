@@ -26,22 +26,25 @@ Each engineer owns a dedicated role label on GitHub, a strict **1-to-1 Developer
 
 All AI agents automatically load [`AGENTS.md`](AGENTS.md) (`GEMINI.md` / `CLAUDE.md`). Every agent session must obey:
 
-1. **One Issue Per Branch (`feat/issue-<N>-<slug>`):**
-   - Run `gh issue view <N>` at the start of the session.
+1. **One Issue Per Branch Off `develop` (`feat/issue-<N>-<slug>`):**
+   - Run `gh issue view <N> --comments` at the start of the session.
+   - Always branch from `develop` (`git checkout develop && git pull --ff-only origin develop && git checkout -b feat/issue-<N>-<slug>`).
    - Implement **only** the files and acceptance criteria specified in Issue `#<N>`.
-   - Never commit directly to `main`.
+   - Never commit directly to `develop` or `main`.
 2. **Respect Territory Write-Fences:**
    - Do not edit files outside your role's allowed paths.
-   - Once Issue [#4](https://github.com/LawObare/Spectra/issues/4) (Scaffold) and Issue [#14](https://github.com/LawObare/Spectra/issues/14) (Store/URL State) merge, `pyproject.toml`, `uv.lock`, `package.json`, `useTelemetryStore.ts`, and `useSpectraUrlState.ts` are **frozen**.
+   - Once Issue [#4](https://github.com/LawObare/Spectra/issues/4) (Scaffold) and Issue [#14](https://github.com/LawObare/Spectra/issues/14) (Store/URL State) merge into `develop`, `pyproject.toml`, `uv.lock`, `package.json`, `useTelemetryStore.ts`, and `useSpectraUrlState.ts` are **frozen**.
    - Never run `uv add` or `npm install <pkg>` on feature branches without explicit team approval.
 3. **Immutable Contracts:**
    - Binary tensor layout ([`SPECIFICATION.md` §3.2](SPECIFICATION.md#L328-L355)): `[uint32 header_len][UTF-8 JSON header][FLUX f32][VARIANCE f32][FLAGS u32][N_EXPOSURES u16]` (14 B/px).
    - URL query parameters (`nuqs`): `tab`, `ra`, `dec`, `fov`, `cadence`, `mode`, `preset`, `z`, `px`, `py`, `embed`.
    - Zero-Auth headers: `X-Observer-ID` and `X-Observer-Key`. Never import `@supabase/supabase-js` in the browser.
-4. **Pre-PR Verification Gate:**
-   - Backend agents must run `cd backend && uv run ruff check . && uv run pytest`.
-   - Frontend agents must run `cd web-client && npm run build`.
-   - Run `git status --short` and `git diff --stat main` to confirm zero stray files or lockfile churn before `gh pr create`.
+4. **Pre-Merge Verification, Dual-Axis Code Review & 5-Block Handover Gate ([`AGENTS.md` §7](AGENTS.md#L152-L202)):**
+   - Rebase onto `origin/develop` (`git fetch origin develop && git rebase origin/develop`).
+   - Backend agents run `cd backend && uv run ruff check . && uv run pytest`; Frontend agents run `cd web-client && npm run build`.
+   - Run `git status --short` and `git diff --stat origin/develop...HEAD` to confirm zero stray files or lockfile churn.
+   - Run the [`code-review`](.agents/skills/code-review/SKILL.md) skill against `origin/develop` (Standards + Spec axes) and fix all findings.
+   - Post the **5-Block Technical Handover Summary** ([`AGENTS.md` §7.3](AGENTS.md#L172-L188)) to the PR (`--base develop`) and Issue `#<N>`, squash-merge into `develop`, and close Issue `#<N>` via `gh issue close <N>`.
 
 ---
 
@@ -90,9 +93,9 @@ Pair reviewers by domain adjacency: **E1 $\leftrightarrow$ E2** (Science/Backend
 3. **Scientific Honesty:** Did the agent use `Float32Array` (`gl.R32F`) for image math, enforce wavelength-matched differencing, and preserve honest `[Not Detected at Pass Depth]` states?
 4. **Green Checks:** Do `uv run ruff check`, `uv run pytest`, and `npm run build` pass?
 
-### 3.4 Synchronized Milestone Gate Checkpoints
+### 3.4 Synchronized Milestone Gate Checkpoints & Batch Promotion (`develop` $\rightarrow$ `main`)
 
-At the end of each Milestone, **all 6 developers pause new issues for 20 minutes**, pull `main`, run `task dev`, and verify the Milestone Gate together:
+Day-to-day feature branches merge continuously into `develop`. At the end of each Milestone, **all 6 developers pause new issues for 20 minutes**, pull `develop`, run `task dev`, verify the Milestone Gate together, and promote the verified batch from `develop` $\rightarrow$ `main` (`gh pr create --base main --head develop`):
 
 - **Milestone Gate 1 ([Milestone #2 — Phase 1 P0](https://github.com/LawObare/Spectra/milestone/2)):**
   - Click all 5 NASA benchmark pills (`Barnard's Star`, `WISE 0855`, `Epsilon Indi B`, `RW Aurigae`, `R Draconis`) and enter 1 arbitrary RA/Dec coordinate.
