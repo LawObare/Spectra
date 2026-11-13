@@ -49,7 +49,12 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
-type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'dss2-color' | 'spitzer-color';
+type PhotographicSurveyId =
+  | 'allwise-color'
+  | 'sdss-color'
+  | '2mass-color'
+  | 'dss2-color'
+  | 'spitzer-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
@@ -68,25 +73,32 @@ const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
     description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
   },
   {
+    id: 'sdss-color',
+    hipsUrl: 'https://skies.esac.esa.int/SDSS9Color',
+    label: 'SDSS Optical (High-Res)',
+    badge: 'SDSS DR9 g/r/i (Order 10, High-Res)',
+    description: 'High-resolution Sloan Digital Sky Survey optical imaging resolving crisp stellar point sources down to 0.4″/pixel with zero JPEG blockiness.',
+  },
+  {
     id: '2mass-color',
     hipsUrl: 'https://skies.esac.esa.int/2MASSColor',
     label: '2MASS Near-IR',
-    badge: 'J/H/Ks (All-Sky)',
+    badge: 'J/H/Ks (All-Sky, Order 9)',
     description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
     id: 'dss2-color',
     hipsUrl: 'https://skies.esac.esa.int/DSSColor',
     label: 'DSS2 Optical',
-    badge: 'Palomar/UKST (All-Sky)',
+    badge: 'Palomar/UKST (All-Sky, Order 9)',
     description: 'Digitized Sky Survey full-sphere optical photographic mosaic covering 100% of both hemispheres.',
   },
   {
     id: 'spitzer-color',
     hipsUrl: 'https://skies.esac.esa.int/Spitzer/IRAC1_bright_ISM',
     label: 'Spitzer 3.6 µm',
-    badge: 'IRAC Ch 1 (Deep IR)',
-    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions.',
+    badge: 'IRAC Ch 1 (Deep IR, Order 10 PNG)',
+    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions in lossless PNG tiles.',
   },
 ];
 
@@ -476,6 +488,47 @@ export const CelestialNavigator: React.FC = () => {
         } catch (e) {
           console.warn('Aladin catalog init:', e);
         }
+
+        // Bounded, smooth wheel & trackpad zoom controller (intercepts and silences Aladin's uncontrolled zoomDelta runaway)
+        instance.on('wheelTriggered', (e: WheelEvent) => {
+          if (!e) return;
+          e.preventDefault?.();
+          e.stopPropagation?.();
+
+          // Normalize delta mode
+          let delta = e.deltaY;
+          if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+            delta *= 20;
+          } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+            delta *= 300;
+          }
+
+          // Clamp per-event delta to eliminate momentum slingshotting
+          const clamped = Math.max(-28, Math.min(28, delta));
+
+          // Smooth geometric zoom multiplier (~2.5% to 5% per gesture tick)
+          const zoomFactor = 1 + clamped * 0.0022;
+
+          const currentFovArr = instance.getFoV?.();
+          const currentFov =
+            Array.isArray(currentFovArr) && Number.isFinite(currentFovArr[0])
+              ? currentFovArr[0]
+              : typeof currentFovArr === 'number' && Number.isFinite(currentFovArr)
+              ? currentFovArr
+              : displayFovDeg;
+
+          const nextFov = Math.max(
+            MIN_SKY_FOV_DEG,
+            Math.min(MAX_SKY_FOV_DEG, currentFov * zoomFactor)
+          );
+
+          try {
+            instance.setFoV(nextFov);
+            setDisplayFovDeg(nextFov);
+          } catch (err) {
+            console.warn('Error applying smooth setFoV:', err);
+          }
+        });
 
         // Sync telemetry when user drags or pans the sky (debounced to break feedback loop)
         instance.on('positionChanged', (data: any) => {
