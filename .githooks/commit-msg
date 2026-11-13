@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Spectra Mandatory Commit Hygiene Validator (.githooks/commit-msg)
+# Enforces AGENTS.md §8 across all 6 human developers and AI coding agents.
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG="$(grep -v '^#' "$COMMIT_MSG_FILE" | sed '/^[[:space:]]*$/d' || true)"
+SUBJECT_LINE="$(head -n 1 "$COMMIT_MSG_FILE" | tr -d '\r')"
+
+# Allow auto-generated Git merge/rebase messages
+if [[ "$SUBJECT_LINE" =~ ^(Merge|Revert|Reapply)[[:space:]] ]]; then
+  exit 0
+fi
+
+# 1. Block trash/WIP commit messages
+if [[ "${SUBJECT_LINE,,}" =~ ^(wip|fix|fixup|update|changes|test|temp|final|asdf|commit)([[:space:]:!.]|$) ]]; then
+  echo "❌ [COMMIT REJECTED — AGENTS.md §8] Trash/WIP commit messages are forbidden: '$SUBJECT_LINE'" >&2
+  exit 1
+fi
+
+# 2. Enforce Conventional Header Grammar:
+#    <type>(<role>-<scope>): <imperative summary> (#<issue>)
+#    (docs/release/chore(governance) commits may omit (#<N>) only when not tied to an issue)
+HEADER_REGEX='^(feat|fix|perf|test|refactor|docs|chore|ci|release)\((e[1-6]|team)-[a-z0-9-]+\): [a-zA-Z0-9].{8,90}( \(#[0-9]+\))?$'
+
+if ! [[ "$SUBJECT_LINE" =~ $HEADER_REGEX ]]; then
+  echo "❌ [COMMIT REJECTED — AGENTS.md §8] Invalid commit subject format:" >&2
+  echo "   Got:      $SUBJECT_LINE" >&2
+  echo "   Expected: <type>(<role>-<scope>): <imperative summary> (#<issue>)" >&2
+  echo "   Examples:" >&2
+  echo "     feat(e1-phase-1): implement HDU 6 WAVE-TAB pre-reprojection matcher (#9)" >&2
+  echo "     fix(e2-api): handle IRSA SIA2 timeout circuit breaker in cutout queue (#12)" >&2
+  echo "     release(team-phase-1): promote verified Phase 1 P0 milestone batch to main" >&2
+  exit 1
+fi
+
+# 3. Require (#<issue>) for all feature/fix/perf/test/refactor commits by E1-E6
+if [[ "$SUBJECT_LINE" =~ ^(feat|fix|perf|test|refactor)\(e[1-6]- ]] && ! [[ "$SUBJECT_LINE" =~ \(#[0-9]+\)$ ]]; then
+  echo "❌ [COMMIT REJECTED — AGENTS.md §8] Role commits (e1–e6) must end with an issue reference '(#<N>)'." >&2
+  echo "   Got: $SUBJECT_LINE" >&2
+  exit 1
+fi
+
+# 4. Enforce structured multi-line body (Spec-Anchor / Changes / Verification) for code commits
+LINE_COUNT="$(echo "$COMMIT_MSG" | wc -l | tr -d ' ')"
+if [[ "$SUBJECT_LINE" =~ ^(feat|fix|perf|refactor)\( ]] && [[ "$LINE_COUNT" -lt 3 ]]; then
+  echo "❌ [COMMIT REJECTED — AGENTS.md §8] Single-line code commits are forbidden." >&2
+  echo "   Include a structured body with 'Spec-Anchor:', 'Changes:', and 'Verification:' lines." >&2
+  exit 1
+fi
+
+exit 0

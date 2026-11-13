@@ -7,8 +7,11 @@ tasks:
       - task --list
 
   setup:
-    desc: "Install all dependencies across Python and React in <10 seconds"
+    desc: "Install all dependencies and activate mandatory git commit-hygiene hooks in <10 seconds"
     cmds:
+      - git config core.hooksPath .githooks
+      - git config commit.template .gitmessage
+      - chmod +x .githooks/commit-msg
       - uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
       - supabase --version || npm install -g supabase
       - cd backend && uv sync
