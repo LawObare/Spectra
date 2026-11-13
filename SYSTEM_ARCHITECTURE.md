@@ -41,7 +41,24 @@ Spectra bridges raw Level 2 Multi-Extension FITS (MEF) archive products from the
 - **Pre-Baked Benchmark Ground Truth:** Instant $<10\,\text{ms}$ loading for the 5 mandatory NASA benchmark systems (Barnard's Star, WISE 0855-0714, Epsilon Indi B, RW Aurigae, R Draconis).
 - **Export Engine:** One-click generation of community data products (CSV, VOTable, JSON, FITS) and PyTorch HDF5 training datasets.
 
-### 1.4 Stakeholders & Evaluator Personas
+### 1.4 Sequential Priority-Gated Implementation Roadmap & Strict Cut Order
+To prevent engineering sprawl and guarantee that the hackathon challenge prompt is 100% satisfied on Day 1, implementation proceeds in **four strictly sequential, priority-gated phases** preceded by mandatory Day-0 spikes:
+
+| Phase | Priority | Scope & Milestone Gate | Rule for Engineers & Agents |
+|---|---|---|---|
+| **Day-0 Spikes** | **Gating** | **Feasibility & Ground-Truth Verification:** S1 (IRSA collection & parameter resolution), S2 (Benchmark exposure coverage matrices & saturation check), S3 (IRSA Cutout API vs S3 byte-range latency benchmark). | Complete before locking final network drivers. |
+| **Phase 1** | **P0 (Must-Have)** | **Core NASA Challenge Foundation:** Tab 1 (Navigator/Aladin Lite v3 dome with MOC), Tab 2 (Time-Domain Comparator/WebGL2 Float32 multi-epoch player, Asinh stretch, wavelength-matched difference mode, coverage matrix), 5 NASA Benchmark Targets, universal coordinate input, single FastAPI backend (`uv`) on port 7860, local Supabase DB. | **FOCUS HERE FIRST.** Delivers 100% prompt compliance. Do not build Tab 3, Tab 4, or Admin tabs until Phase 1 passes Gate 1. |
+| **Phase 2** | **P1 (Differentiator)** | **Science & Community Intelligence:** HDU 6 `WCS-WAVE` 102-channel spectral extraction, in-memory NumPy cosine similarity (<20 ms), Tab 3 (Spectrophotometric Lab with uPlot), Tab 5 (Discussions with backend SSE stream). | Start ONLY after Phase 1 is fully tested and verified against the 5 NASA benchmark targets. |
+| **Phase 3** | **P2 (Polish)** | **Institutional Polish & Mission Control:** Tab 4 (Molecular & Ice Studio on point sources with verified lab A-values), Admin Mission Control Tabs 1–5 (`/admin`, read-only default), synthetic injection calibration loop. | Start ONLY after Phase 2 is verified. |
+| **Phase 4** | **Deploy** | **Production Deployment & Hardening:** Hugging Face Space Dockerfile (single service, port 7860), Cloudflare Pages CDN, Supabase Session Pooler RLS, cron-job keep-alive, offline venue demo mirror. | Final packaging & judging freeze. |
+
+#### Strict Cut Order if Time Runs Short:
+```
+P3 Model Lab -> Tab 4 Molecular Studio -> Admin triage -> Tab 5 forum polish -> Tab 3 template overlays. NEVER CUT P0.
+```
+On completion of each phase, the system reaches a 100% self-contained, testable, and demonstrable milestone before work begins on the next phase.
+
+### 1.5 Stakeholders & Evaluator Personas
 - **Citizen Scientist / Volunteer:** Explores sky cutouts, toggles difference modes, classifies transient/mover anomalies, and participates in discussion threads.
 - **Professional Astronomer / Science Team:** Inspects smile-corrected 102-channel spectra, verifies high-proper-motion candidates, fits stellar continua, and exports VOTables.
 - **Hackathon Evaluator / Judge:** Evaluates application performance, tests benchmark targets, assesses responsive design, and inspects architectural rigor under zero-auth conditions.
@@ -97,7 +114,83 @@ Spectra bridges raw Level 2 Multi-Extension FITS (MEF) archive products from the
 - **Supabase Free Tier Constraints:** Database capacity is capped at 500 MB. Storing full-sky FITS files or unbounded million-vector `pgvector` indexes inside Postgres would exhaust quotas immediately. Cutouts remain in ephemeral caches; Postgres stores strictly structured metadata, classifications, and forum threads.
 - **Zero-Auth Security Constraints:** Evaluators cannot be challenged with login walls. However, write endpoints must be shielded against spam and database pollution via cryptographic key hashes, rate limiting (60 writes/min), and strict administrative route separation.
 
-### 2.4 Scientific & Astrophysical Constraints
+### 2.4 Scientific & Astrophysical Ground Truth & Constraints
+
+#### 2.4.1 Mission Archive Level 2 FITS Extension Standard
+Every SPHEREx Level 2 Quick Release image file delivered by Caltech/IPAC IRSA (configurable via `IRSA_COLLECTION`, default `spherex_qr2`) is a Multi-Extension FITS (MEF) containing 6 Header Data Units:
+
+| HDU # | Extension Name | Data Type | Physical Meaning & Calibration Units |
+|---|---|---|---|
+| **HDU 1** | `IMAGE` | 32-bit float | Calibrated surface brightness flux in $\text{MJy/sr}$ ($2040 \times 2040$ pixels). |
+| **HDU 2** | `FLAGS` | 32-bit integer | Bitmask quality flags (bit 0=transient, bit 1=overflow, etc.). |
+| **HDU 3** | `VARIANCE` | 32-bit float | Pixel noise variance $(\text{MJy/sr})^2$ (read noise + photon Poisson noise). |
+| **HDU 4** | `ZODI` | 32-bit float | Modeled solar system zodiacal dust emission background ($\text{MJy/sr}$). |
+| **HDU 5** | `PSF` | 32-bit float cube | 3D local Point Spread Function empirical model. |
+| **HDU 6** | `WCS-WAVE` | Binary Table | Tabular FITS WCS (`WAVE-TAB`) mapping $(x, y) \to (\lambda, \Delta\lambda)$. |
+
+- **Optical & Geometry:** Native pixel scale is $\approx 6.2''/\text{pixel}$. File naming token `2D3` corresponds to detector 3.
+- **Surface Brightness to Jansky Conversion:**
+  $$F_\nu [\text{Jy}] = I_\nu [\text{MJy/sr}] \times 10^6 \times \Omega_{\text{px}} [\text{sr}], \quad \Omega_{\text{px}} = \left(6.2'' \times \frac{\pi}{180 \times 3600}\right)^2 \approx 9.023 \times 10^{-10}\,\text{sr}$$
+
+#### 2.4.2 SPHEREx HDU 2 (`FLAGS`) 32-Bit Bitmask Hierarchy
+The 32-bit unsigned integer plane (`uint32`) encodes per-pixel instrumental quality flags:
+
+| Bit Position | Bit Value ($2^N$) | Flag Identifier | Physical Meaning & Pipeline Action | Overlay Rendering Rule |
+|---|---|---|---|---|
+| **Bit 0** | $1$ | `TRANSIENT` | Cosmic ray hit or sudden single-read glitch during SUR processing. | Excluded from coadd; rendered with red slash hatch. |
+| **Bit 1** | $2$ | `OVERFLOW` | Detector well saturation ($>85\%$ full well capacity). | Excluded from coadd; marked with gold `[Saturated]` pill. |
+| **Bit 2** | $4$ | `SUR_ERROR` | Onboard fit failure during Sample-Up-The-Ramp regression. | Excluded from coadd. |
+| **Bit 4** | $16$ | `PHANTOM` | Interleaved non-physical readout test channels. | Masked out as invalid science pixels. |
+| **Bit 5** | $32$ | `REFERENCE` | Non-illuminated reference border pixels (outer 4 rows/columns). | Rendered in neutral grey border overlay. |
+| **Bit 6** | $64$ | `NONFUNC` | Factory non-functional, dead, or disconnected pixels. | Excluded from coadd; interpolated in fallback view. |
+| **Bit 7** | $128$ | `DICHROIC` | Optical boundary zone where beam splitter transmission drops below $50\%$. | Flagged with yellow optical warning indicator. |
+| **Bit 9** | $512$ | `MISSING_DATA` | Telemetry loss or frame drop. | Excluded from coadd; flagged as no data. |
+| **Bit 10** | $1024$ | `HOT` | Excess dark current ($>5\sigma$ above array mean). | Excluded from coadd. |
+| **Bit 11** | $2048$ | `COLD` | Low quantum efficiency ($<20\%$ nominal). | Downweighted in inverse-variance coaddition. |
+| **Bit 17** | $131072$ | `PERSISTENCE` | Residual latent charge trapped from previous exposure bright star. | Rendered with orange warning border. |
+| **Bit 22** | $4194304$ | `GHOST` | Internal optical reflection or bright star glint artifact. | Flagged with purple diamond marker. |
+
+#### 2.4.3 Ground-Truth NASA Benchmark Systems (Epoch 2025.5 Grounding)
+All coordinates are propagated from J2000.0 ($t_0 = 2000.0$) to the SPHEREx mission midpoint ($t = 2025.5$, $\Delta t = 25.5\,\text{years}$) using the standard spherical motion formulas:
+$$\alpha(t) = \alpha_0 + \frac{\mu_\alpha^*}{\cos \delta_0} \cdot \Delta t \quad \text{where} \quad \mu_\alpha^* \equiv \mu_\alpha \cos \delta_0, \quad \delta(t) = \delta_0 + \mu_\delta \cdot \Delta t$$
+
+| Target Name | Object Class & Astrometric Motion | J2000 Coordinates (ICRS) | Proper Motion ($\text{mas/yr}$) | Epoch 2025.5 Propagated Coordinates | Physical Notes & Detection Constraints |
+|---|---|---|---|---|---|
+| **Barnard's Star** | M4V Red Dwarf<br>$\mu = 10.39''/\text{yr} = 1.68\,\text{px/yr}$ along PA 355.6° | `17h 57m 48.50s, +04d 41m 36.1s`<br>($269.45208^\circ, +4.69336^\circ$) | $\mu_\alpha^* = -801.60$<br>$\mu_\delta = +10362.40$ | `17h 57m 47.13s, +04d 46m 00.3s`<br>($269.44639^\circ, +4.76676^\circ$) | Bright in NIR; detector well saturation (`OVERFLOW`) handling required. UI overlays predicted track if saturated. |
+| **WISE 0855-0714** | Y4 Sub-Brown Dwarf ($T_{\text{eff}} \sim 250\,\text{K}$)<br>$\mu = 8.15''/\text{yr} = 1.31\,\text{px/yr}$ along PA 274.7° | `08h 55m 10.83s, -07d 14m 42.5s`<br>($133.79513^\circ, -7.24515^\circ$) | $\mu_\alpha^* = -8123.70$<br>$\mu_\delta = +673.20$ | `08h 54m 56.91s, -07d 14m 25.4s`<br>($133.73712^\circ, -7.24038^\circ$) | Faint $<3.5\,\mu\text{m}$; detected in D5/D6 coadds or honest non-detection. Warning: Confirm epoch of catalogue position (uncorrected epoch shifts center up to 100″!). |
+| **Epsilon Indi B** | T1 + T6 Brown Dwarf Binary (sep $\sim 0.7''$)<br>$\mu = 4.68''/\text{yr} = 0.76\,\text{px/yr}$ along PA 121.8° | `22h 04m 10.60s, -56d 46m 58.2s`<br>($331.04415^\circ, -56.78284^\circ$) | $\mu_\alpha^* = +3982.00$<br>$\mu_\delta = -2466.80$ | `22h 04m 22.96s, -56d 48m 01.1s`<br>($331.09566^\circ, -56.80031^\circ$) | $1/\cos\delta$ factor applied ($\Delta\alpha = \mu_\alpha^* \Delta t / \cos\delta$), eliminating 46″ error. Unresolved binary within single $6.2''$ pixel; 2-component unmixing is illustrative. |
+| **RW Aurigae** | Classical T Tauri Star with Protoplanetary Disk<br>$\mu = 0.02''/\text{yr}$ (Stationary) | `05h 07m 49.55s, +30d 24m 05.2s`<br>($76.95646^\circ, +30.40144^\circ$) | $\mu_\alpha^* = +1.40$<br>$\mu_\delta = -20.60$ | `05h 07m 49.55s, +30d 24m 04.7s`<br>($76.95647^\circ, +30.40130^\circ$) | Circumstellar dust occultations producing $>1.5\,\text{mag}$ dimming. Report whatever light curve and optical/NIR flux levels are measured per band with errors. |
+| **R Draconis** | Mira-type Pulsating AGB Variable ($P = 245\,\text{d}$)<br>$\mu = 0.012''/\text{yr}$ (Stationary) | `16h 32m 40.23s, +66d 45m 17.9s`<br>($248.16763^\circ, +66.75497^\circ$) | $\mu_\alpha^* = +6.10$<br>$\mu_\delta = +9.80$ | `16h 32m 40.26s, +66d 45m 18.1s`<br>($248.16773^\circ, +66.75504^\circ$) | Great-circle angular separation to North Ecliptic Pole (NEP) is $8.61^\circ$. Stationary pulsing monopole; spectrum points colored by MJD to show non-simultaneity. |
+
+#### 2.4.4 Continuous Integration (CI) Coordinate Grounding Check
+The verification script `benchmarks/build.py` automatically pulls Gaia DR3 and SIMBAD astrometric coordinates at build time. The CI test suite strictly fails if any recomputed benchmark center differs from the ground-truth values in the table above by more than $1''$ ($0.16\,\text{pixel}$). Proper motion values are dynamically refreshed from Gaia DR3 to ensure zero drift.
+
+#### 2.4.5 Detector Super-Bands & Laboratory Molecular Band Strengths ($A$-Values)
+The 102 channels are physically dispersed across six Hawaii-2RG detector arrays with Linear Variable Filters:
+
+| Super-Band | Detector Array | Wavelength Range | Resolving Power | Primary Molecular Diagnostic Features |
+|---|---|---|---|---|
+| **Band D1** | Array 1 | $0.75 - 1.11\,\mu\text{m}$ | $R = 35 - 41$ | Paschen series hydrogen lines, stellar photospheres |
+| **Band D2** | Array 2 | $1.11 - 1.63\,\mu\text{m}$ | $R = 41 - 50$ | Warm brown dwarf $\text{H}_2\text{O}$ steam, $1.6\,\mu\text{m}$ galaxy H-bump |
+| **Band D3** | Array 3 | $1.63 - 2.42\,\mu\text{m}$ | $R = 50 - 64$ | Stellar CO overtone ($2.3\,\mu\text{m}$), Brackett-$\gamma$ ($2.16\,\mu\text{m}$) |
+| **Band D4** | Array 4 | $2.42 - 3.82\,\mu\text{m}$ | $R = 64 - 96$ | $\text{H}_2\text{O}$ ice ($3.05\,\mu\text{m}$), $\text{CH}_4$ ($3.32\,\mu\text{m}$), $\text{CH}_3\text{OH}$ ($3.53\,\mu\text{m}$), PAH |
+| **Band D5** | Array 5 | $3.82 - 4.42\,\mu\text{m}$ | $R = 96 - 118$ | $\text{CO}_2$ ice ($4.27\,\mu\text{m}$), $^{13}\text{CO}_2$ ice ($4.38\,\mu\text{m}$), Cold Y-dwarfs |
+| **Band D6** | Array 6 | $4.42 - 5.00\,\mu\text{m}$ | $R = 118 - 130$ | CO gas/ice ($4.67\,\mu\text{m}$), Pf-$\beta$, Asteroid thermal emission |
+
+**Laboratory Integrated Band Strengths ($A$-Values):**
+In Tab 4 (Point-Source Ice Studio), column densities are integrated strictly for point-source background stars (seeded from the SPLICES catalog) using literature-verified laboratory band strengths:
+
+| Wavelength Window | Ice Component / Feature | Vibrational Mode | Literature $A$-value ($\text{cm}\cdot\text{molecule}^{-1}$) | Primary Citation |
+|---|---|---|---|---|
+| $3.05\,\mu\text{m}$ (Band 2/3) | Water Ice ($\text{H}_2\text{O}$) | O–H stretch | $2.0 \times 10^{-16}$ | Gerakines et al. (1995) |
+| $4.27\,\mu\text{m}$ (Band 5) | Carbon Dioxide ($\text{CO}_2$) | C=O asymmetric stretch ($\nu_3$) | $7.6 \times 10^{-17}$ | Gerakines et al. (1995) |
+| $4.38\,\mu\text{m}$ (Band 5) | Carbon Dioxide ($^{13}\text{CO}_2$) | $^{13}\text{C=O}$ stretch | $7.8 \times 10^{-17}$ | Boogert et al. (2000) |
+| $4.67\,\mu\text{m}$ (Band 6) | Carbon Monoxide ($\text{CO}$) | C$\equiv$O stretch | $1.1 \times 10^{-17}$ | Jiang et al. (1975) |
+| $3.54\,\mu\text{m}$ (Band 3) | Methanol ($\text{CH}_3\text{OH}$) | C–H stretch | $5.3 \times 10^{-18}$ | Kerkhof et al. (1999) |
+
+*(Note: Cold brown-dwarf gaseous methane ($\text{CH}_4$) absorption at $3.32\,\mu\text{m}$ is a photospheric gas feature, not an interstellar ice feature; solid ice $A$-values are never applied to brown-dwarf photospheres).*
+
+#### 2.4.6 Optical Smile, Reprojection & Source Honesty Principles
 1. **Linear Variable Filter Smile Inversion:** SPHEREx employs Linear Variable Filters where transmitted central wavelength varies continuously along the detector dispersion axis:
    $$\lambda(x, y) = \lambda_0 + \alpha x + \beta y + \gamma x^2 + \dots$$
    Interpolation must evaluate HDU 6 (`WCS-WAVE`) at native detector coordinates $(x_{\text{det}}, y_{\text{det}})$.
@@ -375,7 +468,14 @@ flowchart LR
 3. **Hyperspectral Visualizer (`<SpectrophotometricLab />`):**
    - Utilizes `uPlot` Canvas 2D engine (<40 KB footprint) rendering 102 channels at 60 FPS.
    - Displays vertical error bars derived from HDU 3 (`VARIANCE`).
-   - Performs two-component composite spectral unmixing ($a \cdot T_1 + b \cdot T_2$) to deblend Epsilon Indi B into its T1 + T6 components.
+   - **Composite Spectral Unmixing:**
+     Implements two-component linear unmixing via Non-Negative Least Squares ($\text{NNLS}$):
+     $$F_{\text{obs}}(\lambda_k) = a \cdot T_1(\lambda_k) + b \cdot T_2(\lambda_k) + \epsilon_k, \quad \text{subject to } a \ge 0, \, b \ge 0$$
+     Demonstrates spectral de-blending of Epsilon Indi B into T1 and T6 brown dwarf templates within a single $6.2''$ pixel, reporting the best-fit coefficient ratio $a/b$ and residual $\chi^2_{\text{red}}$.
+   - **Automated Galaxy Photo-$z$ Solver:**
+     Evaluates galaxy template models across a redshift grid $z \in [0.0, 2.5]$ with step $\Delta z = 0.01$:
+     $$\chi^2(z, T) = \sum_{k=1}^{102} \frac{\left(F_k - c(z) \cdot T_k(z)\right)^2}{\sigma_k^2}, \quad P(z) \propto \exp\left(-\frac{\chi^2(z)}{2}\right)$$
+     Computes cosmological lookback time $t_L(z)$ and luminosity distance $d_L(z)$ under Planck 2018 parameters ($H_0 = 67.4\,\text{km/s/Mpc}, \Omega_m = 0.315, \Omega_\Lambda = 0.685$), coupled to an interactive redshift slider ($z = 0.0 - 2.5$) that dynamically shifts spectral emission/absorption markers ($1.6\,\mu\text{m}$ H-bump, $\text{H}\alpha$, $\text{O\,III}$).
 4. **Point-Source Ice Studio (`<MolecularIceStudio />`):**
    - Operates on SPLICES point-source background stars along interstellar pencil beams.
    - Integrates optical depth $\tau(\lambda) = -\ln(F(\lambda)/F_{\text{cont}}(\lambda))$ across wavenumber $\nu$:
@@ -431,6 +531,25 @@ flowchart TD
    - **Automated Compile-Time SQL Verification:** Replaces Go's `sqlc` build-time validation via `backend/tests/test_sql.py` in CI, which parses and executes `EXPLAIN` on all parameterized queries in `queries.py` against `schema.sql` before deployment.
    - **Cold Boot Optimization:** Employs lazy dynamic imports for heavy ML libraries (`torch`, `scipy`) inside `/admin` route handlers. Top-level public routes import strictly `fastapi`, `numpy`, and `astropy.io.fits`, achieving `<600 ms` cold starts.
    - **Memory Management & Fragmentation Shield:** Employs `astropy.io.fits.open(..., memmap=True)` to map bytes directly from OS cache, allocates contiguous Float32 buffers (`np.empty(..., dtype=np.float32)`), and enforces a 1.0 GB byte-capped limit on `cachetools.LRUCache`.
+6. **Adaptive Wavelength Matching Algorithm:**
+   - Evaluates HDU 6 `WAVE-TAB` at every pixel in the cutout to compute exact central wavelength $\lambda(x, y)$ and bandpass width $\Delta\lambda(x, y)$.
+   - Resolving power per detector array: D1–D3 ($R \approx 35-50$), D4 ($R \approx 64-96$), D5 ($R \approx 96-118$), D6 ($R \approx 118-130$).
+   - Nominal fractional half-width is defined as $w_b \approx 1/R_b$ ($\approx \pm 0.8\% - 0.9\%$ in D5/D6).
+   - If a survey pass has sparse coverage, a fixed window may yield zero matching exposures. When `adaptive_window=true`, the backend adaptively widens the window half-width $w_b$ per target until every available epoch has at least $N_{\text{min}} \ge 1$ matched exposures, attaching an `[Adaptive Window (w=...)]` and residual warning badge if $w_b > 1/R_b$.
+7. **Native Per-Exposure PSF Centroiding Engine:**
+   - Centroid fitting executes **per exposure in native detector pixel space** rather than on resampled tangent mosaics (which introduces correlated pixel errors and non-linear distortion):
+     $$I_{\text{model}}(x, y) = F_0 \cdot \text{PSF}_{\text{resamp}}(x - x_0, y - y_0) + B_0$$
+   - **HDU 5 PSF Zone Selection:** The empirical Point Spread Function in HDU 5 is indexed by parent detector coordinates $(x_{\text{parent}}, y_{\text{parent}})$. Cutout pixels are mapped back to parent coordinates via raw exposure WCS to select the correct local empirical PSF kernel.
+   - **Sub-Pixel Phase Resampling:** Oversampled PSF kernels are resampled to native detector pixels at the exact trial sub-pixel phase $(x - x_0, y - y_0)$.
+   - **Inverse-Covariance Coaddition of Positions:** Native centroids are combined per (epoch, band) using inverse-covariance weighting:
+     $$\vec{r}(e, b) = \left( \sum_{i \in S(e, b)} \mathbf{\Sigma}_i^{-1} \right)^{-1} \sum_{i \in S(e, b)} \mathbf{\Sigma}_i^{-1} \vec{r}_i$$
+   - **Proper Motion Flagging:** Mover candidates are flagged when the measured centroid shift between earliest and latest epochs achieves $\text{SNR} \ge 3\sigma$ against catalog-free background stars.
+8. **Synthetic Source Injector Engine (`synth_a` & `synth_b`):**
+   - **Injection Parameters:** Supports `synth_a` and `synth_b` configurations specifying target sky coordinates $(\alpha_0, \delta_0)$, proper motion vector $(\mu_\alpha^*, \mu_\delta)$ in $\text{mas/yr}$, reference epoch $t_0$, apparent magnitude in Band D5, and synthetic spectral class (e.g. cold brown dwarf with methane absorption).
+   - **Proper Motion Propagation:** Computes source displacement at observation epoch $t_k$:
+     $$\Delta\alpha(t_k) = \frac{\mu_\alpha^* (t_k - t_0)}{\cos \delta(t_k)}, \quad \Delta\delta(t_k) = \mu_\delta (t_k - t_0)$$
+   - **PSF Convolved Injection:** Converts requested flux into native detector pixels using empirical HDU 5 Point Spread Functions. Injects convolved photon flux directly into HDU 1 `IMAGE`, and propagates Poisson noise variance into HDU 3 `VARIANCE`.
+   - **Transparent Provenance & Calibration Loop:** Injected frames carry the internal metadata flag `is_synthetic = True`, allowing the active-learning queue to automatically evaluate volunteer sensitivity and update Bayesian reliability weights $w_u$ upon submission.
 
 ### 4.3 Machine Learning & Observability Subsystem (`backend/ml/` & `/admin`)
 To support Phase 3 AI research and evaluators testing model training dynamics, the platform includes a complete, real PyTorch machine learning subsystem and a dedicated 5-tab administrative mission control portal.
@@ -880,7 +999,22 @@ exec uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 2 --timeout-k
 
 ---
 
-## 11. Verification Matrix & Document Sign-Off
+## 11. Risk Management & Operational Verification
+
+### 11.1 Risk Management & Mitigation Matrix
+
+| Risk | Impact | Mitigation Strategy |
+|---|---|---|
+| **Archive Release Renaming (QR2 vs QR3)** | Broken queries / HTTP 404. | Configuration-driven collection names via `IRSA_COLLECTION` env var; validated in Day-0 Spike S1. |
+| **Sparse Coverage at Sky Coordinates** | Empty canvas or incomplete matrix. | Visual Coverage Matrix (Epochs $\times$ Bands); honest non-detection empty states; optional adaptive window widening ($w_b > 1/R_b$) with warning badge. |
+| **Target Saturation (Barnard's Star)** | Corrupted centroiding and photometry. | HDU 2 `FLAGS` bitmask parsing (bit 1 `OVERFLOW`); automatic saturation badges and predicted-track overlays. |
+| **WISE 0855 Undetectable in Single Pass** | No source visible to user. | Inverse-variance multi-exposure coadds in Bands D5/D6; explicit documented non-detection state with $5\sigma$ limiting flux. |
+| **IRSA API Latency or Outage** | Slow response during judging. | Pre-cached static CDN benchmark bundle; SSE progress countdown streaming; 60s hard timeout with graceful partial return. |
+| **Zero-Auth Security Abuse** | Spam or forged badges. | Cryptographic secret `observer_key` hash in DB; read-only `/admin` default; mutating operations behind server-held `ADMIN_TOKEN`. |
+| **Database Memory Exhaustion** | 500 MB Supabase free tier blowout. | Dropped `pgvector` from P0; in-memory NumPy cosine similarity (<10 MB RAM, $<20\,\text{ms}$). |
+| **Scope Creep** | Unfinished core requirements. | Strict sequential gating: Day-0 Spikes $\to$ Phase 1 (P0) $\to$ Phase 2 (P1) $\to$ Phase 3 (P2). Cut order: P3 Model Lab $\to$ Tab 4 Molecular Studio $\to$ Admin triage $\to$ Tab 5 forum polish $\to$ Tab 3 template overlays. **NEVER CUT P0.** |
+
+### 11.2 Verification Matrix & Document Sign-Off
 
 | Verification Item | Specification Anchor | Verification Method | Status |
 |---|---|---|---|
