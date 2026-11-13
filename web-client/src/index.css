@@ -2,13 +2,50 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
-}
+@layer base {
+  :root {
+    color-scheme: dark;
 
-body {
-  margin: 0;
-  background-color: #090C10;
-  color: #E6EDF3;
-  font-family: 'JetBrains Mono', monospace;
+    /* Spectra Astronomical Observatory Tokens (HSL) */
+    --background: 222 36% 5%;          /* #080A0F Base sky canvas */
+    --foreground: 210 24% 93%;         /* #E6ECF2 High-contrast readout text */
+
+    --card: 218 27% 8%;                /* #0F131A Solid instrument HUD surface */
+    --card-foreground: 210 24% 93%;
+
+    --popover: 215 25% 11%;            /* #151B24 Floating menus & modals */
+    --popover-foreground: 210 24% 93%;
+
+    --primary: 199 89% 60%;            /* #38BDF8 Precision telescope reticle cyan */
+    --primary-foreground: 222 36% 5%;
+
+    --secondary: 215 25% 14%;          /* #1A222E Secondary controls */
+    --secondary-foreground: 210 24% 93%;
+
+    --muted: 218 27% 12%;              /* Muted panels & inactive tabs */
+    --muted-foreground: 215 16% 65%;   /* #94A3B8 Units & secondary labels */
+
+    --accent: 215 25% 14%;             /* Hover & focus state fill */
+    --accent-foreground: 210 24% 93%;
+
+    --destructive: 347 77% 50%;        /* Flag warnings & destructive actions */
+    --destructive-foreground: 210 24% 98%;
+
+    --border: 218 23% 15%;             /* #1E2530 Hairline structural borders */
+    --input: 218 23% 15%;              /* Input borders */
+    --ring: 199 89% 60%;               /* Focus outline rings */
+
+    --radius: 0.25rem;                 /* Crisp 4px instrument corners */
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    margin: 0;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'JetBrains Mono', monospace;
+  }
 }
