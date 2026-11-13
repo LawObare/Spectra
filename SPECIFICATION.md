@@ -1355,24 +1355,35 @@ Mounted persistently at the top of the viewport in `/explore` (fixed `56px` heig
 ### 6.3 Public Workspace Tabs: Detailed Component Breakdown
 
 #### 6.3.1 Tab 1: Celestial Navigator (`<CelestialNavigator />`)
-Serves as the spatial sky survey gateway (`DESIGN.md` §5), replacing distorted 2D Aitoff ovals and external 3D toy spheres with a **full-bleed, edge-to-edge immersed tangent-plane sky window** (`TAN` projection) where users pan continuously in all directions ($0^\circ\text{–}360^\circ$ RA, $\pm 90^\circ$ Dec) and zoom smoothly across credible patches of space.
+Serves as the spatial sky survey gateway (`DESIGN.md` §5), replacing distorted 2D Aitoff ovals and external 3D toy spheres with a **full-bleed, edge-to-edge immersed tangent-plane sky window** (`TAN` projection) where users pan continuously in all directions ($0^\circ\text{–}360^\circ$ RA, $\pm 90^\circ$ Dec) and zoom smoothly across real photographic space imagery.
 
 ```
 +---------------------------------------------------------------------------------------------------+
-| LAYER 1: Immersed Full-Viewport Sky Plane (Aladin Lite v3 WebGL2 in 'TAN' Projection / Starfield) |
-|          Background Survey: P/allWISE/color HiPS (Continuous pan & scroll-wheel zoom 60° -> 1')   |
+| LAYER 1: Stitched Real Space Photography Mosaic Engine (DESI Legacy Survey DR10 / unWISE / 2MASS) |
+|          Photographic Survey Plates: ls-dr10 (resolved galaxies), unwise-neo7, AllWISE, 2MASS     |
 |                                                                                                   |
-| LAYER 2: Hairline WCS Coordinate Grid + SPHEREx MOC Coverage (12% opacity) + NEP/SEP 5.64° Rings  |
+| LAYER 2: SPHEREx 6-Detector Array Level-2 MEF Footprints (D1–D6) with Linear Variable Filter (LVF)|
+|          WCS-WAVE dispersion gradients + Pass 1–4 coverage footprint rotation + Zodi estimates    |
 |                                                                                                   |
-| LAYER 3: Astrometric Overlays: Gaia DR3 Proper Motion Vectors (mu_alpha*, mu_delta) + SkyBot      |
+| LAYER 3: Hairline J2000 WCS Grid + NEP/SEP 5.64° Deep-Field Rings + Astrometric Starfield         |
 |                                                                                                   |
-| LAYER 4: Cutout Footprint Reticle (60"-600" Square) + Angular Scale Bar + Zoom Controls (+/-/1:1) |
+| LAYER 4: Gaia DR3 Proper Motion Vectors + Interactive Reticle + Calibrated Physical Scale Bar     |
 +---------------------------------------------------------------------------------------------------+
-| DOCKED INSTRUMENT STRIP (Bottom): J2000 Decimal & Sexagesimal | Field FoV | Passes | [Open cutout]|
+| DOCKED INSTRUMENT STRIP (Bottom): J2000 Decimal & Sexagesimal | Field FoV | WCS-WAVE λ | [Open Cutout]|
 +---------------------------------------------------------------------------------------------------+
 ```
 
-- **Aladin Lite v3 Initialization Protocol:**
+- **Stitched Real Space Photography Mosaic Architecture:**
+  - *Photographic Fidelity & Galaxy Resolution:* Real astronomical survey tiles are dynamically stitched and projected in tangent plane (TAN), eliminating synthetic star loops and artificial dot arrays. Extended astrophysical sources (spiral galaxies like M31, M51, NGC 253; star-forming nebulae, and dust filaments) are rendered from calibrated survey plates:
+    1. **DESI Legacy Survey DR10 (`ls-dr10`)**: High-resolution optical/near-IR imaging ($g,r,z$ bands, resolution down to $0.262''/\text{px}$) resolving galaxy spiral arms, HII regions, and tidal streams down to $24\,\text{mag}$.
+    2. **unWISE NEO7 Infrared (`unwise-neo7`)**: NASA WISE/NEOWISE co-adds at $3.4\,\mu\text{m}$ (W1) and $4.6\,\mu\text{m}$ (W2), revealing interstellar dust and cool substellar targets across the SPHEREx spectral regime.
+    3. **IRSA 2MASS Color (`J/H/Ks`)**: NASA/IPAC IRSA calibrated near-infrared survey ($1.23, 1.66, 2.16\,\mu\text{m}$) capturing stellar bulges and unreddened galactic stars.
+    4. **IRSA AllWISE Color (`W4/W2/W1`)**: NASA/IPAC IRSA 4-band mid-infrared survey ($3.4, 4.6, 12, 22\,\mu\text{m}$).
+  - *Dynamic Survey Plate Tiling:* Photographic plates are addressed via WCS tangent projection, smoothly updated on canvas drag/zoom, and seamlessly composited under the SPHEREx instrument overlay.
+- **SPHEREx Level-2 MEF Instrument Overlay:**
+  - Renders the six HgCdTe focal plane arrays (`D1`–`D6`) with Linear Variable Filter (LVF) color spectrum gradients ($0.75\text{–}5.00\,\mu\text{m}$).
+  - Displays exposure footprints across survey passes 1–4 with roll orientation angle $\psi$, estimated zodiacal emission (HDU 4 ZODI), and live cursor wavelength $\lambda(\mu\text{m})$.
+- **Aladin Lite v3 Fallback & HiPS Integration Protocol:**
   ```javascript
   await A.init;
   const aladin = A.aladin('#sky-globe-mount', {
@@ -1388,19 +1399,13 @@ Serves as the spatial sky survey gateway (`DESIGN.md` §5), replacing distorted 
   ```
 - **MOC & Deep-Field Layer Configuration:**
   - Loads `spherex_qr2` coverage map via `aladin.addMOC(A.MOCFromJSON(SPHEREX_MOC_JSON, { color: '#38bdf8', opacity: 0.12, lineWidth: 1 }))`.
-  - Loads North and South Ecliptic Pole deep fields as `1px` magenta boundary rings (`#ff0055`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
+  - Loads North and South Ecliptic Pole deep fields as `1px` amber boundary rings (`#f59e0b`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
 - **Continuous Sky Pan, Zoom & Cutout Extraction:**
-  - *Continuous Navigation:* User pans across the sky via click-and-drag or arrow keys and zooms in/out via scroll wheel or on-screen `+` / `−` / `Reset` controls (`60°` down to `1'`). When offline, a deterministic full-viewport tangent-plane starfield renders realistic multi-magnitude field stars ($G = 8..18$), PSF cores, WCS gridlines, and proper-motion vectors across the entire screen.
-  - *Reticle & Scale Bar:* Center `1px` reticle frame scales dynamically to represent the active cutout FoV ($60''\text{–}600''$) alongside a calibrated angular scale bar.
-  - *Cutout Transition:* Double-clicking a target or clicking `[Open cutout]` in the docked bottom instrument strip pans/zooms smoothly (`1.2s`) to the cutout footprint:
-    ```javascript
-    aladin.animateToRaDec(targetRa, targetDec, 1.2, () => {
-      setTab('comparator');
-    });
-    aladin.zoomToFoV(fovArcsec / 3600, 1.2);
-    ```
+  - *Continuous Navigation:* User pans across the sky via click-and-drag or arrow keys and zooms in/out via scroll wheel or on-screen `+` / `−` / preset controls (`60°` down to `0.05°`).
+  - *Calibrated Scale Bar:* Renders physical angular width ($10^\circ, 2^\circ, 30', 5', 1', 10''$) dynamically scaled to active viewport pixels per degree.
+  - *Cutout Transition:* Clicking `Extract Spectral Cutout →` passes active target coordinates directly into Tab 2 (Time-Domain Comparator) without unsolicited redirects.
 - **Real-Time Catalog Layers (VizieR & SkyBot):**
-  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$ within a $300''$ radius (limited to top 50 brightest sources with compact JSON delivery). Renders circles scaled by magnitude with vector arrows calculated as:
+  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$ within a $300''$ radius. Renders circles scaled by magnitude with vector arrows calculated as:
     $$\Delta x = \mu_\alpha^* \cdot \text{scale}, \quad \Delta y = \mu_\delta \cdot \text{scale}$$
   - SkyBot Ephemerides: Invokes `A.catalogFromSkyBot({ epoch: observationMjd })` to overlay known asteroids and comets. Protected by a **2.0-second circuit breaker**: if SkyBot times out or fails under heavy VO load, the response falls back gracefully to `"skybot_status": "cached_only"` without blocking the primary cutout stream.
 

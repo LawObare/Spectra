@@ -49,6 +49,56 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
   vega: { pmRaMasYr: 200.9, pmDecMasYr: 286.2, totalArcsecYr: 0.35 },
 };
 
+// Real Photographic Astronomical Survey Configurations
+export type PhotographicSurveyId = 'ls-dr10' | 'unwise-neo7';
+
+export interface PhotographicSurveySpec {
+  id: PhotographicSurveyId;
+  label: string;
+  badge: string;
+  description: string;
+}
+
+export const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
+  {
+    id: 'ls-dr10',
+    label: 'Legacy Survey DR10',
+    badge: 'Optical (Resolved Galaxies)',
+    description: 'DESI Legacy Imaging Surveys DR10 (g, r, z). Resolves galaxy spiral arms, stellar bulges, and dust lanes with photographic clarity.',
+  },
+  {
+    id: 'unwise-neo7',
+    label: 'unWISE Infrared',
+    badge: 'NASA Infrared (3.4 / 4.6 µm)',
+    description: 'NASA WISE/NEOWISE all-sky cryogenic co-adds. Matches SPHEREx infrared regime; reveals interstellar dust and brown dwarfs.',
+  },
+];
+
+interface PhotographicPlate {
+  key: string;
+  img: HTMLImageElement;
+  loaded: boolean;
+  error: boolean;
+  ra: number;
+  dec: number;
+  sizeDeg: number;
+  pixscale: number;
+  lastUsed: number;
+}
+
+function getCutoutTileUrl(
+  survey: PhotographicSurveyId,
+  raDeg: number,
+  decDeg: number,
+  pixscale: number,
+  size = 512
+): string {
+  const normRa = (((raDeg % 360) + 360) % 360).toFixed(5);
+  const clampDec = Math.max(-89.0, Math.min(89.0, decDeg)).toFixed(5);
+  const clampScale = Math.max(0.262, Math.min(30.0, pixscale)).toFixed(3);
+  return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${survey}&pixscale=${clampScale}&size=${size}`;
+}
+
 // SPHEREx Level-2 Spectral Image Exposure Metadata (Modelled after IRSA spherex_qr2 MEF table)
 export interface SpherexSpectralExposure {
   obsId: string;
@@ -187,8 +237,7 @@ function generateSpherexExposuresForCoord(raDeg: number, decDeg: number): Sphere
 export const CelestialNavigator: React.FC = () => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const skyCanvasRef = useRef<HTMLCanvasElement>(null);
-  const aladinMountRef = useRef<HTMLDivElement>(null);
-  const aladinInstanceRef = useRef<any>(null);
+  const plateCacheRef = useRef<Map<string, PhotographicPlate>>(new Map());
 
   // High-frequency DOM refs for 60 FPS cursor readouts (avoids React state re-renders on mousemove)
   const cursorRaDecDomRef = useRef<HTMLSpanElement>(null);
@@ -212,7 +261,7 @@ export const CelestialNavigator: React.FC = () => {
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(true);
   const [showProperMotion, setShowProperMotion] = useState<boolean>(true);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
-  const [showHipsUnderlay, setShowHipsUnderlay] = useState<boolean>(false);
+  const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('ls-dr10');
   const [selectedBandFilter, setSelectedBandFilter] = useState<string>('ALL');
   const [hoveredObsId, setHoveredObsId] = useState<string | null>(null);
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
@@ -290,7 +339,7 @@ export const CelestialNavigator: React.FC = () => {
     showWcsGrid,
     showProperMotion,
     showCutoutBox,
-    showHipsUnderlay,
+    activeSurvey,
     filteredExposures,
     activeExposure,
   });
@@ -305,19 +354,19 @@ export const CelestialNavigator: React.FC = () => {
       showWcsGrid,
       showProperMotion,
       showCutoutBox,
-      showHipsUnderlay,
+      activeSurvey,
       filteredExposures,
       activeExposure,
     };
   }, [
     activeExposure,
+    activeSurvey,
     activeTargetName,
     filteredExposures,
     fovArcsec,
     ra,
     dec,
     showCutoutBox,
-    showHipsUnderlay,
     showLvfFootprints,
     showProperMotion,
     showWcsGrid,
@@ -328,54 +377,8 @@ export const CelestialNavigator: React.FC = () => {
     if (!dragRef.current.active) {
       cameraRef.current.centerRa = ra;
       cameraRef.current.centerDec = dec;
-      if (aladinInstanceRef.current && typeof aladinInstanceRef.current.gotoRaDec === 'function') {
-        try {
-          aladinInstanceRef.current.gotoRaDec(ra, dec);
-        } catch {
-          // Ignore
-        }
-      }
     }
   }, [ra, dec]);
-
-  // Optional External HiPS Underlay Initialization (Only mounted if user enables HiPS Underlay toggle)
-  useEffect(() => {
-    if (!showHipsUnderlay || !aladinMountRef.current || aladinInstanceRef.current) return;
-    let mounted = true;
-
-    // @ts-expect-error aladin-lite ships pure JS/WASM bundle without .d.ts declarations
-    import('aladin-lite')
-      .then(async (mod: any) => {
-        const A = mod?.default || mod || window.A;
-        if (!mounted || !A || !aladinMountRef.current) return;
-        if (A.init && typeof A.init.then === 'function') {
-          await A.init;
-        }
-        if (!mounted || !aladinMountRef.current) return;
-        const aladin = A.aladin(aladinMountRef.current, {
-          survey: 'P/allWISE/color',
-          projection: 'TAN',
-          fov: cameraRef.current.fovDeg,
-          target: `${cameraRef.current.centerRa} ${cameraRef.current.centerDec}`,
-          cooFrame: 'ICRSd',
-          showReticle: false,
-          showCooGrid: false,
-          showCooGridControl: false,
-          showFullscreenControl: false,
-          showZoomControl: false,
-          showLayersControl: false,
-          showGotoControl: false,
-        });
-        aladinInstanceRef.current = aladin;
-      })
-      .catch(() => {
-        // Non-blocking optional HiPS layer
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [showHipsUnderlay]);
 
   // Primary 60 FPS Hardware-Accelerated Stitched Sky Mosaic & LVF Footprint Renderer
   useEffect(() => {
@@ -385,7 +388,6 @@ export const CelestialNavigator: React.FC = () => {
     if (!ctx) return;
 
     let animId: number;
-    const starPalette = ['#cfe4ff', '#eef6ff', '#fff9eb', '#ffe3b3', '#ffbe85', '#ff9b6a'];
 
     const renderFrame = () => {
       const parent = canvas.parentElement;
@@ -424,137 +426,135 @@ export const CelestialNavigator: React.FC = () => {
         return { x, y, inBounds };
       };
 
-      // 1. Base Sky Well (Semi-transparent if external HiPS underlay is active, solid deep-space infrared mosaic otherwise)
+      // 1. Base Deep Space Well
       ctx.clearRect(0, 0, width, height);
-      if (!state.showHipsUnderlay) {
-        ctx.fillStyle = '#06080D';
-        ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#06080D';
+      ctx.fillRect(0, 0, width, height);
 
-        // Stitched Infrared Sky Mosaic Tile Shading (Models SPHEREx / AllWISE sky survey plates)
-        const tileStepDeg = fovDeg > 15 ? 4.0 : fovDeg > 4 ? 1.5 : 0.5;
-        const minTileRa = Math.floor((centerRa - raSpan) / tileStepDeg) * tileStepDeg;
-        const maxTileRa = Math.ceil((centerRa + raSpan) / tileStepDeg) * tileStepDeg;
-        const minTileDec = Math.max(-88, Math.floor((centerDec - halfFovY * 1.3) / tileStepDeg) * tileStepDeg);
-        const maxTileDec = Math.min(88, Math.ceil((centerDec + halfFovY * 1.3) / tileStepDeg) * tileStepDeg);
+      // 2. Stitched Real Space Photography Mosaic Engine
+      // Dynamically tiles photographic survey plates covering the active viewport
+      const plateSizeDeg =
+        fovDeg > 14.0
+          ? 18.0
+          : fovDeg > 5.0
+          ? 6.0
+          : fovDeg > 1.6
+          ? 2.0
+          : fovDeg > 0.45
+          ? 0.65
+          : fovDeg > 0.12
+          ? 0.22
+          : 0.08;
 
-        for (let tDec = minTileDec; tDec <= maxTileDec; tDec += tileStepDeg) {
-          for (let tRa = minTileRa; tRa <= maxTileRa; tRa += tileStepDeg) {
-            const normRa = ((tRa % 360) + 360) % 360;
-            const p1 = worldToScreen(normRa, tDec + tileStepDeg);
-            const p2 = worldToScreen(normRa + tileStepDeg, tDec);
-            const tileX = Math.min(p1.x, p2.x);
-            const tileY = Math.min(p1.y, p2.y);
-            const tileW = Math.abs(p2.x - p1.x);
-            const tileH = Math.abs(p2.y - p1.y);
+      const pixscale = Math.max(
+        0.262,
+        Math.min(28.0, (plateSizeDeg * 3600) / 512)
+      );
 
-            // Subtle zodiacal / galactic background glow variation per stitched mosaic plate
-            const plateHash = hashSkyCell(Math.round(normRa * 2), Math.round(tDec * 2), 7);
-            ctx.fillStyle = `rgba(18, 28, 45, ${0.12 + plateHash * 0.14})`;
-            ctx.fillRect(tileX, tileY, tileW, tileH);
+      const stepDeg = plateSizeDeg * 0.82; // Overlap prevents edge seams during reprojection
+      const minDec = Math.max(
+        -88.5,
+        Math.floor((centerDec - halfFovY * 1.15) / stepDeg) * stepDeg
+      );
+      const maxDec = Math.min(
+        88.5,
+        Math.ceil((centerDec + halfFovY * 1.15) / stepDeg) * stepDeg
+      );
+      const minRa = Math.floor((centerRa - raSpan * 1.15) / stepDeg) * stepDeg;
+      const maxRa = Math.ceil((centerRa + raSpan * 1.15) / stepDeg) * stepDeg;
 
-            // Subtle stitched mosaic plate seam
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.045)';
-            ctx.lineWidth = 0.75;
-            ctx.strokeRect(tileX, tileY, tileW, tileH);
+      const now = Date.now();
+
+      // Request and update visible plates in cache
+      for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
+        for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
+          const normRa = ((pRa % 360) + 360) % 360;
+          const plateKey = `${state.activeSurvey}_${plateSizeDeg.toFixed(2)}_${normRa.toFixed(4)}_${pDec.toFixed(4)}`;
+          const plate = plateCacheRef.current.get(plateKey);
+
+          if (!plate) {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            const newPlate: PhotographicPlate = {
+              key: plateKey,
+              img,
+              loaded: false,
+              error: false,
+              ra: normRa,
+              dec: pDec,
+              sizeDeg: plateSizeDeg,
+              pixscale,
+              lastUsed: now,
+            };
+            plateCacheRef.current.set(plateKey, newPlate);
+            img.onload = () => {
+              newPlate.loaded = true;
+            };
+            img.onerror = () => {
+              newPlate.error = true;
+            };
+            img.src = getCutoutTileUrl(state.activeSurvey, normRa, pDec, pixscale, 512);
+          } else {
+            plate.lastUsed = now;
           }
-        }
-
-        // Diffuse infrared nebulosity / zodiacal dust glow centered near target
-        const targetPos = worldToScreen(state.targetRa, state.targetDec);
-        if (targetPos.inBounds) {
-          const nebGrad = ctx.createRadialGradient(
-            targetPos.x,
-            targetPos.y,
-            4,
-            targetPos.x,
-            targetPos.y,
-            Math.min(width, height) * 0.42
-          );
-          nebGrad.addColorStop(0, 'rgba(56, 189, 248, 0.09)');
-          nebGrad.addColorStop(0.5, 'rgba(15, 23, 42, 0.05)');
-          nebGrad.addColorStop(1, 'rgba(6, 8, 13, 0)');
-          ctx.fillStyle = nebGrad;
-          ctx.fillRect(0, 0, width, height);
         }
       }
 
-      // 2. Multi-Octave Astrometric Starfield (Always visible, crisp, zero lag)
-      // Renders 3 nested angular octaves so stars are dense at wide FoV and reveal fainter magnitudes as you zoom in
-      const octaves = [
-        { cellDeg: 2.0, minFov: 0.01, maxFov: 65.0, starsPerCell: 9, brightBoost: 1.35 },
-        { cellDeg: 0.5, minFov: 0.01, maxFov: 16.0, starsPerCell: 10, brightBoost: 1.0 },
-        { cellDeg: 0.12, minFov: 0.01, maxFov: 4.0, starsPerCell: 11, brightBoost: 0.85 },
-      ];
+      // LRU cache eviction if cache exceeds 60 plates
+      if (plateCacheRef.current.size > 60) {
+        const entries = Array.from(plateCacheRef.current.entries());
+        entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+        for (let i = 0; i < entries.length - 45; i++) {
+          plateCacheRef.current.delete(entries[i][0]);
+        }
+      }
 
-      octaves.forEach((oct, octIdx) => {
-        if (fovDeg > oct.maxFov || fovDeg < oct.minFov) return;
-        const fadeAlpha =
-          fovDeg > oct.maxFov * 0.7
-            ? Math.max(0.15, 1 - (fovDeg - oct.maxFov * 0.7) / (oct.maxFov * 0.3))
-            : 1.0;
+      // Render all loaded photographic plates for active survey intersecting viewport
+      // Sort plates by size descending so wider base plates render before high-res overlays
+      const loadedPlates = Array.from(plateCacheRef.current.values()).filter(
+        (p) => p.loaded && !p.error && p.key.startsWith(state.activeSurvey)
+      );
+      loadedPlates.sort((a, b) => b.sizeDeg - a.sizeDeg);
 
-        const cRaStart = Math.floor((centerRa - raSpan) / oct.cellDeg);
-        const cRaEnd = Math.ceil((centerRa + raSpan) / oct.cellDeg);
-        const cDecStart = Math.floor((centerDec - halfFovY * 1.25) / oct.cellDeg);
-        const cDecEnd = Math.ceil((centerDec + halfFovY * 1.25) / oct.cellDeg);
-        const wrapCount = Math.max(1, Math.round(360 / oct.cellDeg));
+      let renderedPlateCount = 0;
+      loadedPlates.forEach((plate) => {
+        const cosPDec = Math.max(0.08, Math.cos((plate.dec * Math.PI) / 180));
+        const halfWidthRa = (plate.sizeDeg / 2) / cosPDec;
+        const halfHeightDec = plate.sizeDeg / 2;
 
-        for (let cDec = cDecStart; cDec <= cDecEnd; cDec++) {
-          const decCenter = cDec * oct.cellDeg;
-          if (decCenter < -89.5 || decCenter > 89.5) continue;
-          for (let cRa = cRaStart; cRa <= cRaEnd; cRa++) {
-            const wrappedRa = ((cRa % wrapCount) + wrapCount) % wrapCount;
-            for (let s = 0; s < oct.starsPerCell; s++) {
-              const saltBase = octIdx * 100 + s * 5;
-              const u = hashSkyCell(wrappedRa, cDec, saltBase + 1);
-              const v = hashSkyCell(wrappedRa, cDec, saltBase + 2);
-              const magH = hashSkyCell(wrappedRa, cDec, saltBase + 3);
-              const colH = hashSkyCell(wrappedRa, cDec, saltBase + 4);
+        const pTopLeft = worldToScreen(plate.ra + halfWidthRa, plate.dec + halfHeightDec);
+        const pBotRight = worldToScreen(plate.ra - halfWidthRa, plate.dec - halfHeightDec);
 
-              const starRa = (cRa + u) * oct.cellDeg;
-              const starDec = (cDec + v) * oct.cellDeg;
-              const pos = worldToScreen(starRa, starDec);
-              if (!pos.inBounds) continue;
+        const dx = pBotRight.x - pTopLeft.x;
+        const dy = pBotRight.y - pTopLeft.y;
 
-              // Realistic stellar magnitude & PSF radius
-              const radiusPx = (0.7 + Math.pow(1 - magH, 2.6) * 2.8) * oct.brightBoost;
-              const alpha = Math.min(1.0, (0.35 + (1 - magH) * 0.65) * fadeAlpha);
-              const colorHex = starPalette[Math.floor(colH * starPalette.length)];
-
-              // Soft PSF halo for brighter stars
-              if (radiusPx > 1.8) {
-                ctx.globalAlpha = alpha * 0.28;
-                ctx.fillStyle = colorHex;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, radiusPx * 2.4, 0, Math.PI * 2);
-                ctx.fill();
-              }
-
-              // Crisp stellar core
-              ctx.globalAlpha = alpha;
-              ctx.fillStyle = colorHex;
-              ctx.beginPath();
-              ctx.arc(pos.x, pos.y, radiusPx, 0, Math.PI * 2);
-              ctx.fill();
-
-              // Infrared telescope 4-point diffraction spikes on bright field stars
-              if (radiusPx > 2.35) {
-                ctx.strokeStyle = colorHex;
-                ctx.lineWidth = 0.7;
-                ctx.globalAlpha = alpha * 0.65;
-                const spikeLen = radiusPx * 3.8;
-                ctx.beginPath();
-                ctx.moveTo(pos.x - spikeLen, pos.y);
-                ctx.lineTo(pos.x + spikeLen, pos.y);
-                ctx.moveTo(pos.x, pos.y - spikeLen);
-                ctx.lineTo(pos.x, pos.y + spikeLen);
-                ctx.stroke();
-              }
-            }
-          }
+        if (
+          dx > 2 &&
+          dy > 2 &&
+          pTopLeft.x < width &&
+          pTopLeft.x + dx > 0 &&
+          pTopLeft.y < height &&
+          pTopLeft.y + dy > 0
+        ) {
+          ctx.drawImage(plate.img, pTopLeft.x, pTopLeft.y, dx, dy);
+          renderedPlateCount++;
         }
       });
-      ctx.globalAlpha = 1.0;
+
+      // Subtle field grounding if plates are still downloading on cold start
+      if (renderedPlateCount === 0) {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
+        ctx.lineWidth = 1;
+        for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
+          for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
+            const normRa = ((pRa % 360) + 360) % 360;
+            const pos = worldToScreen(normRa, pDec);
+            const w = (stepDeg * scalePxPerDeg) / cosCenterDec;
+            const h = stepDeg * scalePxPerDeg;
+            ctx.strokeRect(pos.x - w / 2, pos.y - h / 2, w, h);
+          }
+        }
+      }
 
       // 3. J2000 WCS Coordinate Grid (Toggleable)
       if (state.showWcsGrid) {
@@ -838,13 +838,6 @@ export const CelestialNavigator: React.FC = () => {
     const clamped = Math.max(0.04, Math.min(60.0, nextFovDeg));
     cameraRef.current.fovDeg = clamped;
     setDisplayFovDeg(clamped);
-    if (aladinInstanceRef.current && typeof aladinInstanceRef.current.setFoV === 'function') {
-      try {
-        aladinInstanceRef.current.setFoV(clamped);
-      } catch {
-        // Ignore
-      }
-    }
   }, []);
 
   // Smooth Wheel Zoom (Cursor-anchored, zero lag)
@@ -893,14 +886,6 @@ export const CelestialNavigator: React.FC = () => {
       cam.centerDec = nextDec;
       dragRef.current.lastX = e.clientX;
       dragRef.current.lastY = e.clientY;
-
-      if (aladinInstanceRef.current && typeof aladinInstanceRef.current.gotoRaDec === 'function') {
-        try {
-          aladinInstanceRef.current.gotoRaDec(nextRa, nextDec);
-        } catch {
-          // Ignore
-        }
-      }
     }
 
     // Compute world coordinates under cursor
@@ -1124,18 +1109,26 @@ export const CelestialNavigator: React.FC = () => {
             >
               Cutout Box ({fovArcsec}&quot;)
             </button>
-            <button
-              type="button"
-              onClick={() => setShowHipsUnderlay((v) => !v)}
-              className={`rounded-sm border px-2 py-1 text-[11px] transition-colors duration-150 ${
-                showHipsUnderlay
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
-              title="Stream external AllWISE HiPS tiles from CDS Strasbourg underneath the starfield"
-            >
-              External HiPS
-            </button>
+
+            {/* Photographic Sky Survey Layer Selector */}
+            <div className="flex items-center gap-1" role="group" aria-label="Photographic survey layer">
+              <span className="text-[11px] text-[#94A3B8]">Survey:</span>
+              {PHOTOGRAPHIC_SURVEYS.map((surv) => (
+                <button
+                  key={surv.id}
+                  type="button"
+                  onClick={() => setActiveSurvey(surv.id)}
+                  title={`${surv.label} (${surv.badge}) · ${surv.description}`}
+                  className={`rounded-sm border px-2 py-0.5 text-[11px] transition-colors duration-150 ${
+                    activeSurvey === surv.id
+                      ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
+                      : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
+                  }`}
+                >
+                  {surv.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* SPHEREx Detector Band Filter (D1-D6) */}
@@ -1231,14 +1224,6 @@ export const CelestialNavigator: React.FC = () => {
           onDoubleClick={handleDoubleClick}
           className="relative flex-1 w-full overflow-hidden bg-[#06080D] cursor-grab active:cursor-grabbing"
         >
-          {/* Optional External HiPS Underlay */}
-          {showHipsUnderlay && (
-            <div
-              ref={aladinMountRef}
-              className="pointer-events-none absolute inset-0 h-full w-full opacity-55"
-            />
-          )}
-
           {/* Primary 60 FPS Astrometric Starfield & SPHEREx LVF Footprint Canvas */}
           <canvas
             ref={skyCanvasRef}
@@ -1263,10 +1248,10 @@ export const CelestialNavigator: React.FC = () => {
             </svg>
             <div className="flex flex-col">
               <span className="font-mono text-[10px] text-[#E6ECF2]">
-                TAN Gnomonic · North Up, East Left
+                TAN Gnomonic · {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'Space Photography'}
               </span>
               <span className="font-mono text-[10px] text-[#94A3B8]">
-                Click sky to set target · Drag to pan · Scroll to zoom
+                {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.badge || 'Resolved Galaxies & Stars'} · Drag to pan · Scroll to zoom
               </span>
             </div>
           </div>
