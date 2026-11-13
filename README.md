@@ -51,9 +51,9 @@ Traditional astronomical portals fail citizen scientists and researchers attempt
 ### Public Discovery Workspaces (`/explore`)
 - **Tab 1: Celestial Navigator (`/explore?tab=navigator`):** Full-viewport Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx coverage MOC, Gaia DR3 proper motion vectors, CDS Sesame name resolver, universal coordinate parsing, and 3-stage camera dive.
 - **Tab 2: Time-Domain Comparator (`/explore?tab=comparator`):** WebGL2 multi-epoch player with Asinh stretch slider, pairwise difference subtraction ($t_N - t_0$), inverse-variance co-add mode for faint brown dwarfs, sub-pixel Gaia DR3 centroid pins ($0.77\,\text{px/yr}$ deblending), discrete 6-month survey epoch stepping, and live hover HUD.
-- **Tab 3: Spectrophotometric Lab (`/explore?tab=spectrophotometer`):** Canvas `uPlot` chart rendering 102 calibrated flux channels with `VARIANCE` error bars at 60 FPS, synchronized epoch animation, two-component composite spectral unmixing ($a \cdot T_1 + b \cdot T_2$), automated galaxy photo-$z$ solver ($P(z)$, lookback time, Mpc distance), and instant 102-band `pgvector` cosine similarity search ($<2\,\text{ms}$).
-- **Tab 4: Molecular & Ice Mapping Studio (`/explore?tab=ice_studio`):** Continuum-normalized optical depth ($\tau_\lambda$), quantitative biogenic ice column density integrator ($N_{\text{ice}}$ in $\text{cm}^{-2}$) for $\text{H}_2\text{O}$ ($3.05\,\mu\text{m}$), $\text{CH}_4$ ($3.32\,\mu\text{m}$), $\text{CO}_2$ ($4.27\,\mu\text{m}$), and $\text{CO}$ ($4.67\,\mu\text{m}$), spatial ice brush, and diffuse EBL foreground point-source masking.
-- **Tab 5: Observation Discussions (`/explore?tab=discussions`):** Zooniverse Talk-style scientific forum with channel taxonomy (`#movers`, `#spectra`, `#ices`, `#artifacts`, `#confirmed`), interactive deep-link state snapshots, live synchronization via Supabase Realtime, and Bayesian consensus ranking.
+- **Tab 3: Spectrophotometric Lab (`/explore?tab=spectrophotometer`):** Canvas `uPlot` chart rendering 102 calibrated flux channels with `VARIANCE` error bars at 60 FPS, synchronized epoch animation, two-component composite spectral unmixing ($a \cdot T_1 + b \cdot T_2$), automated galaxy photo-$z$ solver ($P(z)$, lookback time, Mpc distance), and instant 102-band in-memory NumPy cosine similarity search ($<20\,\text{ms}$).
+- **Tab 4: Molecular & Ice Mapping Studio (`/explore?tab=ice_studio`):** Continuum-normalized optical depth ($\tau_\lambda$), point-source background star aperture photometry (seeded from the IRSA SPLICES catalog), and quantitative biogenic ice column density integration ($N_{\text{ice}}$ in $\text{cm}^{-2}$) using verified laboratory $A$-values for $\text{H}_2\text{O}$ ($3.05\,\mu\text{m}$), $\text{CO}_2$ ($4.27\,\mu\text{m}$), $^{13}\text{CO}_2$ ($4.38\,\mu\text{m}$), $\text{CO}$ ($4.67\,\mu\text{m}$), and $\text{CH}_3\text{OH}$ ($3.54\,\mu\text{m}$).
+- **Tab 5: Observation Discussions (`/explore?tab=discussions`):** Zooniverse Talk-style scientific forum with channel taxonomy (`#movers`, `#spectra`, `#ices`, `#artifacts`, `#confirmed`), interactive deep-link state snapshots, live synchronization via FastAPI SSE (`/api/forum/stream`), and Bayesian consensus ranking.
 
 ### Admin Mission Control (`/admin`)
 - **Tab 1: Training Dynamics & Loss Studio (`/admin/dynamics`):** Real-time scalar learning curves, gradient L2 norms, learning rate annealing, and early-stopping monitors via `uPlot`.
@@ -188,8 +188,8 @@ Implementation is structured into **four strictly sequential, priority-gated pha
 ## 9. Scientific Data Acknowledgement & Citations
 
 This platform utilizes data products from the **NASA SPHEREx** mission:
-- **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA), SPHEREx Quick Release 3 (QR3).
-- **DOI:** [10.26131/IRSA662](https://doi.org/10.26131/IRSA662)
+- **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA), SPHEREx Quick Release 2 (`spherex_qr2`, configurable via `IRSA_COLLECTION`).
+- **Archive Documentation:** [IRSA SPHEREx Mission Portal](https://irsa.ipac.caltech.edu/Missions/spherex.html) & [SPLICES Ice Catalog](https://irsa.ipac.caltech.edu/data/SPHEREx/SPLICES/)
 - **External Catalogs:** European Space Agency (ESA) Gaia DR3, NASA/IPAC Wide-field Infrared Survey Explorer (AllWISE), Pan-STARRS1 Surveys (STScI).
 - **Sky Engine:** Aladin Lite v3 (developed by CDS, Observatoire Astronomique de Strasbourg, France; licensed under GNU GPL-3.0).
 
