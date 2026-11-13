@@ -33,8 +33,11 @@ const SPHEREX_DETECTORS: DetectorSpec[] = [
 
 const FOV_CUTOUT_PRESETS = [60, 120, 180, 300, 600];
 const DEFAULT_SKY_FOV_DEG = 18;
-const MIN_SKY_FOV_DEG = 0.02;
+const MIN_SKY_FOV_DEG = 0.08;
 const MAX_SKY_FOV_DEG = 60;
+const DETAIL_FITS_FOV_DEG = 0.14;
+const DETAIL_FITS_MAX_DIMENSION = 500;
+const DETAIL_FITS_LAYER_PREFIX = '2MASS Ks FITS detail';
 const SIMULATED_PREVIEW_BADGE = '[Synthetic Injection Mode]';
 
 // Verified Astrometric Proper Motions (mas/yr) for Catalog Objects
@@ -49,11 +52,20 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
-type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'dss2-color' | 'spitzer-color';
+type PhotographicSurveyId =
+  | 'legacy-dr10'
+  | 'allwise-color'
+  | 'sdss-color'
+  | '2mass-color'
+  | 'dss2-color'
+  | 'spitzer-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
   hipsUrl: string;
+  maxOrder?: number;
+  imgFormat?: 'jpeg' | 'png';
+  tileSize?: number;
   label: string;
   badge: string;
   description: string;
@@ -61,34 +73,99 @@ interface PhotographicSurveySpec {
 
 const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
+    id: 'legacy-dr10',
+    hipsUrl: 'https://alaskybis.cds.unistra.fr/DESI-legacy-surveys/DR10/CDS_P_DESI-Legacy-Surveys_DR10_color',
+    label: 'DESI Legacy Survey DR10',
+    badge: 'Optical g/r/i/z · resolved galaxies · partial sky',
+    description: 'DESI Legacy Survey DR10 calibrated color imagery for resolving extended galaxies where the survey has coverage.',
+  },
+  {
     id: 'allwise-color',
     hipsUrl: 'https://skies.esac.esa.int/AllWISEColor',
+    maxOrder: 8,
+    imgFormat: 'jpeg',
+    tileSize: 512,
     label: 'AllWISE Infrared',
     badge: 'WISE 3.4 & 4.6 µm (All-Sky)',
-    description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
+    description: 'All-sky WISE infrared HiPS. Its 6–12 arcsec source resolution can blend point sources at a 6° field on typical displays.',
+  },
+  {
+    id: 'sdss-color',
+    hipsUrl: 'https://skies.esac.esa.int/SDSS9Color',
+    label: 'SDSS Optical (High-Res)',
+    badge: 'SDSS DR9 · 0.4″/px · JPEG · ~36% sky',
+    description: 'High-resolution SDSS DR9 color imagery (about 0.4 arcsec/pixel); coverage is limited to about 36% of the sky and tiles use JPEG.',
   },
   {
     id: '2mass-color',
     hipsUrl: 'https://skies.esac.esa.int/2MASSColor',
     label: '2MASS Near-IR',
-    badge: 'J/H/Ks (All-Sky)',
+    badge: 'J/H/Ks (All-Sky, Order 9)',
     description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
     id: 'dss2-color',
     hipsUrl: 'https://skies.esac.esa.int/DSSColor',
     label: 'DSS2 Optical',
-    badge: 'Palomar/UKST (All-Sky)',
+    badge: 'Palomar/UKST (All-Sky, Order 9)',
     description: 'Digitized Sky Survey full-sphere optical photographic mosaic covering 100% of both hemispheres.',
   },
   {
     id: 'spitzer-color',
     hipsUrl: 'https://skies.esac.esa.int/Spitzer/IRAC1_bright_ISM',
     label: 'Spitzer 3.6 µm',
-    badge: 'IRAC Ch 1 (Deep IR)',
-    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions.',
+    badge: 'IRAC Ch 1 (Deep IR, Order 10 PNG)',
+    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions in lossless PNG tiles.',
   },
 ];
+
+interface IrsaExposure {
+  obsId: string;
+  detector: string;
+  mjd: string;
+  wavelength: string;
+  accessUrl: string;
+  sRegion: string;
+}
+
+function parseIrsaSiaResponse(payload: unknown): IrsaExposure[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const table = payload as { metadata?: Array<{ name?: string }>; data?: unknown[] };
+  const metadata = table.metadata || [];
+  const rows = Array.isArray(table.data) ? table.data : [];
+
+  return rows.flatMap((row, index) => {
+    const values = Array.isArray(row)
+      ? Object.fromEntries(metadata.map((column, columnIndex) => [
+          String(column.name || '').toLowerCase(),
+          row[columnIndex],
+        ]))
+      : row && typeof row === 'object'
+        ? Object.fromEntries(Object.entries(row).map(([key, value]) => [key.toLowerCase(), value]))
+        : {};
+    const accessUrl = String(values.access_url || values.accessurl || '');
+    if (!accessUrl.startsWith('https://')) return [];
+
+    return [{
+      obsId: String(values.obs_id || values.obsid || values.id || `IRSA-${index + 1}`),
+      detector: String(values.instrument_name || values.bandpassname || values.energy_bandpassname || 'SPHEREx'),
+      mjd: String(values.t_min || values.mjd_obs || ''),
+      wavelength: String(values.energy_bandpassname || values.em_min || ''),
+      accessUrl,
+      sRegion: String(values.s_region || ''),
+    }];
+  });
+}
+
+function parseStcsPolygon(sRegion: string): { ra: number[]; dec: number[] } | null {
+  if (!/^\s*POLYGON\s+ICRS\b/i.test(sRegion)) return null;
+  const values = sRegion.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi)?.map(Number);
+  if (!values || values.length < 6 || values.length % 2 !== 0) return null;
+  const ra = values.filter((_, index) => index % 2 === 0);
+  const dec = values.filter((_, index) => index % 2 === 1);
+  if (ra.some((value) => !Number.isFinite(value)) || dec.some((value) => !Number.isFinite(value))) return null;
+  return { ra, dec };
+}
 
 // Calculate SPHEREx detector footprint 4 corners in (RA, Dec) degrees
 function getFootprintCorners(
@@ -260,12 +337,21 @@ export const CelestialNavigator: React.FC = () => {
   const cutoutOverlayRef = useRef<any>(null);
   const catalogOverlayRef = useRef<any>(null);
   const deepFieldOverlayRef = useRef<any>(null);
+  const archiveMocsRef = useRef<any[]>([]);
+  const gaiaCatalogRef = useRef<any>(null);
+  const gaiaMotionOverlayRef = useRef<any>(null);
+  const skybotCatalogRef = useRef<any>(null);
+  const skybotCacheRef = useRef<Map<string, any>>(new Map());
 
   // High-frequency DOM refs for real-time cursor readouts
   const cursorRaDecDomRef = useRef<HTMLSpanElement>(null);
   const cursorSexaDomRef = useRef<HTMLSpanElement>(null);
   const cursorLvfDomRef = useRef<HTMLSpanElement>(null);
   const cursorSkyPositionRef = useRef<{ ra: number; dec: number } | null>(null);
+  const detailFitsLayerRef = useRef<{ name: string; url: string } | null>(null);
+  const detailFitsRequestIdRef = useRef(0);
+  const detailFitsAbortControllerRef = useRef<AbortController | null>(null);
+  const ignoreClickAfterPanUntilRef = useRef(0);
 
   const {
     ra,
@@ -280,18 +366,31 @@ export const CelestialNavigator: React.FC = () => {
   const { setTab, setRa, setDec, setFov: setUrlFov, setPreset } = useSpectraUrlState();
 
   // Layer & Filter Controls
-  const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(true);
+  const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(false);
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(false);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
   const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('allwise-color');
   const [selectedBandFilter, setSelectedBandFilter] = useState<string>('ALL');
   const [hoveredObsId, setHoveredObsId] = useState<string | null>(null);
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
+  // Sky viewport FoV is separate from fovArcsec, which is the spectral cutout size.
   const [displayFovDeg, setDisplayFovDeg] = useState<number>(DEFAULT_SKY_FOV_DEG);
+  const [detailFitsStatus, setDetailFitsStatus] = useState<'wide' | 'loading' | 'ready' | 'unavailable'>('wide');
   const [hipsReady, setHipsReady] = useState<boolean>(false);
   const [hipsError, setHipsError] = useState<boolean>(false);
+  const [aladinReady, setAladinReady] = useState<boolean>(false);
+  const [archiveExposures, setArchiveExposures] = useState<IrsaExposure[]>([]);
+  const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [gaiaStatus, setGaiaStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
+  const [skybotStatus, setSkybotStatus] = useState<'loading' | 'live' | 'cached_only' | 'unavailable'>('loading');
+  const [showSyntheticPreview, setShowSyntheticPreview] = useState<boolean>(false);
   const surveyLoadIdRef = useRef<number>(0);
   const surveyLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedSurveyIdRef = useRef<PhotographicSurveyId | null>(null);
+
+  // Smooth gesture telemetry & anti-feedback refs
+  const lastInternalCoordRef = useRef<{ ra: number; dec: number }>({ ra, dec });
+  const posDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const createHiPSSurvey = useCallback((surveySpec: PhotographicSurveySpec) => {
     const requestId = ++surveyLoadIdRef.current;
@@ -307,6 +406,9 @@ export const CelestialNavigator: React.FC = () => {
     return A.HiPS(surveySpec.hipsUrl, {
       name: surveySpec.label,
       cooFrame: 'equatorial',
+      maxOrder: surveySpec.maxOrder,
+      imgFormat: surveySpec.imgFormat,
+      tileSize: surveySpec.tileSize,
       successCallback: () => {
         if (requestId === surveyLoadIdRef.current) {
           if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
@@ -334,7 +436,49 @@ export const CelestialNavigator: React.FC = () => {
   }, [ra, dec]);
 
   // Generate overlapping SPHEREx Level-2 spectral image exposures for the active target
-  const allExposures = useMemo(() => generateSpherexExposuresForCoord(ra, dec), [ra, dec]);
+  const allExposures = useMemo(
+    () => showSyntheticPreview ? generateSpherexExposuresForCoord(ra, dec) : [],
+    [ra, dec, showSyntheticPreview]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setArchiveStatus('loading');
+      const radiusDeg = Math.max(fovArcsec / 7200, 30 / 3600);
+      const params = new URLSearchParams({
+        COLLECTION: 'spherex_qr2',
+        POS: `CIRCLE ${ra} ${dec} ${radiusDeg}`,
+        CALIB: '2',
+        MAXREC: '40',
+        RESPONSEFORMAT: 'JSON',
+      });
+
+      try {
+        const response = await fetch(`https://irsa.ipac.caltech.edu/SIA?${params}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`IRSA SIA returned ${response.status}`);
+        const results = parseIrsaSiaResponse(await response.json());
+        if (active) {
+          setArchiveExposures(results);
+          setArchiveStatus(results.length > 0 ? 'ready' : 'empty');
+        }
+      } catch (error) {
+        if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
+          setArchiveExposures([]);
+          setArchiveStatus('error');
+        }
+      }
+    }, 350);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [ra, dec, fovArcsec]);
 
   const filteredExposures = useMemo(() => {
     if (selectedBandFilter === 'ALL') return allExposures;
@@ -364,6 +508,7 @@ export const CelestialNavigator: React.FC = () => {
 
         const surveySpec =
           PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey) || PHOTOGRAPHIC_SURVEYS[0];
+        mountedSurveyIdRef.current = surveySpec.id;
 
         const instance = A.aladin(aladinContainerRef.current, {
           survey: createHiPSSurvey(surveySpec),
@@ -386,6 +531,7 @@ export const CelestialNavigator: React.FC = () => {
         });
 
         aladinInstanceRef.current = instance;
+        setAladinReady(true);
         instance.setFoVRange?.(MIN_SKY_FOV_DEG, MAX_SKY_FOV_DEG);
 
         // Native Vector Overlay for SPHEREx LVF Footprints
@@ -472,7 +618,7 @@ export const CelestialNavigator: React.FC = () => {
           console.warn('Aladin catalog init:', e);
         }
 
-        // Sync telemetry when user drags or pans the sky
+        // Sync telemetry when user drags or pans the sky (debounced to break feedback loop)
         instance.on('positionChanged', (data: any) => {
           if (!data) return;
           const newRa = typeof data.ra === 'number' ? data.ra : Number(data.ra);
@@ -480,24 +626,36 @@ export const CelestialNavigator: React.FC = () => {
           if (Number.isFinite(newRa) && Number.isFinite(newDec)) {
             const normRa = Number((((newRa % 360) + 360) % 360).toFixed(6));
             const normDec = Number(Math.max(-90, Math.min(90, newDec)).toFixed(6));
-            setCoordinates(
-              normRa,
-              normDec,
-              `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
-              SIMULATED_PREVIEW_BADGE
-            );
-            setRa(normRa);
-            setDec(normDec);
+            if (data.dragging) {
+              ignoreClickAfterPanUntilRef.current = performance.now() + 500;
+              const detailLayer = detailFitsLayerRef.current;
+              if (detailLayer) {
+                instance.removeImageLayer(detailLayer.name);
+                URL.revokeObjectURL(detailLayer.url);
+                detailFitsLayerRef.current = null;
+                setDetailFitsStatus('wide');
+              }
+            }
+            lastInternalCoordRef.current = { ra: normRa, dec: normDec };
+
+            if (posDebounceTimerRef.current) clearTimeout(posDebounceTimerRef.current);
+            posDebounceTimerRef.current = setTimeout(() => {
+              setCoordinates(
+                normRa,
+                normDec,
+                `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
+                SIMULATED_PREVIEW_BADGE
+              );
+              setRa(normRa);
+              setDec(normDec);
+            }, 120);
           }
         });
 
-        // Sync field of view when user zooms in or out
+        // Track camera FoV for the scale bar; URL fov remains the cutout size in arcseconds.
         instance.on('zoomChanged', (fovDeg: number) => {
           if (Number.isFinite(fovDeg)) {
             setDisplayFovDeg(fovDeg);
-            const arcsec = Math.round(fovDeg * 3600);
-            setFov(arcsec);
-            setUrlFov(arcsec);
           }
         });
 
@@ -520,6 +678,9 @@ export const CelestialNavigator: React.FC = () => {
 
         // Selecting empty sky updates the target coordinates just like selecting a catalog source.
         instance.on('click', (data: any) => {
+          // Aladin also emits a click after a drag. Do not turn that release into
+          // a target selection and pull the camera back to the cursor position.
+          if (performance.now() < ignoreClickAfterPanUntilRef.current) return;
           const clickedPosition =
             data && Number.isFinite(Number(data.ra)) && Number.isFinite(Number(data.dec))
               ? { ra: Number(data.ra), dec: Number(data.dec) }
@@ -570,30 +731,350 @@ export const CelestialNavigator: React.FC = () => {
     initAladin();
     return () => {
       cancelled = true;
+      setAladinReady(false);
       if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
+      if (posDebounceTimerRef.current) clearTimeout(posDebounceTimerRef.current);
       aladinInstanceRef.current = null;
     };
     // Aladin captures the initial target and survey when it mounts; later changes sync through event handlers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createHiPSSurvey]);
 
-  // Switch HiPS survey layer when user clicks survey selector
+  // Draw only coverage polygons returned by the real SPHEREx QR2 archive query.
+  useEffect(() => {
+    const aladin = aladinInstanceRef.current;
+    if (!aladinReady || !aladin) return;
+
+    archiveMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
+    archiveMocsRef.current = [];
+
+    archiveExposures.forEach((exposure) => {
+      const polygon = parseStcsPolygon(exposure.sRegion);
+      if (!polygon || typeof A.MOCFromPolygon !== 'function') return;
+      try {
+        const moc = A.MOCFromPolygon(polygon, {
+          color: '#38BDF8',
+          opacity: 0.12,
+          lineWidth: 1,
+        });
+        aladin.addMOC(moc);
+        archiveMocsRef.current.push(moc);
+      } catch (error) {
+        console.warn('Could not render an IRSA exposure coverage polygon:', error);
+      }
+    });
+
+    return () => {
+      archiveMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
+      archiveMocsRef.current = [];
+    };
+  }, [archiveExposures, aladinReady]);
+
+  // Query Gaia DR3 near the active field and render five-year proper-motion vectors.
+  useEffect(() => {
+    const aladin = aladinInstanceRef.current;
+    if (!aladinReady || !aladin) return;
+    if (typeof A.catalogFromVizieR !== 'function') {
+      setGaiaStatus('unavailable');
+      return;
+    }
+    let cancelled = false;
+    setGaiaStatus('loading');
+    const timer = window.setTimeout(() => {
+      if (gaiaCatalogRef.current) aladin.removeOverlay?.(gaiaCatalogRef.current);
+      if (gaiaMotionOverlayRef.current) aladin.removeOverlay?.(gaiaMotionOverlayRef.current);
+
+      const motionOverlay = A.graphicOverlay({
+        name: 'Gaia DR3 Proper Motion (5 yr)',
+        color: '#FBBF24',
+        lineWidth: 1.25,
+      });
+      gaiaMotionOverlayRef.current = motionOverlay;
+      aladin.addOverlay(motionOverlay);
+
+      A.catalogFromVizieR(
+        'I/355/gaiadr3',
+        { ra, dec },
+        300 / 3600,
+        {
+          name: 'Gaia DR3 · G < 18 · 300 arcsec',
+          color: '#FBBF24',
+          sourceSize: 6,
+          limit: 50,
+          colnames: ['RA_ICRS', 'DE_ICRS', 'pmRA', 'pmDE', 'Gmag'],
+          filter: (source: any) => Number(source?.data?.Gmag ?? source?.data?.G) < 18,
+        },
+        (catalog: any) => {
+          if (cancelled) {
+            aladin.removeOverlay?.(catalog);
+            return;
+          }
+          gaiaCatalogRef.current = catalog;
+          aladin.addCatalog(catalog);
+          setGaiaStatus('live');
+          const sources = catalog.getSources?.() || [];
+          sources.slice(0, 50).forEach((source: any) => {
+            const data = source.data || {};
+            const sourceRa = Number(source.ra ?? data.RA_ICRS ?? data.ra);
+            const sourceDec = Number(source.dec ?? data.DE_ICRS ?? data.dec);
+            const pmRa = Number(data.pmRA ?? data.pmra);
+            const pmDec = Number(data.pmDE ?? data.pmdec);
+            const magnitude = Number(data.Gmag ?? data.G);
+            if (![sourceRa, sourceDec, pmRa, pmDec, magnitude].every(Number.isFinite) || magnitude >= 18) return;
+            const cosDec = Math.max(0.01, Math.abs(Math.cos((sourceDec * Math.PI) / 180)));
+            const endRa = (sourceRa + (pmRa * 5) / (3_600_000 * cosDec) + 360) % 360;
+            const endDec = Math.max(-90, Math.min(90, sourceDec + (pmDec * 5) / 3_600_000));
+            motionOverlay.add(A.vector(sourceRa, sourceDec, endRa, endDec, { color: '#FBBF24', lineWidth: 1.25 }));
+          });
+        },
+        (error: unknown) => {
+          if (!cancelled) {
+            console.warn('Gaia DR3 query failed:', error);
+            setGaiaStatus('unavailable');
+          }
+        }
+      );
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (gaiaCatalogRef.current) aladin.removeOverlay?.(gaiaCatalogRef.current);
+      if (gaiaMotionOverlayRef.current) aladin.removeOverlay?.(gaiaMotionOverlayRef.current);
+      gaiaCatalogRef.current = null;
+      gaiaMotionOverlayRef.current = null;
+    };
+  }, [ra, dec, aladinReady]);
+
+  // SkyBot is opportunistic: abandon the query after two seconds without delaying the sky view.
+  useEffect(() => {
+    const aladin = aladinInstanceRef.current;
+    if (!aladinReady || !aladin) return;
+    if (typeof A.catalogFromSkyBot !== 'function') {
+      setSkybotStatus('unavailable');
+      return;
+    }
+    let settled = false;
+    const cacheKey = `${ra.toFixed(5)}:${dec.toFixed(5)}:300`;
+    const useCachedCatalog = () => {
+      const cachedCatalog = skybotCacheRef.current.get(cacheKey);
+      if (!cachedCatalog) {
+        setSkybotStatus('unavailable');
+        return;
+      }
+      skybotCatalogRef.current = cachedCatalog;
+      aladin.addCatalog(cachedCatalog);
+      setSkybotStatus('cached_only');
+    };
+    const timeout = window.setTimeout(() => {
+      settled = true;
+      useCachedCatalog();
+    }, 2000);
+
+    setSkybotStatus('loading');
+    if (skybotCatalogRef.current) aladin.removeOverlay?.(skybotCatalogRef.current);
+    skybotCatalogRef.current = null;
+    A.catalogFromSkyBot(
+      ra,
+      dec,
+      300 / 3600,
+      new Date().toISOString(),
+      {},
+      { name: 'SkyBot · 300 arcsec', color: '#A78BFA', sourceSize: 7 },
+      (catalog: any) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        skybotCatalogRef.current = catalog;
+        skybotCacheRef.current.set(cacheKey, catalog);
+        if (skybotCacheRef.current.size > 32) {
+          const oldestKey = skybotCacheRef.current.keys().next().value;
+          if (oldestKey) skybotCacheRef.current.delete(oldestKey);
+        }
+        aladin.addCatalog(catalog);
+        setSkybotStatus('live');
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        console.warn('SkyBot query failed:', error);
+        useCachedCatalog();
+      }
+    );
+
+    return () => {
+      settled = true;
+      window.clearTimeout(timeout);
+      if (skybotCatalogRef.current) aladin.removeOverlay?.(skybotCatalogRef.current);
+      skybotCatalogRef.current = null;
+    };
+  }, [ra, dec, aladinReady]);
+
+  // Keep the chosen HiPS survey mounted throughout ordinary zoom so Aladin can
+  // reuse its tile pyramid without a mid-zoom survey swap. The 2MASS FITS cutout
+  // is reserved for close detail below 0.14°.
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladin) return;
+    if (mountedSurveyIdRef.current === activeSurvey) return;
     const surveySpec =
       PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey) || PHOTOGRAPHIC_SURVEYS[0];
     try {
       aladin.setImageSurvey(createHiPSSurvey(surveySpec));
+      mountedSurveyIdRef.current = surveySpec.id;
     } catch (e) {
       console.warn('Error switching HiPS survey:', e);
     }
   }, [activeSurvey, createHiPSSurvey]);
 
+  // Match IRSA's HiPS-to-FITS close-zoom behavior with an actual 2MASS Ks
+  // cutout. The FITS layer is ancillary near-IR context, not SPHEREx data.
+  useEffect(() => {
+    const aladin = aladinInstanceRef.current;
+    const viewport = aladinContainerRef.current;
+    if (!aladin || !viewport || !aladinReady) return;
+
+    const requestId = ++detailFitsRequestIdRef.current;
+    detailFitsAbortControllerRef.current?.abort();
+    detailFitsAbortControllerRef.current = null;
+
+    const removeCurrentDetailLayer = () => {
+      const currentLayer = detailFitsLayerRef.current;
+      if (!currentLayer) return;
+      aladin.removeImageLayer(currentLayer.name);
+      URL.revokeObjectURL(currentLayer.url);
+      detailFitsLayerRef.current = null;
+    };
+
+    if (displayFovDeg > DETAIL_FITS_FOV_DEG) {
+      removeCurrentDetailLayer();
+      setDetailFitsStatus('wide');
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      const center = aladin.getRaDec?.();
+      const fov = aladin.getFov?.();
+      const raCenter = Number(center?.[0]);
+      const decCenter = Number(center?.[1]);
+      const fovDeg = Array.isArray(fov) ? Math.max(Number(fov[0]), Number(fov[1])) : Number(fov);
+      const aspectRatio = viewport.clientWidth / Math.max(1, viewport.clientHeight);
+
+      if (
+        !Number.isFinite(raCenter) || !Number.isFinite(decCenter) ||
+        !Number.isFinite(fovDeg) || fovDeg <= 0 || !Number.isFinite(aspectRatio)
+      ) {
+        setDetailFitsStatus('unavailable');
+        return;
+      }
+
+      const width = Math.max(1, Math.min(
+        DETAIL_FITS_MAX_DIMENSION,
+        Math.round(aspectRatio >= 1 ? DETAIL_FITS_MAX_DIMENSION : DETAIL_FITS_MAX_DIMENSION * aspectRatio)
+      ));
+      const height = Math.max(1, Math.min(
+        DETAIL_FITS_MAX_DIMENSION,
+        Math.round(aspectRatio >= 1 ? DETAIL_FITS_MAX_DIMENSION / aspectRatio : DETAIL_FITS_MAX_DIMENSION)
+      ));
+      const params = new URLSearchParams({
+        hips: 'CDS/P/2MASS/K',
+        width: String(width),
+        height: String(height),
+        projection: 'TAN',
+        fov: String(fovDeg),
+        ra: String(raCenter),
+        dec: String(decCenter),
+        coordsys: 'icrs',
+        format: 'fits',
+      });
+      const controller = new AbortController();
+      detailFitsAbortControllerRef.current = controller;
+      setDetailFitsStatus('loading');
+
+      try {
+        const response = await fetch(
+          `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?${params}`,
+          { signal: controller.signal }
+        );
+        if (!response.ok) throw new Error(`HiPS2FITS returned ${response.status}`);
+
+        const fitsUrl = URL.createObjectURL(await response.blob());
+        if (requestId !== detailFitsRequestIdRef.current || controller.signal.aborted) {
+          URL.revokeObjectURL(fitsUrl);
+          return;
+        }
+
+        const layerName = `${DETAIL_FITS_LAYER_PREFIX} ${requestId}`;
+        const discardLayer = () => {
+          // FITS parsing finishes before Aladin adds the image layer to its view.
+          window.setTimeout(() => aladin.removeImageLayer(layerName), 0);
+          URL.revokeObjectURL(fitsUrl);
+        };
+        const onFitsLoaded = () => {
+          if (requestId !== detailFitsRequestIdRef.current) {
+            discardLayer();
+            return;
+          }
+          removeCurrentDetailLayer();
+          detailFitsLayerRef.current = { name: layerName, url: fitsUrl };
+          setDetailFitsStatus('ready');
+        };
+        const onFitsError = (error: unknown) => {
+          discardLayer();
+          if (requestId !== detailFitsRequestIdRef.current) return;
+          removeCurrentDetailLayer();
+          console.warn('2MASS Ks FITS detail failed to load:', error);
+          setDetailFitsStatus('unavailable');
+        };
+
+        aladin.displayFITS(
+          fitsUrl,
+          { name: '2MASS Ks FITS detail · 2.16 µm' },
+          onFitsLoaded,
+          onFitsError,
+          layerName
+        );
+      } catch (error) {
+        if (requestId !== detailFitsRequestIdRef.current) return;
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.warn('2MASS Ks FITS detail request failed:', error);
+          removeCurrentDetailLayer();
+          setDetailFitsStatus('unavailable');
+        }
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      detailFitsAbortControllerRef.current?.abort();
+      detailFitsAbortControllerRef.current = null;
+      if (requestId === detailFitsRequestIdRef.current) {
+        detailFitsRequestIdRef.current += 1;
+      }
+    };
+  }, [aladinReady, dec, displayFovDeg, ra]);
+
+  useEffect(() => () => {
+    detailFitsRequestIdRef.current += 1;
+    detailFitsAbortControllerRef.current?.abort();
+    const aladin = aladinInstanceRef.current;
+    const currentLayer = detailFitsLayerRef.current;
+    if (aladin && currentLayer) aladin.removeImageLayer(currentLayer.name);
+    if (currentLayer) URL.revokeObjectURL(currentLayer.url);
+  }, []);
+
   // Sync camera center when external target coordinates change (e.g. from search bar or catalog selection)
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladin) return;
+    const deltaRa = Math.abs(((ra - lastInternalCoordRef.current.ra + 540) % 360) - 180);
+    const deltaDec = Math.abs(dec - lastInternalCoordRef.current.dec);
+    // Ignore internal movements (< 0.0005 deg) to prevent breaking smooth pan/scroll animations
+    if (deltaRa < 0.0005 && deltaDec < 0.0005) {
+      return;
+    }
+    lastInternalCoordRef.current = { ra, dec };
     try {
       aladin.gotoRaDec(ra, dec);
     } catch (e) {
@@ -885,10 +1366,11 @@ export const CelestialNavigator: React.FC = () => {
           <div
             ref={aladinContainerRef}
             className="absolute inset-0 h-full w-full"
+            style={{ touchAction: 'none' }}
           />
 
           {!hipsReady && !hipsError && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#080A0F]/85 font-mono text-xs text-[#94A3B8]">
+            <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-sm border border-[#1E2530] bg-[#080A0F]/80 px-2.5 py-1 font-mono text-[10px] text-[#94A3B8]">
               Loading {PHOTOGRAPHIC_SURVEYS.find((survey) => survey.id === activeSurvey)?.label} sky imagery…
             </div>
           )}
@@ -897,6 +1379,12 @@ export const CelestialNavigator: React.FC = () => {
               Survey imagery failed to load. Select another survey or check access to the HiPS image service.
             </div>
           )}
+
+          <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2 py-1 font-mono text-[9px] text-[#94A3B8]">
+            <span>Gaia DR3: {gaiaStatus}</span>
+            <span className="text-[#1E2530]">|</span>
+            <span>SkyBot: {skybotStatus}</span>
+          </div>
 
           {/* Top-Left Astrometric Compass / Status */}
           <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2.5 py-1.5">
@@ -914,10 +1402,18 @@ export const CelestialNavigator: React.FC = () => {
             </svg>
             <div className="flex flex-col">
               <span className="font-mono text-[10px] text-[#E6ECF2]">
-                Aladin Lite v3 WebGL2 · {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'All-Sky Survey'}
+                {detailFitsStatus === 'ready'
+                  ? '2MASS Ks FITS close detail'
+                  : `Aladin Lite v3 WebGL2 · ${PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'All-Sky Survey'}`}
               </span>
               <span className="font-mono text-[10px] text-[#94A3B8]">
-                {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.badge || 'Multi-Resolution HiPS Pyramid'} · Drag to pan · Scroll to zoom
+                {detailFitsStatus === 'ready'
+                  ? 'CDS HiPS2FITS · 2.16 µm archival context · not SPHEREx data'
+                  : detailFitsStatus === 'loading'
+                    ? 'Loading 2MASS Ks FITS detail… · Drag to pan · Scroll to zoom'
+                    : detailFitsStatus === 'unavailable'
+                      ? `2MASS FITS unavailable · showing ${PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'selected survey'} HiPS`
+                      : PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.badge || 'Multi-Resolution HiPS Pyramid'} · Drag to pan · Scroll to zoom
               </span>
             </div>
           </div>
@@ -1079,12 +1575,50 @@ export const CelestialNavigator: React.FC = () => {
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-[#1E2530] bg-[#151B24]/60 px-3 py-1.5">
             <span className="text-[11px] font-medium text-[#E6ECF2]">
-              Simulated Exposure Preview ({filteredExposures.length})
+              IRSA SPHEREx QR2 Archive ({archiveExposures.length})
             </span>
-            <span className="text-[10px] text-[#FBBF24]">Not archive observations · hover row to inspect</span>
+            <span className="text-[10px] text-[#94A3B8]">
+              {archiveStatus === 'loading' && 'Searching IRSA…'}
+              {archiveStatus === 'ready' && '[IRSA Live (spherex_qr2)]'}
+              {archiveStatus === 'empty' && 'No released exposure intersects this cutout'}
+              {archiveStatus === 'error' && 'IRSA search unavailable · retry after network access returns'}
+            </span>
+          </div>
+
+          <div className="max-h-40 overflow-y-auto border-b border-[#1E2530]">
+            {archiveExposures.map((exposure) => {
+              const cutoutUrl = new URL(exposure.accessUrl);
+              cutoutUrl.searchParams.set('center', `${ra},${dec}`);
+              cutoutUrl.searchParams.set('size', String(fovArcsec / 3600));
+              return (
+                <div key={exposure.obsId} className="flex items-center justify-between gap-2 border-b border-[#1E2530]/60 px-3 py-1.5 font-mono text-[10px]">
+                  <span className="min-w-0 truncate text-[#E6ECF2]" title={exposure.obsId}>{exposure.obsId}</span>
+                  <span className="shrink-0 text-[#94A3B8]">{exposure.detector}</span>
+                  <span className="shrink-0 text-[#94A3B8]">{exposure.mjd ? `MJD ${exposure.mjd}` : exposure.wavelength}</span>
+                  <a className="shrink-0 text-[#38BDF8] hover:underline" href={cutoutUrl.toString()} target="_blank" rel="noreferrer">Open FITS cutout</a>
+                </div>
+              );
+            })}
+            {archiveStatus === 'empty' && (
+              <div className="px-3 py-2 text-[10px] text-[#94A3B8]">This is an honest non-detection for the selected cutout and current public release.</div>
+            )}
+            {archiveStatus === 'error' && (
+              <a
+                className="inline-block px-3 py-2 text-[10px] text-[#38BDF8] hover:underline"
+                href={`https://irsa.ipac.caltech.edu/applications/spherex/?api=spectral-images&ra=${ra}&dec=${dec}&sr=${Math.max(fovArcsec, 60)}s`}
+                target="_blank"
+                rel="noreferrer"
+              >Open this position in the IRSA SPHEREx Data Explorer</a>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#1E2530] px-3 py-1 text-[10px] text-[#94A3B8]">
+              <span>Synthetic geometry preview · off by default</span>
+              <button type="button" className="text-[#38BDF8] hover:underline" onClick={() => setShowSyntheticPreview((visible) => !visible)}>
+                {showSyntheticPreview ? 'Hide synthetic preview' : 'Show synthetic preview'}
+              </button>
+            </div>
             <table className="w-full border-collapse text-left font-mono text-[11px] tabular-nums">
               <thead className="sticky top-0 z-10 border-b border-[#1E2530] bg-[#0F131A] font-sans text-[10px] text-[#94A3B8]">
                 <tr>
@@ -1141,7 +1675,7 @@ export const CelestialNavigator: React.FC = () => {
           {activeExposure && (
             <div className="border-t border-[#1E2530] bg-[#080A0F] px-3 py-2 text-[11px]">
               <div className="flex items-center justify-between text-[#E6ECF2]">
-                <span className="font-mono text-[10px] text-[#38BDF8]">{activeExposure.obsId}</span>
+                <span className="font-mono text-[10px] text-[#38BDF8]">{activeExposure.obsId} · Synthetic</span>
                 <span className="font-mono text-[10px] text-[#94A3B8]">{activeExposure.dateUtc}</span>
               </div>
               <div className="mt-1 flex items-center justify-between text-[10px] text-[#94A3B8]">
@@ -1161,7 +1695,12 @@ export const CelestialNavigator: React.FC = () => {
           <div className="flex flex-col gap-2">
             <button
               type="button"
-              onClick={() => setTab('comparator')}
+              onClick={() => {
+                setRa(ra);
+                setDec(dec);
+                setUrlFov(fovArcsec);
+                setTab('comparator');
+              }}
               className="w-full rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-2 text-center text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:bg-[#38BDF8]/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
             >
               Open {fovArcsec}&quot; Cutout in Time-Domain Comparator →
