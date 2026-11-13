@@ -189,11 +189,14 @@ Because 6 agents work concurrently off `develop`, you must leave a dense, zero-f
    gh pr create --base develop --title "feat(phase-X): <summary> (#<N>)" --body-file <handover.md>
    gh pr merge --squash --delete-branch
    ```
-2. **Explicitly Close Issue `#<N>` on `develop` Merge** *(since GitHub only auto-closes issues on the default branch `main`)*:
-   ```bash
-   gh issue comment <N> --body-file <handover.md>
-   gh issue close <N> --comment "✅ Verified, dual-axis code-reviewed, and squash-merged into \`develop\`. Queued for Phase Milestone batch promotion to \`main\`."
-   ```
+2. **Mandatory Issue Closure Immediately Upon PR Merge (`gh issue close <N>`):**
+   - **THE HARD RULE FOR ALL BOTS:** The moment a PR is successfully merged into `develop`, the agent **MUST immediately close the associated GitHub Issue `#<N>`**. Leaving an issue in `OPEN` status after PR merge is a protocol violation.
+   - Because GitHub only auto-closes issues when merging into the default branch (`main`), bots must explicitly run:
+     ```bash
+     gh issue comment <N> --body-file <handover.md>
+     gh issue close <N> --comment "✅ Verified, dual-axis code-reviewed, and squash-merged into \`develop\`. Issue officially CLOSED."
+     ```
+   - **Verification Check:** Every bot must assert closure by verifying `gh issue view <N> --json state` returns `"state": "CLOSED"` before concluding work on that issue.
 3. **Milestone Batch Promotion (`develop` $\rightarrow$ `main`):**
    - Only when all issues in a Phase Milestone (`Phase 0`, `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`) are closed on `develop` and verified end-to-end does the team promote the batch to `main`:
      ```bash
