@@ -38,7 +38,7 @@ In a 48-hour hackathon, victory is determined by **developer velocity, zero runt
      - `/compact`: Intelligently summarizes and frees context window tokens without losing critical scientific constants or architectural decisions.
      - `/learn`: Persists verified behavioral corrections and domain rules across conversational sessions.
   2. **Custom Skills Customization System (`.agents/skills/`):**
-     - Enables project-specific domain rules (e.g., `/caveman` mode to drastically cut prompt token costs and eliminate conversational fluff).
+     - Enables project-specific domain rules (e.g., protocol rules to drastically cut prompt token costs and eliminate conversational fluff).
      - Allows instant discovery and installation of agent skills (`find-skills`) to augment coding capabilities on the fly.
   3. **Subagent Delegation & Parallel Processing:**
      - The harness can launch isolated background subagents (`research`, `self`) to survey external IRSA FITS documentation or run test benchmarks in parallel without blocking main development.

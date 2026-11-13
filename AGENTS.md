@@ -70,7 +70,7 @@ Development proceeds in **four strictly sequential, priority-gated phases** prec
 
 To conserve token budgets and maximize engineering throughput across model sessions:
 
-1. **Terse Communication Style (Caveman Voice):**
+1. **Terse Communication Style:**
    - Output facts, code, and diffs only. Strip conversational filler ("Certainly!", "I'd be glad to help!"). Answer first, explain only when requested.
 2. **Lazy Skill Activation:**
    - Skills installed in `.agents/skills/` are loaded on-demand. **Do not proactively read all skills.**
