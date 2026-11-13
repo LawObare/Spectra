@@ -120,8 +120,7 @@ To remove all login friction for hackathon judges while maintaining cryptographi
 
 ### Prerequisites Check
 Ensure you have the following installed (see [prerequisites.md](prerequisites.md) for full rationale):
-- **Docker** & **Docker Compose** (for local Supabase PostgreSQL 16 + `pgvector`)
-- **Go 1.22+**
+- **Docker** & **Docker Compose** (for local Supabase PostgreSQL 16)
 - **Python 3.11+** with **`uv`** (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - **Node.js 20+** & **npm**
 - **Task** (`sh -c "$(curl --location https://taskfile.dev/install.sh) -- -d"`)
@@ -129,20 +128,20 @@ Ensure you have the following installed (see [prerequisites.md](prerequisites.md
 
 ### One-Command Setup & Launch
 ```bash
-# 1. Install all dependencies across Python, Go, and React (<10 seconds)
+# 1. Install all dependencies across Python and React (<10 seconds)
 task setup
 
-# 2. Start local Supabase Postgres, apply pgvector schema and seed 5 NASA benchmarks
+# 2. Start local Supabase Postgres, apply schema and seed 5 NASA benchmarks
 task db:up
 
-# 3. Generate type-safe Go code from SQL files via sqlc
-task sqlc
+# 3. Synchronize OpenAPI TypeScript definitions
+task types:sync
 
-# 4. Start all microservices concurrently (Worker :8001, Gateway :8080, Client :5173)
+# 4. Start all services concurrently (FastAPI Backend :7860, Vite Client :3000)
 task dev
 ```
 
-Visit **`http://localhost:5173/explore`** to begin exploring the sky.
+Visit **`http://localhost:3000/explore`** to begin exploring the sky.
 
 ---
 
@@ -151,24 +150,24 @@ Visit **`http://localhost:5173/explore`** to begin exploring the sky.
 Implementation is structured into **four strictly sequential, priority-gated phases**. On completion of each phase, the system reaches a 100% self-contained, demonstrable milestone before the next phase begins:
 
 1. **Phase 1 (P0 Priority — Core NASA Challenge Foundation):**
-   - Python worker with IRSA SIA2 client, S3 byte-range section slicing, WCS North-Up reprojection, and Float32 binary streaming.
-   - Go API Gateway with Chi router, LRU cache ($<15\,\text{ms}$), observer session middleware, and live reload (`air`).
+   - Unified FastAPI backend (`uv`) on port 7860 with IRSA SIA2 client, IRSA Cutout API ingestion, WCS North-Up reprojection, and Float32 binary streaming.
    - Pre-seeded database with the 5 NASA benchmark targets (`seed_benchmarks.sql`).
+   - In-memory benchmark cache delivering $<10\,\text{ms}$ responses.
    - Frontend Tab 1 (Navigator / Aladin 3D dome + camera dive) and Tab 2 (Comparator / WebGL2 Float32 blinker, difference subtraction, Asinh slider, discrete survey epoch snapping).
    - *Milestone Gate 1:* 100% of the NASA challenge prompt satisfied and immediately shippable.
 2. **Phase 2 (P1 Priority — Scientific Differentiator & Community Intelligence):**
    - HDU 6 `WCS-WAVE` smile lookup and 102-channel hyperspectral extraction.
-   - PostgreSQL `pgvector` HNSW vector index; instant cosine similarity search (`<=>`) in $<2\,\text{ms}$.
+   - In-memory NumPy cosine similarity evaluating 10,000 spectra in $<20\,\text{ms}$.
    - Frontend Tab 3 (Spectrophotometric Lab with `uPlot` 60 FPS 102-band plot, composite unmixing, and photo-$z$ solver).
-   - Frontend Tab 5 (Observation Discussions with embedded deep-link snapshots and Supabase Realtime live sync).
+   - Frontend Tab 5 (Observation Discussions with embedded deep-link snapshots and live FastAPI SSE feed).
    - *Milestone Gate 2:* Hyperspectral analysis and live community peer review fully operational.
 3. **Phase 3 (P2 Priority — Institutional Polish & Mission Control Suite):**
-   - Frontend Tab 4 (Molecular & Ice Studio with quantitative column density integrator $N_{\text{ice}}$, molecular rulers, spatial brush).
+   - Frontend Tab 4 (Molecular & Ice Studio with quantitative column density integrator $N_{\text{ice}}$ for SPLICES background stars).
    - Hidden Admin Mission Control (`/admin`): 5 isolated tabs (Dynamics, Internals, Boundaries 3D, Triage, Exports).
    - PyTorch live training hook WebSocket feed (`/api/admin/ws/training`) with pre-trained diagnostic weights.
    - *Milestone Gate 3:* 10-tab flagship suite operational with live machine learning observability.
 4. **Phase 4 (Production Deployment, Operational Hardening & Compliance):**
-   - Hugging Face Spaces single-container multi-process deployment (Go :7860 + Python :8001 in 16 GB RAM Docker).
+   - Hugging Face Spaces single-container deployment (FastAPI on port 7860 via `uv` in 16 GB RAM Docker).
    - Cloudflare Pages CDN deployment with edge-cached `/benchmarks/*.json` and `*.f32` fallback cutouts.
    - Supabase Cloud setup with Session Pooler (port 5432, IPv4) and Row Level Security (RLS) policies.
    - Dual-action `/api/health` keep-alive via cron-job.org (every 5 min) + GitHub Actions backup.
@@ -179,9 +178,10 @@ Implementation is structured into **four strictly sequential, priority-gated pha
 
 ## 8. Documentation Index
 
-- **[SPECIFICATION.md](SPECIFICATION.md):** Complete, authoritative technical specification (v2.5.0-PROD) detailing all mathematical formulas, WCS reprojection pipelines, database DDL schemas, `sqlc` queries, component wireframes, and deployment runbooks.
-- **[prerequisites.md](prerequisites.md):** Comprehensive guide to all build essentials, environment runtimes, and developer acceleration tools (Antigravity CLI, GitHub CLI, `uv`, `sqlc`, `air`, `nuqs`, etc.) and why they grant a competitive Hackathon edge.
-- **[.agents/CONTEXT.md](.agents/CONTEXT.md):** Chronological architectural log recording Exchanges #1 through #30 of the project ideation.
+- **[SPECIFICATION.md](SPECIFICATION.md):** Complete, authoritative technical specification (v3.0.0-PROD) detailing all mathematical formulas, WCS reprojection pipelines, database DDL schemas, component wireframes, and deployment runbooks.
+- **[SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md):** Comprehensive Systems Architecture & Design Document (v3.0.0-PROD) covering the 4+1 View Model, 10 core SDD sections, ADRs, and verification matrices.
+- **[prerequisites.md](prerequisites.md):** Comprehensive guide to all build essentials, environment runtimes, and developer acceleration tools (`uv`, `Taskfile`, `nuqs`, etc.).
+- **[.agents/CONTEXT.md](.agents/CONTEXT.md):** Chronological architectural log recording Exchanges #1 through #42 of the project ideation.
 
 ---
 
