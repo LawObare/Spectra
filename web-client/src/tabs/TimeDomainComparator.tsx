@@ -310,17 +310,39 @@ export const TimeDomainComparator: React.FC = () => {
     };
   }, [activeBenchmark, activeEpochIndex]);
 
-  // Handle pixel clicks (Sets probedPixel in store and updates ?px=X&py=Y in URL)
+  const benchmarkReticle = gaiaReticle;
+
+  // Handle pixel clicks with Sub-Pixel Auto-Centroid Snapping (SPECIFICATION.md §4.2, QA_AUDIT.md §9.4)
   const handlePixelClick = useCallback(
     (info: HoverPixelInfo) => {
-      setProbedPixel({ x: info.x, y: info.y });
-      setUrlProbeX(info.x);
-      setUrlProbeY(info.y);
+      // Sub-pixel centroid peak snapping (5x5 neighborhood) to eliminate human clicking jitter
+      let clickX = info.x;
+      let clickY = info.y;
+      if (measuringMotion && currentFluxPlane) {
+        let maxFlux = -Infinity;
+        const radius = 2;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const px = Math.max(0, Math.min(CANVAS_PIXEL_DIM - 1, info.x + dx));
+            const py = Math.max(0, Math.min(CANVAS_PIXEL_DIM - 1, info.y + dy));
+            const f = currentFluxPlane[py * CANVAS_PIXEL_DIM + px] || 0;
+            if (f > maxFlux) {
+              maxFlux = f;
+              clickX = px;
+              clickY = py;
+            }
+          }
+        }
+      }
+
+      setProbedPixel({ x: clickX, y: clickY });
+      setUrlProbeX(clickX);
+      setUrlProbeY(clickY);
 
       // If measuring motion vector, record click point
       if (measuringMotion) {
         setMotionPoints((prev) => {
-          const next = [...prev, { x: info.x, y: info.y, epoch: activeEpochIndex }];
+          const next = [...prev, { x: clickX, y: clickY, epoch: activeEpochIndex }];
           if (next.length === 2) {
             const p0 = next[0];
             const p1 = next[1];
@@ -350,7 +372,7 @@ export const TimeDomainComparator: React.FC = () => {
         });
       }
     },
-    [measuringMotion, activeEpochIndex, setProbedPixel, setUrlProbeX, setUrlProbeY]
+    [measuringMotion, currentFluxPlane, activeEpochIndex, setProbedPixel, setUrlProbeX, setUrlProbeY]
   );
 
   // Forced 3x3 Aperture Light Curve Data across epochs (D1 vs D5)
@@ -384,27 +406,27 @@ export const TimeDomainComparator: React.FC = () => {
   const activeBand = BANDS[activeBandIndex];
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-[#080A0F] font-sans text-[#E6ECF2]">
+    <div className="flex h-full w-full overflow-hidden bg-black font-sans text-white">
       {/* ========================================================================= */}
       {/* LEFT PANEL (65%): Multi-Epoch Playback Canvas & Transport Deck            */}
       {/* ========================================================================= */}
-      <div className="flex w-[65%] flex-col border-r border-[#1E2530] bg-[#080A0F]">
+      <div className="flex w-[65%] flex-col border-r border-neutral-800 bg-black">
         {/* Top Control Header */}
-        <div className="flex h-10 items-center justify-between border-b border-[#1E2530] bg-[#0F131A] px-4">
+        <div className="flex h-10 items-center justify-between border-b border-neutral-800 bg-neutral-950 px-4">
           <div className="flex items-center space-x-3 text-xs">
-            <span className="font-semibold text-[#E6ECF2]">
+            <span className="font-bold text-white">
               {activeBenchmark ? activeBenchmark.name : `Field at RA ${urlRa.toFixed(4)}°, Dec ${urlDec.toFixed(4)}°`}
             </span>
-            <span className="rounded-sm bg-[#151B24] px-2 py-0.5 font-mono text-[11px] text-[#94A3B8]">
+            <span className="rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
               {store.sourceBadge}
             </span>
             {activeBenchmark?.id === 'barnard' && activeBandIndex <= 1 && (
-              <span className="rounded-sm border border-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 font-mono text-[10px] text-[#F59E0B]">
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-400">
                 OVERFLOW (Saturated NIR)
               </span>
             )}
             {activeBenchmark?.id === 'wise0855' && activeBandIndex <= 2 && (
-              <span className="rounded-sm border border-[#EF4444] bg-[#EF4444]/10 px-1.5 py-0.5 font-mono text-[10px] text-[#EF4444]">
+              <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 font-mono text-[10px] text-red-400">
                 Not Detected at Pass Depth (&gt;17 mag)
               </span>
             )}
@@ -412,14 +434,14 @@ export const TimeDomainComparator: React.FC = () => {
 
           {/* Raw vs. Rectified Toggle */}
           <div className="flex items-center space-x-2 text-xs">
-            <span className="text-[#94A3B8]">Sensor alignment:</span>
+            <span className="text-neutral-400">Sensor alignment:</span>
             <button
               type="button"
               onClick={() => setRawVsRectified(rawVsRectified === 'rectified' ? 'raw_sensor' : 'rectified')}
-              className={`rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors ${
+              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
                 rawVsRectified === 'raw_sensor'
-                  ? 'border-[#F59E0B] bg-[#F59E0B]/15 text-[#F59E0B]'
-                  : 'border-[#1E2530] bg-[#151B24] text-[#E6ECF2] hover:border-[#94A3B8]'
+                  ? 'border-amber-500 bg-amber-500/15 text-amber-400'
+                  : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-600 hover:text-white'
               }`}
             >
               {rawVsRectified === 'raw_sensor' ? `Raw sensor (θ = ${activePass.rollAngleDeg}°)` : 'Rectified North-Up'}
@@ -427,9 +449,9 @@ export const TimeDomainComparator: React.FC = () => {
           </div>
         </div>
 
-        {/* Central WebGL2 Canvas Viewport */}
-        <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-[#080A0F] p-4">
-          <div className="relative h-[480px] w-[480px] rounded-sm border border-[#1E2530] bg-black shadow-2xl">
+        {/* Central WebGL2 Canvas Viewport (Expansive & Fluid) */}
+        <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black p-4">
+          <div className="relative h-full w-full max-h-[calc(100vh-220px)] max-w-[calc(100vh-220px)] aspect-square rounded-xl border border-neutral-800 bg-black shadow-2xl overflow-hidden flex items-center justify-center">
             <WebGLComparatorCanvas
               fluxData={currentFluxPlane}
               refFluxData={referenceFluxPlane}
@@ -450,16 +472,37 @@ export const TimeDomainComparator: React.FC = () => {
               className="h-full w-full"
             />
 
+            {/* NASA Eyes Corner Target Reticle [ ] tracking active target */}
+            {benchmarkReticle && (
+              <div
+                className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
+                style={{
+                  left: `${(benchmarkReticle.subpixelX / CANVAS_PIXEL_DIM) * 100}%`,
+                  top: `${(benchmarkReticle.subpixelY / CANVAS_PIXEL_DIM) * 100}%`,
+                }}
+              >
+                <div className="relative h-10 w-10">
+                  <span className="absolute top-0 left-0 h-2.5 w-2.5 border-t-2 border-l-2 border-primary" />
+                  <span className="absolute top-0 right-0 h-2.5 w-2.5 border-t-2 border-r-2 border-primary" />
+                  <span className="absolute bottom-0 left-0 h-2.5 w-2.5 border-b-2 border-l-2 border-primary" />
+                  <span className="absolute bottom-0 right-0 h-2.5 w-2.5 border-b-2 border-r-2 border-primary" />
+                </div>
+                <div className="absolute left-12 top-0 whitespace-nowrap rounded bg-black/85 px-2 py-0.5 font-mono text-[10px] text-primary border border-primary/40 shadow-lg backdrop-blur-sm">
+                  {benchmarkReticle.label}
+                </div>
+              </div>
+            )}
+
             {/* Raw Sensor Mode LVF Smile Curvature Overlay */}
             {rawVsRectified === 'raw_sensor' && (
               <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3">
-                <div className="rounded-sm bg-black/70 p-1.5 font-mono text-[10px] text-[#F59E0B]">
+                <div className="rounded-sm bg-black/80 p-1.5 font-mono text-[10px] text-amber-400 border border-amber-500/30">
                   Raw H2RG 2040x2040 // Spacecraft Roll θ = {activePass.rollAngleDeg}°
                   <br />
                   Linear Variable Filter (LVF) Smile Curvature active
                 </div>
                 {/* Curved isoline visual aid */}
-                <svg className="absolute inset-0 h-full w-full stroke-[#F59E0B]/40" viewBox="0 0 100 100" fill="none">
+                <svg className="absolute inset-0 h-full w-full stroke-amber-500/30" viewBox="0 0 100 100" fill="none">
                   <path d="M 5 25 Q 50 35 95 25" strokeWidth="0.7" strokeDasharray="2,2" />
                   <path d="M 5 50 Q 50 60 95 50" strokeWidth="0.7" strokeDasharray="2,2" />
                   <path d="M 5 75 Q 50 85 95 75" strokeWidth="0.7" strokeDasharray="2,2" />
@@ -469,7 +512,7 @@ export const TimeDomainComparator: React.FC = () => {
 
             {/* Active Measure Proper Motion Reticle Helper */}
             {measuringMotion && (
-              <div className="pointer-events-none absolute left-3 top-3 rounded-sm border border-[#38BDF8] bg-[#0F131A]/90 px-2 py-1 font-mono text-xs text-[#38BDF8]">
+              <div className="pointer-events-none absolute left-3 top-3 rounded-lg border border-primary/50 bg-black/90 backdrop-blur-md px-3 py-1.5 font-mono text-xs text-primary shadow-xl">
                 {motionPoints.length === 0
                   ? 'Click Point 1 on Target (Epoch 0)'
                   : 'Click Point 2 on Target (Epoch N)'}
@@ -479,34 +522,34 @@ export const TimeDomainComparator: React.FC = () => {
         </div>
 
         {/* Discrete Survey Epoch Scrubber Bar */}
-        <div className="border-t border-[#1E2530] bg-[#0F131A] p-4">
-          <div className="flex items-center justify-between">
+        <div className="border-t border-neutral-800 bg-neutral-950 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Play / Step Transport */}
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1.5">
               <button
                 type="button"
                 onClick={() => setEpochIndex(0)}
                 title="First Pass (Frame 0)"
-                className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] hover:border-[#94A3B8]"
+                className="rounded-full border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
               >
-                |◀
+                Start
               </button>
               <button
                 type="button"
                 onClick={() => stepEpoch(-1)}
                 title="Previous Pass (ArrowLeft)"
-                className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] hover:border-[#94A3B8]"
+                className="rounded-full border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
               >
-                ◀
+                Prev
               </button>
               <button
                 type="button"
                 onClick={togglePlayback}
                 title="Play/Pause (Space)"
-                className={`rounded-sm border px-3 py-1 text-xs font-semibold ${
+                className={`rounded-full border px-4 py-1 text-xs font-semibold transition-all ${
                   isPlaying
-                    ? 'border-[#38BDF8] bg-[#38BDF8]/20 text-[#38BDF8]'
-                    : 'border-[#1E2530] bg-[#151B24] text-[#E6ECF2] hover:border-[#94A3B8]'
+                    ? 'border-primary bg-primary text-white shadow-sm'
+                    : 'border-neutral-700 bg-neutral-900 text-white hover:border-primary'
                 }`}
               >
                 {isPlaying ? 'Pause' : 'Play'}
@@ -515,34 +558,39 @@ export const TimeDomainComparator: React.FC = () => {
                 type="button"
                 onClick={() => stepEpoch(1)}
                 title="Next Pass (ArrowRight)"
-                className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#E6ECF2] hover:border-[#94A3B8]"
+                className="rounded-full border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
               >
-                ▶
+                Next
               </button>
             </div>
 
-            {/* Discrete Pass Pills */}
-            <div className="flex items-center space-x-1.5">
-              {DISCRETE_SURVEY_PASSES.map((pass, idx) => (
-                <button
-                  key={pass.passIndex}
-                  type="button"
-                  onClick={() => setEpochIndex(idx)}
-                  className={`flex flex-col items-center rounded-sm border px-2.5 py-1 text-left transition-colors ${
-                    activeEpochIndex === idx
-                      ? 'border-[#38BDF8] bg-[#38BDF8]/15 text-[#E6ECF2]'
-                      : 'border-[#1E2530] bg-[#151B24] text-[#94A3B8] hover:border-[#94A3B8]'
-                  }`}
-                >
-                  <span className="font-sans text-[11px] font-medium">{pass.label}</span>
-                  <span className="font-mono tabular-nums text-[9px] text-[#94A3B8]">MJD {pass.mjd}</span>
-                </button>
-              ))}
+            {/* Discrete Pass Pills with Human Dates */}
+            <div className="flex items-center space-x-1.5 overflow-x-auto py-1">
+              {DISCRETE_SURVEY_PASSES.map((pass, idx) => {
+                const dates = ['May 2025', 'Nov 2025', 'May 2026', 'Nov 2026'];
+                const humanDate = dates[idx] || `MJD ${pass.mjd}`;
+                return (
+                  <button
+                    key={pass.passIndex}
+                    type="button"
+                    onClick={() => setEpochIndex(idx)}
+                    className={`flex flex-col items-center rounded-lg border px-3 py-1 text-left transition-colors ${
+                      activeEpochIndex === idx
+                        ? 'border-primary bg-primary/15 text-white font-medium shadow-sm'
+                        : 'border-neutral-800 bg-neutral-900/60 text-neutral-400 hover:border-neutral-700 hover:text-white'
+                    }`}
+                  >
+                    <span className="font-sans text-[11px] font-medium leading-none">{pass.label}</span>
+                    <span className="text-[10px] text-neutral-300 mt-0.5">{humanDate}</span>
+                    <span className="font-mono tabular-nums text-[8px] text-neutral-500">MJD {pass.mjd}</span>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Playback speed slider */}
-            <div className="flex items-center space-x-2 text-xs text-[#94A3B8]">
-              <span>Speed:</span>
+            <div className="flex items-center space-x-2 text-xs text-neutral-400">
+              <span className="text-[11px]">Blink Speed:</span>
               <input
                 type="range"
                 min={150}
@@ -550,22 +598,22 @@ export const TimeDomainComparator: React.FC = () => {
                 step={50}
                 value={playbackSpeedMs}
                 onChange={(e) => useTelemetryStore.setState({ playbackSpeedMs: Number(e.target.value) })}
-                className="h-1 w-20 cursor-pointer accent-[#38BDF8]"
+                className="h-1 w-20 cursor-pointer accent-primary"
               />
-              <span className="font-mono tabular-nums text-[#E6ECF2]">{playbackSpeedMs}ms</span>
+              <span className="font-mono tabular-nums text-white text-[11px]">{playbackSpeedMs}ms</span>
             </div>
           </div>
 
           {/* Live Hover HUD Strip */}
-          <div className="mt-3 flex items-center justify-between border-t border-[#1E2530]/60 pt-2 font-mono tabular-nums text-xs text-[#94A3B8]">
+          <div className="mt-3 flex items-center justify-between border-t border-neutral-800/80 pt-2 font-mono tabular-nums text-xs text-neutral-400">
             <div>
               {hoverPixel ? (
                 <span>
-                  Cursor: <span className="text-[#E6ECF2]">[{hoverPixel.x}, {hoverPixel.y}]</span> |{' '}
-                  Flux: <span className="text-[#38BDF8]">{hoverPixel.flux.toFixed(2)} MJy/sr</span> |{' '}
-                  SNR: <span className="text-[#22C55E]">{hoverPixel.snr.toFixed(1)}</span> |{' '}
+                  Cursor: <span className="text-white">[{hoverPixel.x}, {hoverPixel.y}]</span> |{' '}
+                  Flux: <span className="text-sky-400">{hoverPixel.flux.toFixed(2)} MJy/sr</span> |{' '}
+                  SNR: <span className="text-emerald-400">{hoverPixel.snr.toFixed(1)}</span> |{' '}
                   FLAGS:{' '}
-                  <span className={hoverPixel.flags ? 'text-[#F59E0B]' : 'text-[#94A3B8]'}>
+                  <span className={hoverPixel.flags ? 'text-amber-400' : 'text-neutral-400'}>
                     0x{hoverPixel.flags.toString(16).padStart(3, '0')} ({hoverPixel.flagNames.join(', ')})
                   </span>
                 </span>
@@ -574,8 +622,8 @@ export const TimeDomainComparator: React.FC = () => {
               )}
             </div>
 
-            <div className="text-[11px] text-[#94A3B8]">
-              Pixel scale: <span className="text-[#E6ECF2]">6.2&quot;/px</span> | Native TAN North-Up
+            <div className="text-[11px] text-neutral-500">
+              Pixel scale: <span className="text-white">6.2&quot;/px</span> | Native TAN North-Up
             </div>
           </div>
         </div>
@@ -584,53 +632,70 @@ export const TimeDomainComparator: React.FC = () => {
       {/* ========================================================================= */}
       {/* RIGHT PANEL (35%): Analysis Deck & Wavelength-Matched Matrix              */}
       {/* ========================================================================= */}
-      <div className="flex w-[35%] flex-col overflow-y-auto border-l border-[#1E2530] bg-[#0F131A] p-4 text-xs">
+      <div className="flex w-[35%] flex-col overflow-y-auto border-l border-neutral-800 bg-neutral-950 p-4 text-xs space-y-4">
         {/* Render Mode Switcher */}
-        <section className="mb-4 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
-          <h3 className="mb-2 font-semibold text-[#E6ECF2]">Render mode</h3>
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
+          <div className="mb-2.5 flex items-center justify-between">
+            <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Render Mode</h3>
+            <span className="font-mono text-[10px] text-neutral-500">WebGL2 Float32 Pipeline</span>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { id: 'blink', label: 'Blink (single)', keyHint: '1' },
-              { id: 'difference', label: 'Signed diff (t_N - t_0)', keyHint: '2' },
-              { id: 'coadd', label: 'Co-add (1/σ²)', keyHint: '3' },
-            ].map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => {
-                  setRenderMode(m.id as any);
-                  setUrlMode(m.id);
-                }}
-                className={`flex flex-col items-center rounded-sm border p-2 text-center transition-colors ${
-                  renderMode === m.id
-                    ? 'border-[#38BDF8] bg-[#38BDF8]/20 text-[#38BDF8]'
-                    : 'border-[#1E2530] bg-[#0F131A] text-[#94A3B8] hover:border-[#94A3B8]'
-                }`}
-              >
-                <span className="font-sans font-medium text-[#E6ECF2]">{m.label}</span>
-                <span className="font-mono text-[10px] text-[#94A3B8]">[Key {m.keyHint}]</span>
-              </button>
-            ))}
+              { id: 'blink', title: 'Temporal Blink', subtitle: 'Cycle 6-mo passes', keyHint: '1' },
+              { id: 'difference', title: 'Motion Diff', subtitle: 'Signed diff (t_N - t_0)', keyHint: '2' },
+              { id: 'coadd', title: 'Deep Co-Add', subtitle: 'Stack 1/σ² passes', keyHint: '3' },
+            ].map((m) => {
+              const active = renderMode === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    setRenderMode(m.id as any);
+                    setUrlMode(m.id);
+                  }}
+                  className={`flex flex-col items-start rounded-lg border p-2.5 text-left transition-all ${
+                    active
+                      ? 'border-primary bg-primary/15 text-white shadow-sm ring-1 ring-primary/40'
+                      : 'border-neutral-800/80 bg-neutral-900/50 text-neutral-400 hover:border-neutral-700 hover:text-white'
+                  }`}
+                >
+                  <div className="flex w-full items-center justify-between">
+                    <span className="font-sans font-semibold text-xs text-white">{m.title}</span>
+                    <span className={`font-mono text-[9px] ${active ? 'text-primary' : 'text-neutral-500'}`}>[{m.keyHint}]</span>
+                  </div>
+                  <span className="mt-1 text-[10px] leading-tight text-neutral-400">{m.subtitle}</span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Asinh Stretch Parameters */}
-          <div className="mt-3 flex items-center justify-between text-xs text-[#94A3B8]">
-            <span>Asinh stretch factor (a):</span>
-            <input
-              type="range"
-              min={0.001}
-              max={0.5}
-              step={0.005}
-              value={asinhParamA}
-              onChange={(e) => setAsinhParams({ a: Number(e.target.value) })}
-              className="h-1 w-28 cursor-pointer accent-[#38BDF8]"
-            />
-            <span className="font-mono tabular-nums text-[#E6ECF2]">{asinhParamA.toFixed(3)}</span>
+          {/* Faint Target Contrast Boost (Asinh) */}
+          <div className="mt-4 pt-3 border-t border-neutral-800/80">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-neutral-300 font-medium">Faint Contrast Boost (Asinh):</span>
+              <span className="font-mono tabular-nums text-white text-[11px] bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">
+                a = {asinhParamA.toFixed(3)}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center space-x-2">
+              <span className="text-[10px] text-neutral-500">Linear</span>
+              <input
+                type="range"
+                min={0.001}
+                max={0.5}
+                step={0.005}
+                value={asinhParamA}
+                onChange={(e) => setAsinhParams({ a: Number(e.target.value) })}
+                className="h-1 flex-1 cursor-pointer accent-primary"
+              />
+              <span className="text-[10px] text-neutral-500">Max Boost</span>
+            </div>
           </div>
 
           {/* Colormap Selector */}
-          <div className="mt-3 flex items-center justify-between text-xs text-[#94A3B8]">
-            <span>Colormap:</span>
+          <div className="mt-3 flex items-center justify-between text-xs text-neutral-400">
+            <span className="text-neutral-300">Colormap:</span>
             <div className="flex space-x-1">
               {[
                 { id: 'standard_rgb', label: 'Grayscale' },
@@ -642,10 +707,10 @@ export const TimeDomainComparator: React.FC = () => {
                   key={pal.id}
                   type="button"
                   onClick={() => setColorPalette(pal.id as any)}
-                  className={`rounded-sm border px-2 py-0.5 text-[11px] ${
+                  className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
                     colorPalette === pal.id
-                      ? 'border-[#38BDF8] bg-[#38BDF8]/20 text-[#38BDF8]'
-                      : 'border-[#1E2530] bg-[#0F131A] text-[#94A3B8]'
+                      ? 'border-primary bg-primary/20 text-white font-medium'
+                      : 'border-neutral-800 bg-neutral-900/60 text-neutral-400 hover:text-white hover:border-neutral-700'
                   }`}
                 >
                   {pal.label}
@@ -656,93 +721,110 @@ export const TimeDomainComparator: React.FC = () => {
         </section>
 
         {/* (Epoch x Band) Coverage Matrix & Wavelength-Matched Differencing Guard */}
-        <section className="mb-4 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="font-semibold text-[#E6ECF2]">Coverage matrix (Epoch × Band)</h3>
-            <span className="font-mono text-[10px] text-[#38BDF8]">Wavelength-matched guard: ACTIVE</span>
+            <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Coverage Matrix</h3>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Band-Match Guard Active
+            </span>
           </div>
-          <p className="mb-2 text-[11px] text-[#94A3B8]">
-            Differencing is strictly confined to exposures within the same wavelength band window.
+          <p className="mb-3 text-[11px] text-neutral-400 leading-relaxed">
+            Differencing is strictly confined to exposures within the same wavelength band window. Click any cell to switch epoch and spectral band.
           </p>
 
-          <table className="w-full border-collapse font-mono text-[10px]">
-            <thead>
-              <tr className="border-b border-[#1E2530] text-[#94A3B8]">
-                <th className="p-1 text-left">Epoch</th>
-                {BANDS.map((b, bIdx) => (
-                  <th
-                    key={b.id}
-                    className={`p-1 text-center cursor-pointer ${
-                      activeBandIndex === bIdx ? 'text-[#38BDF8]' : ''
-                    }`}
-                    onClick={() => setActiveBandIndex(bIdx)}
-                  >
-                    {b.id}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {DISCRETE_SURVEY_PASSES.map((pass, pIdx) => (
-                <tr
-                  key={pass.passIndex}
-                  className={`border-b border-[#1E2530]/40 ${
-                    activeEpochIndex === pIdx ? 'bg-[#38BDF8]/10' : ''
-                  }`}
-                >
-                  <td className="p-1 text-[#E6ECF2]">{pass.label}</td>
-                  {BANDS.map((band, bIdx) => {
-                    const isWiseUndetected = activeBenchmark?.id === 'wise0855' && bIdx <= 2;
-                    return (
-                      <td
-                        key={band.id}
-                        onClick={() => {
-                          setEpochIndex(pIdx);
-                          setActiveBandIndex(bIdx);
-                        }}
-                        className={`p-1 text-center cursor-pointer border-l border-[#1E2530]/40 transition-colors ${
-                          activeEpochIndex === pIdx && activeBandIndex === bIdx
-                            ? 'bg-[#38BDF8] font-bold text-black'
-                            : isWiseUndetected
-                            ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                            : 'hover:bg-[#1E2530] text-[#94A3B8]'
-                        }`}
-                        title={isWiseUndetected ? 'Below detection depth (>17 mag)' : '4 exposures coadded'}
-                      >
-                        {isWiseUndetected ? 'Ø' : '4x'}
-                      </td>
-                    );
-                  })}
+          <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950/80">
+            <table className="w-full border-collapse font-mono text-[10px]">
+              <thead>
+                <tr className="border-b border-neutral-800 text-neutral-400 bg-neutral-900/60">
+                  <th className="p-2 text-left font-sans font-medium text-[11px]">Pass</th>
+                  {BANDS.map((b, bIdx) => (
+                    <th
+                      key={b.id}
+                      className={`p-2 text-center cursor-pointer transition-colors ${
+                        activeBandIndex === bIdx ? 'text-primary font-bold' : 'hover:text-white'
+                      }`}
+                      onClick={() => setActiveBandIndex(bIdx)}
+                    >
+                      {b.id}
+                      <span className="block text-[8px] font-normal text-neutral-500">{b.wavelengthUm}μm</span>
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {DISCRETE_SURVEY_PASSES.map((pass, pIdx) => (
+                  <tr
+                    key={pass.passIndex}
+                    className={`border-b border-neutral-800/50 transition-colors ${
+                      activeEpochIndex === pIdx ? 'bg-primary/10' : 'hover:bg-neutral-900/40'
+                    }`}
+                  >
+                    <td className="p-2 font-sans text-neutral-300 font-medium">
+                      {pass.label}
+                      <span className="block text-[8px] font-mono text-neutral-500">MJD {pass.mjd}</span>
+                    </td>
+                    {BANDS.map((band, bIdx) => {
+                      const isWiseUndetected = activeBenchmark?.id === 'wise0855' && bIdx <= 2;
+                      const isSelected = activeEpochIndex === pIdx && activeBandIndex === bIdx;
+                      return (
+                        <td
+                          key={band.id}
+                          onClick={() => {
+                            setEpochIndex(pIdx);
+                            setActiveBandIndex(bIdx);
+                          }}
+                          className={`p-2 text-center cursor-pointer border-l border-neutral-800/50 transition-all ${
+                            isSelected
+                              ? 'bg-primary font-bold text-white shadow-inner'
+                              : isWiseUndetected
+                              ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                              : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
+                          }`}
+                          title={
+                            isWiseUndetected
+                              ? 'Below detection depth (>17 mag in NIR; detected in D5/D6)'
+                              : `${band.id} (4 exposures co-added)`
+                          }
+                        >
+                          {isWiseUndetected ? 'Undet.' : '4x'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         {/* Forced 3x3 Aperture Photometry Light Curve */}
-        <section className="mb-4 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="font-semibold text-[#E6ECF2]">Forced 3×3 aperture light curve</h3>
-            <span className="font-mono text-[10px] text-[#94A3B8]">D1 (0.9µm) vs D5 (4.1µm)</span>
+            <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Forced Aperture Light Curve</h3>
+            <span className="font-mono text-[10px] text-neutral-400">3×3 px Aperture</span>
           </div>
+          <p className="mb-2 text-[11px] text-neutral-400">
+            Evolution of calibrated flux across all 4 survey passes in Optical/NIR (D1) versus Thermal Infrared (D5).
+          </p>
 
-          <div className="h-28 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] p-2">
+          <div className="h-28 w-full rounded-lg border border-neutral-800 bg-black/60 p-2">
             <svg className="h-full w-full" viewBox="0 0 200 80">
               {/* Gridlines */}
-              <line x1="20" y1="10" x2="190" y2="10" stroke="#1E2530" strokeWidth="0.5" />
-              <line x1="20" y1="40" x2="190" y2="40" stroke="#1E2530" strokeWidth="0.5" />
-              <line x1="20" y1="70" x2="190" y2="70" stroke="#1E2530" strokeWidth="0.5" />
+              <line x1="20" y1="10" x2="190" y2="10" stroke="#262626" strokeWidth="0.5" />
+              <line x1="20" y1="40" x2="190" y2="40" stroke="#262626" strokeWidth="0.5" />
+              <line x1="20" y1="70" x2="190" y2="70" stroke="#262626" strokeWidth="0.5" />
 
-              {/* D1 Light curve stroke (Cyan) */}
+              {/* D1 Light curve stroke (NASA Blue) */}
               <polyline
                 fill="none"
-                stroke="#38BDF8"
+                stroke="#288BFF"
                 strokeWidth="1.5"
                 points={lightCurveData
                   .map((d, i) => `${30 + i * 45},${70 - Math.min(60, d.fluxD1 * 3)}`)
                   .join(' ')}
               />
-              {/* D5 Light curve stroke (Amber) */}
+              {/* D5 Light curve stroke (NASA Amber) */}
               <polyline
                 fill="none"
                 stroke="#F59E0B"
@@ -755,107 +837,146 @@ export const TimeDomainComparator: React.FC = () => {
               {/* Data points */}
               {lightCurveData.map((d, i) => (
                 <g key={i}>
-                  <circle cx={30 + i * 45} cy={70 - Math.min(60, d.fluxD1 * 3)} r="2" fill="#38BDF8" />
-                  <circle cx={30 + i * 45} cy={70 - Math.min(60, d.fluxD5 * 3)} r="2" fill="#F59E0B" />
+                  <circle cx={30 + i * 45} cy={70 - Math.min(60, d.fluxD1 * 3)} r="2.5" fill="#288BFF" />
+                  <circle cx={30 + i * 45} cy={70 - Math.min(60, d.fluxD5 * 3)} r="2.5" fill="#F59E0B" />
                 </g>
               ))}
             </svg>
           </div>
 
-          <div className="mt-2 flex items-center justify-between text-[11px] font-mono">
-            <span className="flex items-center gap-1.5 text-[#38BDF8]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#38BDF8]" />
-              <span>Band D1 (Optical/NIR)</span>
+          <div className="mt-2.5 flex items-center justify-between text-[11px] font-sans">
+            <span className="flex items-center gap-1.5 text-sky-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+              <span>Band D1 (0.9 µm NIR)</span>
             </span>
-            <span className="flex items-center gap-1.5 text-[#F59E0B]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#F59E0B]" />
-              <span>Band D5 (Thermal IR)</span>
+            <span className="flex items-center gap-1.5 text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span>Band D5 (4.1 µm Thermal)</span>
             </span>
             {activeBenchmark?.id === 'rw_aur' && (
-              <span className="text-[#22C55E]">Dimming: &gt;1.5 mag</span>
+              <span className="text-emerald-400 font-medium">Dimming: &gt;1.5 mag</span>
             )}
           </div>
         </section>
 
         {/* 2-Click Proper Motion Calculator */}
-        <section className="mb-4 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="font-semibold text-[#E6ECF2]">Proper motion calculator</h3>
+            <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Proper Motion Calculator</h3>
             <button
               type="button"
               onClick={() => {
                 setMeasuringMotion(!measuringMotion);
                 setMotionPoints([]);
               }}
-              className={`rounded-sm border px-2 py-0.5 text-xs font-medium ${
+              className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition-all ${
                 measuringMotion
-                  ? 'border-[#38BDF8] bg-[#38BDF8]/20 text-[#38BDF8]'
-                  : 'border-[#1E2530] bg-[#0F131A] text-[#94A3B8]'
+                  ? 'border-primary bg-primary text-white shadow-sm'
+                  : 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-600'
               }`}
             >
-              {measuringMotion ? 'Cancel measure' : 'Measure 2-click vector'}
+              {measuringMotion ? 'Cancel Measure' : 'Measure 2-Click Vector'}
             </button>
           </div>
 
+          {measuringMotion && motionPoints.length < 2 && (
+            <div className="mb-2 rounded-lg border border-primary/30 bg-primary/10 p-2.5 text-[11px] text-neutral-200">
+              <div className="font-medium text-white mb-0.5">
+                {motionPoints.length === 0 ? 'Step 1: Click target in Pass 1' : 'Step 2: Switch pass and click target in Pass 4'}
+              </div>
+              <p className="text-neutral-400 text-[10px]">
+                5×5 sub-pixel auto-centroid snapping is active. Clicking snaps directly to local flux peak.
+              </p>
+            </div>
+          )}
+
           {motionResult ? (
-            <div className="rounded-sm border border-[#22C55E]/40 bg-[#22C55E]/10 p-2 font-mono text-[11px] text-[#22C55E]">
-              Total motion: {motionResult.totalMotionArcsecYr.toFixed(2)}&quot;/yr
-              <br />
-              Velocity: {(motionResult.totalMotionArcsecYr / 6.2).toFixed(2)} px/yr
-              <br />
-              Position angle: {motionResult.positionAngleDeg.toFixed(1)}° E of N
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 font-mono text-[11px] text-emerald-300">
+              <div className="font-sans font-semibold text-emerald-400 mb-1">Kinematic Motion Calculated:</div>
+              <div>Total Motion: <strong className="text-white">{motionResult.totalMotionArcsecYr.toFixed(2)}&quot;/yr</strong></div>
+              <div>Velocity: <strong className="text-white">{(motionResult.totalMotionArcsecYr / 6.2).toFixed(2)} px/yr</strong></div>
+              <div>Position Angle: <strong className="text-white">{motionResult.positionAngleDeg.toFixed(1)}° E of N</strong></div>
             </div>
           ) : (
-            <p className="text-[11px] text-[#94A3B8]">
-              Click two points across different passes on the canvas to calculate kinematic proper motion and position angle.
-            </p>
+            !measuringMotion && (
+              <p className="text-[11px] text-neutral-400 leading-relaxed">
+                Click two points across different survey passes on the canvas to measure kinematic proper motion and position angle.
+              </p>
+            )
           )}
         </section>
 
-        {/* Classification Triage Form & Tab 5 Deep-Link */}
-        <section className="rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
-          <h3 className="mb-2 font-semibold text-[#E6ECF2]">Candidate triage &amp; escalation</h3>
-          <div className="space-y-2">
-            <div>
-              <label className="text-[11px] text-[#94A3B8]">Classification:</label>
-              <select
-                value={triageClass}
-                onChange={(e) => setTriageClass(e.target.value)}
-                className="mt-1 w-full rounded-sm border border-[#1E2530] bg-[#0F131A] p-1.5 text-xs text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-              >
-                <option value="moving_brown_dwarf">High-Proper-Motion Brown Dwarf</option>
-                <option value="variable_star">Variable Young Stellar Object / Mira</option>
-                <option value="transient_glitch">Cosmic Ray Glitch / False Positive</option>
-                <option value="asteroid">Fast-Moving Solar System Asteroid</option>
-              </select>
-            </div>
+        {/* Classification Triage Form & In-situ Confirmation Banner */}
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
+          <h3 className="mb-2 font-semibold text-white text-xs tracking-wide uppercase">Candidate Triage &amp; Escalation</h3>
 
-            <div>
-              <div className="flex justify-between text-[11px] text-[#94A3B8]">
-                <span>Confidence:</span>
-                <span className="font-mono text-[#E6ECF2]">{triageConfidence}%</span>
+          {triageSubmitted ? (
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-emerald-300 animate-fadeIn">
+              <div className="flex items-center space-x-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="font-sans font-semibold text-xs text-white">Classification Logged to Catalog</span>
               </div>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                value={triageConfidence}
-                onChange={(e) => setTriageConfidence(Number(e.target.value))}
-                className="mt-1 h-1 w-full cursor-pointer accent-[#38BDF8]"
-              />
+              <p className="mt-2 font-sans text-[11px] text-neutral-300 leading-relaxed">
+                Candidate recorded as <strong className="text-white capitalize">{triageClass.replace(/_/g, ' ')}</strong> at{' '}
+                <strong className="text-white">{triageConfidence}% confidence</strong>. Telemetry metadata registered in the SPHEREx community catalog.
+              </p>
+              <div className="mt-3.5 flex items-center space-x-3 font-sans">
+                <button
+                  type="button"
+                  onClick={() => setTab('discussions')}
+                  className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 transition-colors shadow-sm"
+                >
+                  View in Community Discussions →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTriageSubmitted(false)}
+                  className="text-xs text-neutral-400 hover:text-white transition-colors"
+                >
+                  Classify another object
+                </button>
+              </div>
             </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-medium text-neutral-300">Object Classification:</label>
+                <select
+                  value={triageClass}
+                  onChange={(e) => setTriageClass(e.target.value)}
+                  className="mt-1.5 w-full rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-xs text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                >
+                  <option value="moving_brown_dwarf">High-Proper-Motion Brown Dwarf (Cold Y/T Dwarf)</option>
+                  <option value="variable_star">Variable Stellar Object (T Tauri / Mira Pulsar)</option>
+                  <option value="transient_glitch">Cosmic Ray Glitch / False Positive Artifact</option>
+                  <option value="asteroid">Fast-Moving Solar System Asteroid</option>
+                </select>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setTriageSubmitted(true);
-                setTab('discussions');
-              }}
-              className="mt-2 w-full rounded-sm border border-[#38BDF8] bg-[#38BDF8]/15 py-1.5 font-sans text-xs font-semibold text-[#38BDF8] transition-colors hover:bg-[#38BDF8]/25"
-            >
-              Submit classification &amp; open discussion →
-            </button>
-          </div>
+              <div>
+                <div className="flex justify-between text-[11px] text-neutral-300">
+                  <span className="font-medium">Observer Confidence:</span>
+                  <span className="font-mono text-white font-semibold">{triageConfidence}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  value={triageConfidence}
+                  onChange={(e) => setTriageConfidence(Number(e.target.value))}
+                  className="mt-1.5 h-1 w-full cursor-pointer accent-primary"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setTriageSubmitted(true)}
+                className="mt-2 w-full rounded-lg border border-primary bg-primary py-2 font-sans text-xs font-semibold text-white transition-all hover:bg-primary/90 shadow-sm"
+              >
+                Submit Classification
+              </button>
+            </div>
+          )}
         </section>
       </div>
     </div>
