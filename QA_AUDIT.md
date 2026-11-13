@@ -330,3 +330,56 @@ Every benchmark must tell a 1-sentence physical story that sparks curiosity:
 | `Native TAN North-Up` | **Standard Sky Alignment (North is Up, East is Left)** | Move to tooltip; keep HUD clean. |
 | `MJD 60810` | **May 15, 2025 (Survey Pass 1)** | Show human calendar dates first, MJD in subtle mono. |
 | `A-values (cm/molecule)` | **Laboratory Ice Absorption Strength** | Move to table footnote; label column *"Absorption Power"*. |
+
+---
+
+## 11. Production-Grade NASA Transformation & Verification Log (Option A, 18 Discoveries, Fluid Viewport, Zero Emojis)
+
+### 11.1 Architectural Transition: Option A NASA Portal Integration
+- **Root Landing (`/`):** Authentic NASA SPHEREx Mission Launchpad modeled directly after `https://science.nasa.gov/mission/spherex/`.
+- **In-Situ Mission Briefing (`/explore`):** Citizen scientists can toggle between the Mission Launchpad and the live Sky Explorer without losing telemetry state or coordinates.
+- **Color System:** Exact NASA Human Design System (HDS) tokens installed in `web-client/src/index.css` and `tailwind.config.js`:
+  - NASA Carbon Black: `#000000`
+  - NASA Spacesuit White: `#FFFFFF`
+  - NASA Insignia Blue: `#0B3D91`
+  - NASA Electric Blue Tint: `#288BFF`
+  - Active Emerald Green: `#47DA84`
+  - Alert Red: `#F64137`
+  - Warning Amber: `#F59E0B`
+- **Typography:** Inter for clean modern UI body text; DM Mono strictly reserved for numerical coordinates and astrometric telemetry readouts.
+
+### 11.2 Expansion to 18 Major Astronomical Discoveries
+Replaced hackathon toy pills with a production-grade catalog of 18 landmark astronomical discoveries across 5 astrophysical categories (`MajorDiscoveriesData.ts` & `MajorDiscoveriesShowcase.tsx`):
+1. **Nearby Worlds & Brown Dwarfs:** Barnard's Star (M4V), WISE 0855-0714 (Y4), Epsilon Indi B (T1+T6), TRAPPIST-1 (M8V), Luhman 16 (L7.5+T0.5).
+2. **Water & Biogenic Ices:** Orion Nebula Trapezium (M42), Serpens Core Embedded Protostar, TMC-1 Dark Cloud Cold Molecular Core.
+3. **Cosmic Inflation & Deep Fields:** SPHEREx North Ecliptic Pole (NEP), South Ecliptic Pole (SEP), COSMOS Deep Survey Field, GOODS-North Infrared Deep Sightline.
+4. **Galaxies & Extragalactic Structures:** M87 Supermassive Black Hole & Jet, Andromeda Galaxy (M31) Bulge, Whirlpool Galaxy (M51) Spiral Arms, Centaurus A (NGC 5128) Dusty Starburst Merger.
+5. **Stellar Variables & Pulsators:** RW Aurigae (T Tauri Flare), R Draconis (Mira Pulsar), V838 Monocerotis (Luminous Red Nova Light Echo).
+
+### 11.3 Interactive Backyard Worlds Pattern Primer
+Directly solves the "Cold Drop" and educates volunteers before using the tools (`PatternPrimer.tsx`):
+- **Card 1: Moving Dipoles (What to Look For):** Demonstrates how signed subtraction ($I_{\text{epoch } N} - I_{\text{epoch } 0}$) leaves adjacent black/white dipoles for true movers.
+- **Card 2: Pulsing Monopoles (Variable Stars):** Teaches how stationary stars brighten and dim without shifting coordinates.
+- **Card 3: Optical False Positives:** Guides users to spot diffraction spikes, optical glares, and cosmic-ray single-frame spikes.
+
+### 11.4 Zero-Emoji Enforcement
+- Automated Unicode regex scan asserts **0 emojis / surrogate pairs** across all files in `web-client/src`.
+- Replaced informal pictographs with vector SVGs and NASA-styled HUD elements.
+
+### 11.5 Tab 2 Aerospace Overhaul: Fluid WebGL2 Canvas & Precision Reticle
+- **Responsive Fluid Canvas:** Eliminated the cramped fixed 480×480 box in favor of a fluid, responsive WebGL2 viewport (`max-h-[calc(100vh-220px)] aspect-square`) styled in NASA Carbon Black.
+- **$5 \times 5$ Sub-Pixel Auto-Centroid Snapping:** In `handlePixelClick`, clicking within 2 pixels of a source automatically snaps to the local peak flux value in the 32-bit float buffer, eliminating mouse jitter.
+- **NASA Eyes Reticle Brackets (`[ ]`):** Dynamic corner brackets follow moving targets across discrete survey epochs with live proper motion and velocity readouts.
+- **Discrete Pass Scrubber:** Synchronized with human calendar dates (`May 2025`, `Nov 2025`, `May 2026`, `Nov 2026`) alongside MJD timestamps.
+- **De-Jargonized HUD Pods:**
+  - *Temporal Blink* (Cycle 6-month survey passes)
+  - *Motion Subtraction* (Signed difference; movers leave dipoles)
+  - *Deep Co-Add* (Stack passes to detect faint cold brown dwarfs)
+  - *Faint Target Contrast Boost* (Asinh stretch)
+  - *Coverage Matrix* (Survey Pass × Spectral Band with band-matched differencing guard active)
+- **In-Situ Candidate Triage Banner:** Classification submissions display an immediate confirmation toast with telemetry archiving verification, eliminating the disorienting tab redirect.
+
+### 11.6 Verification Verdict
+- `cd web-client && npm run build`: **PASS (13.14s, 0 errors, 0 warnings)**
+- Zero broken links, zero leaked keys, zero cross-role file violations.
+
