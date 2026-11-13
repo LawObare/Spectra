@@ -18,7 +18,7 @@ To prevent two developers (or their AI agents) from accidentally claiming and wo
 | **`E3`** | `role:E3-webgl` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#1, #17, #18, #27` (4) |
 | **`E4`** | `role:E4-frontend` | `@LawObare` | `obarelawrence.acc@gmail.com` | `#14, #15, #16, #23` (4) |
 | **`E5`** | `role:E5-datasci` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#2, #20, #21, #25, #26` (5) |
-| **`E6`** | `role:E6-devops` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#4, #6, #13, #24, #28, #29, #30` (7) |
+| **`E6`** | `role:E6-devops` | `@Musaamanipeace` | `amanimosespeace@gmail.com` | `#4, #6, #13, #24, #28, #29, #30` (7) |
 
 **Mandatory Bijection Enforcement Rules:**
 1. **Strictly One Human Per Role (`|Devs(E_k)| = 1`):** Each row (`E1`–`E6`) in the table above may contain **only one** GitHub username and **only one** Git email. Committing two usernames/emails into one role row (e.g., `@alice, @bob`) is forbidden.
