@@ -15,7 +15,7 @@ To prevent two developers (or their AI agents) from accidentally claiming and wo
 |---|---|---|---|---|
 | **`E1`** | `role:E1-astro` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#3, #9, #10, #11, #19` (5) |
 | **`E2`** | `role:E2-backend` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#5, #7, #8, #12, #22` (5) |
-| **`E3`** | `role:E3-webgl` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#1, #17, #18, #27` (4) |
+| **`E3`** | `role:E3-webgl` | `@lams-joy` | `lamkajoy2005@gmail.com` | `#1, #17, #18, #27` (4) |
 | **`E4`** | `role:E4-frontend` | `@LawObare` | `obarelawrence.acc@gmail.com` | `#14, #15, #16, #23` (4) |
 | **`E5`** | `role:E5-datasci` | `<CLAIM_WITH_SINGLE_GITHUB_HANDLE>` | `<CLAIM_WITH_GIT_EMAIL>` | `#2, #20, #21, #25, #26` (5) |
 | **`E6`** | `role:E6-devops` | `@Musaamanipeace` | `amanimosespeace@gmail.com` | `#4, #6, #13, #24, #28, #29, #30` (7) |
