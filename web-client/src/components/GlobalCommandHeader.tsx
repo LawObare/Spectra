@@ -389,12 +389,14 @@ export interface GlobalCommandHeaderProps {
   onOpenCommandPalette?: () => void;
   onToggleMissionBriefing?: () => void;
   isMissionBriefingActive?: boolean;
+  onOpenCatalog?: () => void;
 }
 
 export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   onOpenCommandPalette,
   onToggleMissionBriefing,
   isMissionBriefingActive = false,
+  onOpenCatalog,
 }) => {
   const {
     ra,
@@ -687,6 +689,23 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         >
           {sourceBadge}
         </Badge>
+
+        {/* Authoritative Source Catalog Button */}
+        {onOpenCatalog && (
+          <button
+            type="button"
+            onClick={onOpenCatalog}
+            className="hidden md:flex items-center gap-1.5 rounded-full border border-neutral-800 bg-neutral-900/80 hover:bg-neutral-800 hover:border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300 hover:text-white transition-all shadow-sm"
+            title="Browse all 24 calibrated astronomical targets across the survey"
+          >
+            <svg className="h-3.5 w-3.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            <span className="hidden xl:inline">Source Catalog</span>
+            <span className="xl:hidden">Catalog</span>
+            <span className="rounded-full bg-primary/20 px-1.5 py-0.2 text-[10px] font-mono text-primary">24</span>
+          </button>
+        )}
       </div>
 
       {/* 2. Universal Coordinate & Object Name Resolver (SIMBAD / NED / ICRS / Catalog) */}

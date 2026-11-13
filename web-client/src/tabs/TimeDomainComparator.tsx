@@ -50,7 +50,11 @@ const BANDS = [
 
 const CANVAS_PIXEL_DIM = 128; // Standard 128x128 cutout stamp
 
-export const TimeDomainComparator: React.FC = () => {
+export interface TimeDomainComparatorProps {
+  onOpenCatalog?: () => void;
+}
+
+export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOpenCatalog }) => {
   const {
     ra: urlRa,
     dec: urlDec,
@@ -417,6 +421,17 @@ export const TimeDomainComparator: React.FC = () => {
             <span className="font-bold text-white">
               {activeBenchmark ? activeBenchmark.name : `Field at RA ${urlRa.toFixed(4)}°, Dec ${urlDec.toFixed(4)}°`}
             </span>
+            {onOpenCatalog && (
+              <button
+                type="button"
+                onClick={onOpenCatalog}
+                className="rounded-full border border-neutral-800 bg-neutral-900/90 hover:bg-neutral-800 hover:border-neutral-700 px-2.5 py-0.5 text-[11px] font-medium text-neutral-300 hover:text-white transition-all flex items-center space-x-1 shadow-sm"
+                title="Browse all 24 calibrated targets in the source catalog"
+              >
+                <span>Switch Target (24)</span>
+                <span className="text-primary text-[9px]">▾</span>
+              </button>
+            )}
             <span className="rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
               {store.sourceBadge}
             </span>
