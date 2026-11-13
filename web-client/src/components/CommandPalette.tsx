@@ -292,18 +292,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-[#080A0F]/80 pt-[14dvh] select-none"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-background/80 backdrop-blur-sm pt-[14dvh] select-none"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl overflow-hidden rounded-sm border border-[#1E2530] bg-[#0F131A] font-sans text-xs text-[#E6ECF2]"
+        className="w-full max-w-xl overflow-hidden rounded-sm border border-border bg-card font-sans text-xs text-foreground shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         {/* Command Search Input */}
-        <div className="flex items-center border-b border-[#1E2530] bg-[#151B24] px-3">
+        <div className="flex items-center border-b border-border bg-secondary/70 px-3">
           <svg
-            className="mr-2.5 h-3.5 w-3.5 shrink-0 text-[#94A3B8]"
+            className="mr-2.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
             viewBox="0 0 16 16"
             fill="none"
             stroke="currentColor"
@@ -326,9 +326,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
               setSelectedIndex(0);
             }}
             placeholder="Enter RA/Dec, SIMBAD object name, workspace, or command..."
-            className="w-full bg-transparent py-2.5 text-xs text-[#E6ECF2] placeholder-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#38BDF8]"
+            className="w-full bg-transparent py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none"
           />
-          <kbd className="rounded-sm border border-[#1E2530] bg-[#0F131A] px-1.5 py-0.5 font-mono text-[10px] text-[#94A3B8]">
+          <kbd className="rounded-sm border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
             Esc
           </kbd>
         </div>
@@ -339,10 +339,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
             <button
               type="button"
               onClick={handleResolveArbitraryObject}
-              className="mb-1 flex w-full items-center justify-between rounded-sm border border-[#38BDF8] bg-[#151B24] px-2.5 py-2 text-left text-xs text-[#E6ECF2]"
+              className="mb-1 flex w-full items-center justify-between rounded-sm border border-primary/50 bg-secondary px-2.5 py-2 text-left text-xs text-foreground"
             >
               <span>Center sky on J2000 coordinates</span>
-              <span className="font-mono text-[#38BDF8]">
+              <span className="font-mono text-primary">
                 RA {parsedCoords.ra.toFixed(5)}°, Dec {parsedCoords.dec.toFixed(5)}°
               </span>
             </button>
@@ -358,20 +358,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
                 aria-selected={isSelected}
                 onClick={action.perform}
                 onMouseEnter={() => setSelectedIndex(idx)}
-                className={`flex w-full items-center justify-between rounded-sm px-2.5 py-2 text-left text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
+                className={`flex w-full items-center justify-between rounded-sm px-2.5 py-2 text-left text-xs transition-colors duration-150 focus-visible:outline-none ${
                   isSelected
-                    ? 'border border-[#38BDF8] bg-[#151B24] text-[#E6ECF2]'
-                    : 'border border-transparent text-[#94A3B8] hover:bg-[#151B24]/60 hover:text-[#E6ECF2]'
+                    ? 'border border-primary/50 bg-secondary text-foreground'
+                    : 'border border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                  <span className="w-28 shrink-0 text-[11px] text-[#94A3B8]">
+                  <span className="w-28 shrink-0 text-[11px] text-muted-foreground">
                     {action.category}
                   </span>
-                  <span className="truncate text-[#E6ECF2]">{action.label}</span>
+                  <span className="truncate text-foreground">{action.label}</span>
                 </div>
                 {action.shortcut && (
-                  <kbd className="shrink-0 rounded-sm border border-[#1E2530] bg-[#080A0F] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-[#94A3B8]">
+                  <kbd className="shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
                     {action.shortcut}
                   </kbd>
                 )}
@@ -383,20 +383,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
             <button
               type="button"
               onClick={handleResolveArbitraryObject}
-              className="mt-1 flex w-full items-center justify-between rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-2 text-left text-xs text-[#E6ECF2] hover:border-[#38BDF8]"
+              className="mt-1 flex w-full items-center justify-between rounded-sm border border-border bg-secondary px-2.5 py-2 text-left text-xs text-foreground hover:border-primary transition-colors"
             >
               <span>
                 {isResolvingSesame
                   ? `Resolving "${query.trim()}" via CDS Sesame...`
                   : `Query SIMBAD / NED / IRSA Sesame resolver for "${query.trim()}"`}
               </span>
-              <span className="font-mono text-[10px] text-[#38BDF8]">Resolve ↵</span>
+              <span className="font-mono text-[10px] text-primary">Resolve ↵</span>
             </button>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex justify-between border-t border-[#1E2530] bg-[#080A0F] px-3 py-1.5 text-[11px] text-[#94A3B8]">
+        <div className="flex justify-between border-t border-border bg-background px-3 py-1.5 text-[11px] text-muted-foreground">
           <span>Up/Down to select · Enter to execute or resolve · Esc to close</span>
           <span>Spectra Universal Resolver</span>
         </div>

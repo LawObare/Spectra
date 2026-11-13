@@ -7,6 +7,7 @@ import {
   SEARCHABLE_SKY_CATALOG,
   BenchmarkPill,
 } from '../components/GlobalCommandHeader';
+import { Button, Badge, Input, Select } from '../components/ui';
 
 // Deep Field Centers (Ecliptic Poles in J2000 coordinates, radius = 5.64 deg -> ~100 deg^2)
 const NEP_COORDS = { ra: 270.0, dec: 66.5607, radiusDeg: 5.64, label: 'NEP Deep Field (r = 5.64°)' };
@@ -1202,159 +1203,155 @@ export const CelestialNavigator: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-[#080A0F] font-sans text-xs text-[#E6ECF2] select-none">
+    <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
       {/* LEFT 70%: Native Aladin Lite v3 WebGL2 Sky Viewport */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         {/* Top Overlay Instrument Toolbar (Modelled after IRSA Firefly Layer & Band Bar) */}
         <div
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
-          className="z-20 flex flex-wrap items-center justify-between gap-2 border-b border-[#1E2530] bg-[#0F131A] px-3 py-1.5"
+          className="z-20 flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3 py-1.5"
         >
           {/* Layer Toggles */}
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Sky overlay layers">
-            <button
-              type="button"
+            <Button
+              variant={showLvfFootprints ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setShowLvfFootprints((v) => !v)}
-              className={`rounded-sm border px-2 py-1 text-[11px] transition-colors duration-150 ${
-                showLvfFootprints
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
+              className={showLvfFootprints ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
               title="Toggle SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints"
             >
               LVF Footprints ({filteredExposures.length})
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={showWcsGrid ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setShowWcsGrid((v) => !v)}
-              className={`rounded-sm border px-2 py-1 text-[11px] transition-colors duration-150 ${
-                showWcsGrid
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
+              className={showWcsGrid ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
             >
               J2000 Grid
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={showCutoutBox ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setShowCutoutBox((v) => !v)}
-              className={`rounded-sm border px-2 py-1 text-[11px] transition-colors duration-150 ${
-                showCutoutBox
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
+              className={showCutoutBox ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
               title="Show true-scale cutout bounding box at target coordinate"
             >
               Cutout Box ({fovArcsec}&quot;)
-            </button>
+            </Button>
 
             {/* Photographic Sky Survey Layer Selector */}
-            <div className="flex items-center gap-1" role="group" aria-label="Photographic survey layer">
-              <span className="text-[11px] text-[#94A3B8]">Survey:</span>
-              {PHOTOGRAPHIC_SURVEYS.map((surv) => (
-                <button
-                  key={surv.id}
-                  type="button"
-                  onClick={() => setActiveSurvey(surv.id)}
-                  title={`${surv.label} (${surv.badge}) · ${surv.description}`}
-                  className={`rounded-sm border px-2 py-0.5 text-[11px] transition-colors duration-150 ${
-                    activeSurvey === surv.id
-                      ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                      : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-                  }`}
-                >
-                  {surv.label}
-                </button>
-              ))}
+            <div className="flex items-center gap-1.5 ml-1" role="group" aria-label="Photographic survey layer">
+              <span className="text-[11px] text-muted-foreground">Survey:</span>
+              <Select
+                sizeVariant="xs"
+                value={activeSurvey}
+                onChange={(e) => setActiveSurvey(e.target.value as PhotographicSurveyId)}
+                title="Select background photographic survey"
+                className="bg-background text-foreground"
+              >
+                {PHOTOGRAPHIC_SURVEYS.map((surv) => (
+                  <option key={surv.id} value={surv.id}>
+                    {surv.label} ({surv.badge})
+                  </option>
+                ))}
+              </Select>
             </div>
           </div>
 
           {/* SPHEREx Detector Band Filter (D1-D6) */}
           <div className="flex items-center gap-1" role="group" aria-label="SPHEREx detector filter">
-            <span className="mr-1 text-[11px] text-[#94A3B8]">Detector:</span>
-            <button
-              type="button"
+            <span className="mr-1 text-[11px] text-muted-foreground">Detector:</span>
+            <Button
+              variant={selectedBandFilter === 'ALL' ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setSelectedBandFilter('ALL')}
-              className={`rounded-sm border px-1.5 py-0.5 font-mono text-[11px] ${
+              className={
                 selectedBandFilter === 'ALL'
-                  ? 'border-[#38BDF8] bg-[#151B24] text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
+                  ? 'h-6 px-1.5 font-mono text-[11px] border-primary/50 text-foreground font-medium'
+                  : 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground'
+              }
             >
               All
-            </button>
+            </Button>
             {SPHEREX_DETECTORS.map((det) => (
-              <button
+              <Button
                 key={det.id}
-                type="button"
+                variant={selectedBandFilter === det.id ? 'secondary' : 'ghost'}
+                size="xs"
                 onClick={() => setSelectedBandFilter(det.id)}
                 title={`${det.label} · R=${det.resolvingPower}`}
-                className={`rounded-sm border px-1.5 py-0.5 font-mono text-[11px] ${
+                className={
                   selectedBandFilter === det.id
-                    ? 'border-[#38BDF8] bg-[#151B24] text-[#E6ECF2]'
-                    : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-                }`}
+                    ? 'h-6 px-1.5 font-mono text-[11px] border-primary/50 text-foreground font-medium'
+                    : 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground'
+                }
               >
                 {det.id}
-              </button>
+              </Button>
             ))}
           </div>
 
           {/* Field of View Zoom Controls */}
-          <div className="flex items-center rounded-sm border border-[#1E2530] bg-[#080A0F]">
-            <button
-              type="button"
+          <div className="flex items-center rounded-sm border border-border bg-background p-0.5 gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={() => applyZoom(displayFovDeg * 0.65)}
-              className="px-2 py-0.5 font-mono text-xs text-[#E6ECF2] hover:bg-[#151B24]"
+              className="font-mono text-xs text-foreground hover:bg-accent"
               title="Zoom in"
               aria-label="Zoom in"
             >
               +
-            </button>
-            <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={() => applyZoom(displayFovDeg * 1.5)}
-              className="px-2 py-0.5 font-mono text-xs text-[#E6ECF2] hover:bg-[#151B24]"
+              className="font-mono text-xs text-foreground hover:bg-accent"
               title="Zoom out"
               aria-label="Zoom out"
             >
               −
-            </button>
-            <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
-            <button
-              type="button"
+            </Button>
+            <span className="h-3.5 w-px bg-border" aria-hidden="true" />
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => applyZoom(60.0)}
-              className="px-2 py-0.5 font-mono text-[10px] text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]"
+              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
               title="Maximum wide-field context (60°)"
             >
               60°
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => applyZoom(18.0)}
-              className="px-2 py-0.5 font-mono text-[10px] text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]"
+              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
               title="Wide survey context (18°)"
             >
               18°
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => applyZoom(6.0)}
-              className="px-2 py-0.5 font-mono text-[10px] text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]"
+              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
               title="SPHEREx detector array scale (6°)"
             >
               6°
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => applyZoom(1.2)}
-              className="px-2 py-0.5 font-mono text-[10px] text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]"
+              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
               title="Target field scale (1.2°)"
             >
               1.2°
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -1431,30 +1428,30 @@ export const CelestialNavigator: React.FC = () => {
         </div>
 
         {/* Bottom 32px High-Frequency Cursor Telemetry Strip */}
-        <footer className="z-20 flex h-[34px] items-center justify-between border-t border-[#1E2530] bg-[#0F131A] px-3 text-[11px]">
+        <footer className="z-20 flex h-[34px] items-center justify-between border-t border-border bg-card px-3 text-[11px]">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="flex items-center gap-1.5">
-              <span className="text-[#94A3B8]">Cursor J2000:</span>
+              <span className="text-muted-foreground">Cursor J2000:</span>
               <span
                 ref={cursorRaDecDomRef}
-                className="font-mono tabular-nums text-[#E6ECF2]"
+                className="font-mono tabular-nums text-foreground"
               >
                 {ra.toFixed(5)}° {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}°
               </span>
             </div>
-            <span className="hidden md:inline text-[#1E2530]">|</span>
+            <span className="hidden md:inline text-border">|</span>
             <span
               ref={cursorSexaDomRef}
-              className="hidden md:inline font-mono tabular-nums text-[#94A3B8]"
+              className="hidden md:inline font-mono tabular-nums text-muted-foreground"
             >
               {sexagesimalTarget}
             </span>
-            <span className="hidden lg:inline text-[#1E2530]">|</span>
+            <span className="hidden lg:inline text-border">|</span>
             <div className="hidden lg:flex items-center gap-1.5">
-              <span className="text-[#94A3B8]">WCS-WAVE at cursor:</span>
+              <span className="text-muted-foreground">WCS-WAVE at cursor:</span>
               <span
                 ref={cursorLvfDomRef}
-                className="font-mono tabular-nums text-[#38BDF8]"
+                className="font-mono tabular-nums text-primary"
               >
                 {activeExposure
                   ? `${activeExposure.detector.id} λ=${activeExposure.lambdaAtTargetUm.toFixed(
@@ -1465,47 +1462,48 @@ export const CelestialNavigator: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 font-mono text-[11px] tabular-nums text-[#94A3B8]">
+          <div className="flex items-center gap-2 font-mono text-[11px] tabular-nums text-muted-foreground">
             <span>β_ecl = {coverageDepth.eclipticLatDeg >= 0 ? '+' : ''}{coverageDepth.eclipticLatDeg.toFixed(1)}°</span>
-            <span className="text-[#1E2530]">·</span>
-            <span className="text-[#E6ECF2]">{coverageDepth.cadenceLabel}</span>
+            <span className="text-border">·</span>
+            <span className="text-foreground">{coverageDepth.cadenceLabel}</span>
           </div>
         </footer>
       </div>
 
       {/* RIGHT 30%: SPHEREx Spectral Image Search & Footprint Inspector (Modelled on IRSA search-spectral-images) */}
-      <aside className="flex w-[380px] xl:w-[430px] shrink-0 flex-col border-l border-[#1E2530] bg-[#0F131A]">
+      <aside className="flex w-[380px] xl:w-[430px] shrink-0 flex-col border-l border-border bg-card">
         {/* 1. Target Position & Spatial Cutout Parameters */}
-        <div className="border-b border-[#1E2530] p-3">
+        <div className="border-b border-border p-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold text-[#E6ECF2]">
+            <h2 className="text-xs font-semibold text-foreground">
               SPHEREx Coverage Preview
             </h2>
-            <span className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#38BDF8]">
+            <Badge variant="sky" className="font-mono text-[10px]">
               SIMULATED PREVIEW
-            </span>
+            </Badge>
           </div>
 
-          <div className="mt-2 rounded-sm border border-[#1E2530] bg-[#080A0F] p-2">
+          <div className="mt-2 rounded-sm border border-border bg-background p-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-[#E6ECF2]">
+              <span className="font-medium text-foreground">
                 {activeTargetName || 'Selected Sky Position'}
               </span>
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="xs"
                 onClick={() => {
                   aladinInstanceRef.current?.gotoRaDec(ra, dec);
                 }}
-                className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:border-[#38BDF8] hover:text-[#E6ECF2]"
+                className="h-5 px-1.5 text-[10px]"
                 title="Center sky viewport on active target coordinates"
               >
                 Center map
-              </button>
+              </Button>
             </div>
-            <div className="mt-1 font-mono text-[11px] tabular-nums text-[#38BDF8]">
+            <div className="mt-1 font-mono text-[11px] tabular-nums text-primary">
               RA {ra.toFixed(5)}° · Dec {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}°
             </div>
-            <div className="font-mono text-[10px] tabular-nums text-[#94A3B8]">
+            <div className="font-mono text-[10px] tabular-nums text-muted-foreground">
               {sexagesimalTarget}
             </div>
           </div>
@@ -1513,71 +1511,74 @@ export const CelestialNavigator: React.FC = () => {
           {/* Direct Coordinate & Cutout Size Form */}
           <form onSubmit={handleManualCoordSubmit} className="mt-2.5 grid grid-cols-12 gap-1.5">
             <div className="col-span-4">
-              <label htmlFor="inspector-ra" className="block text-[10px] text-[#94A3B8]">
+              <label htmlFor="inspector-ra" className="block text-[10px] text-muted-foreground">
                 RA (J2000 deg)
               </label>
-              <input
+              <Input
                 id="inspector-ra"
                 type="text"
                 value={raInputStr}
                 onChange={(e) => setRaInputStr(e.target.value)}
-                className="mt-0.5 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1 font-mono text-[11px] tabular-nums text-[#E6ECF2] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                className="mt-0.5 h-7 bg-background px-2 py-0.5 font-mono text-xs tabular-nums text-foreground"
               />
             </div>
             <div className="col-span-4">
-              <label htmlFor="inspector-dec" className="block text-[10px] text-[#94A3B8]">
+              <label htmlFor="inspector-dec" className="block text-[10px] text-muted-foreground">
                 Dec (J2000 deg)
               </label>
-              <input
+              <Input
                 id="inspector-dec"
                 type="text"
                 value={decInputStr}
                 onChange={(e) => setDecInputStr(e.target.value)}
-                className="mt-0.5 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1 font-mono text-[11px] tabular-nums text-[#E6ECF2] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                className="mt-0.5 h-7 bg-background px-2 py-0.5 font-mono text-xs tabular-nums text-foreground"
               />
             </div>
             <div className="col-span-4">
-              <label htmlFor="inspector-fov" className="block text-[10px] text-[#94A3B8]">
+              <label htmlFor="inspector-fov" className="block text-[10px] text-muted-foreground">
                 Cutout Size
               </label>
-              <select
+              <Select
                 id="inspector-fov"
+                sizeVariant="sm"
                 value={fovArcsec}
                 onChange={(e) => {
                   const val = Number(e.target.value);
                   setFov(val);
                   setUrlFov(val);
                 }}
-                className="mt-0.5 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-1.5 py-1 font-mono text-[11px] tabular-nums text-[#E6ECF2] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                className="mt-0.5 w-full bg-background"
               >
                 {FOV_CUTOUT_PRESETS.map((f) => (
                   <option key={f} value={f}>
                     {f}&quot; ({f / 60}&apos;)
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="col-span-12 mt-1 flex items-center justify-between">
-              <span className="text-[10px] text-[#94A3B8]">
+              <span className="text-[10px] text-muted-foreground">
                  Pixel scale: 6.2&quot;/px ({Math.round(fovArcsec / 6.2)}×{Math.round(fovArcsec / 6.2)} px stamp)
               </span>
-              <button
+              <Button
                 type="submit"
-                className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-0.5 text-[11px] text-[#E6ECF2] hover:border-[#38BDF8]"
+                variant="secondary"
+                size="xs"
+                className="h-6 px-2 text-[11px]"
               >
                 Update Position
-              </button>
+              </Button>
             </div>
           </form>
         </div>
 
         {/* 2. Synchronized SPHEREx Level-2 Spectral Image Table (Hover highlights LVF footprint on sky) */}
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[#1E2530] bg-[#151B24]/60 px-3 py-1.5">
-            <span className="text-[11px] font-medium text-[#E6ECF2]">
+          <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1.5">
+            <span className="text-[11px] font-medium text-foreground">
               IRSA SPHEREx QR2 Archive ({archiveExposures.length})
             </span>
-            <span className="text-[10px] text-[#94A3B8]">
+            <span className="text-[10px] text-muted-foreground">
               {archiveStatus === 'loading' && 'Searching IRSA…'}
               {archiveStatus === 'ready' && '[IRSA Live (spherex_qr2)]'}
               {archiveStatus === 'empty' && 'No released exposure intersects this cutout'}
@@ -1585,26 +1586,26 @@ export const CelestialNavigator: React.FC = () => {
             </span>
           </div>
 
-          <div className="max-h-40 overflow-y-auto border-b border-[#1E2530]">
+          <div className="max-h-40 overflow-y-auto border-b border-border">
             {archiveExposures.map((exposure) => {
               const cutoutUrl = new URL(exposure.accessUrl);
               cutoutUrl.searchParams.set('center', `${ra},${dec}`);
               cutoutUrl.searchParams.set('size', String(fovArcsec / 3600));
               return (
-                <div key={exposure.obsId} className="flex items-center justify-between gap-2 border-b border-[#1E2530]/60 px-3 py-1.5 font-mono text-[10px]">
-                  <span className="min-w-0 truncate text-[#E6ECF2]" title={exposure.obsId}>{exposure.obsId}</span>
-                  <span className="shrink-0 text-[#94A3B8]">{exposure.detector}</span>
-                  <span className="shrink-0 text-[#94A3B8]">{exposure.mjd ? `MJD ${exposure.mjd}` : exposure.wavelength}</span>
-                  <a className="shrink-0 text-[#38BDF8] hover:underline" href={cutoutUrl.toString()} target="_blank" rel="noreferrer">Open FITS cutout</a>
+                <div key={exposure.obsId} className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-1.5 font-mono text-[10px]">
+                  <span className="min-w-0 truncate text-foreground" title={exposure.obsId}>{exposure.obsId}</span>
+                  <span className="shrink-0 text-muted-foreground">{exposure.detector}</span>
+                  <span className="shrink-0 text-muted-foreground">{exposure.mjd ? `MJD ${exposure.mjd}` : exposure.wavelength}</span>
+                  <a className="shrink-0 text-primary hover:underline" href={cutoutUrl.toString()} target="_blank" rel="noreferrer">Open FITS cutout</a>
                 </div>
               );
             })}
             {archiveStatus === 'empty' && (
-              <div className="px-3 py-2 text-[10px] text-[#94A3B8]">This is an honest non-detection for the selected cutout and current public release.</div>
+              <div className="px-3 py-2 text-[10px] text-muted-foreground">This is an honest non-detection for the selected cutout and current public release.</div>
             )}
             {archiveStatus === 'error' && (
               <a
-                className="inline-block px-3 py-2 text-[10px] text-[#38BDF8] hover:underline"
+                className="inline-block px-3 py-2 text-[10px] text-primary hover:underline"
                 href={`https://irsa.ipac.caltech.edu/applications/spherex/?api=spectral-images&ra=${ra}&dec=${dec}&sr=${Math.max(fovArcsec, 60)}s`}
                 target="_blank"
                 rel="noreferrer"
@@ -1613,14 +1614,19 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-[#1E2530] px-3 py-1 text-[10px] text-[#94A3B8]">
+            <div className="flex items-center justify-between border-b border-border px-3 py-1 text-[10px] text-muted-foreground">
               <span>Synthetic geometry preview · off by default</span>
-              <button type="button" className="text-[#38BDF8] hover:underline" onClick={() => setShowSyntheticPreview((visible) => !visible)}>
+              <Button
+                variant="link"
+                size="xs"
+                className="text-primary text-[10px]"
+                onClick={() => setShowSyntheticPreview((visible) => !visible)}
+              >
                 {showSyntheticPreview ? 'Hide synthetic preview' : 'Show synthetic preview'}
-              </button>
+              </Button>
             </div>
             <table className="w-full border-collapse text-left font-mono text-[11px] tabular-nums">
-              <thead className="sticky top-0 z-10 border-b border-[#1E2530] bg-[#0F131A] font-sans text-[10px] text-[#94A3B8]">
+              <thead className="sticky top-0 z-10 border-b border-border bg-card font-sans text-[10px] text-muted-foreground">
                 <tr>
                   <th className="py-1.5 pl-3 pr-1.5 font-medium">Band</th>
                   <th className="px-1.5 py-1.5 font-medium">Pass / MJD</th>
@@ -1629,7 +1635,7 @@ export const CelestialNavigator: React.FC = () => {
                   <th className="py-1.5 pl-1.5 pr-3 text-right font-medium">Zodi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1E2530]/60">
+              <tbody className="divide-y divide-border/60">
                 {filteredExposures.map((exp) => {
                   const isFocused = activeExposure?.obsId === exp.obsId;
                   return (
@@ -1640,28 +1646,28 @@ export const CelestialNavigator: React.FC = () => {
                       onClick={() => setSelectedObsId(exp.obsId)}
                       className={`cursor-pointer transition-colors duration-100 ${
                         isFocused
-                          ? 'bg-[#151B24] text-[#E6ECF2]'
-                          : 'text-[#94A3B8] hover:bg-[#151B24]/60 hover:text-[#E6ECF2]'
+                          ? 'bg-secondary text-foreground'
+                          : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                       }`}
                     >
                       <td className="py-1.5 pl-3 pr-1.5">
                         <span
                           style={{ borderColor: exp.detector.colorHex }}
-                          className="inline-block rounded-sm border bg-[#080A0F] px-1.5 py-0.2 text-[10px] font-medium text-[#E6ECF2]"
+                          className="inline-block rounded-sm border bg-background px-1.5 py-0.2 text-[10px] font-medium text-foreground"
                         >
                           {exp.detector.id}
                         </span>
                       </td>
                       <td className="px-1.5 py-1.5">
-                        <div className="text-[#E6ECF2]">P{exp.passNumber} · {exp.mjd.toFixed(1)}</div>
-                        <div className="text-[9px] text-[#94A3B8]">{exp.obsId}</div>
+                        <div className="text-foreground">P{exp.passNumber} · {exp.mjd.toFixed(1)}</div>
+                        <div className="text-[9px] text-muted-foreground">{exp.obsId}</div>
                       </td>
-                      <td className="px-1.5 py-1.5 text-right text-[#38BDF8]">
+                      <td className="px-1.5 py-1.5 text-right text-primary">
                         <div>{exp.lambdaAtTargetUm.toFixed(3)}</div>
-                        <div className="text-[9px] text-[#94A3B8]">±{exp.bandwidthUm.toFixed(3)}</div>
+                        <div className="text-[9px] text-muted-foreground">±{exp.bandwidthUm.toFixed(3)}</div>
                       </td>
                       <td className="px-1.5 py-1.5 text-right">{exp.rollAngleDeg.toFixed(1)}°</td>
-                      <td className="py-1.5 pl-1.5 pr-3 text-right text-[#94A3B8]">
+                      <td className="py-1.5 pl-1.5 pr-3 text-right text-muted-foreground">
                         {exp.zodiMjySr.toFixed(2)}
                       </td>
                     </tr>
@@ -1673,17 +1679,17 @@ export const CelestialNavigator: React.FC = () => {
 
           {/* Active Exposure HDU Summary */}
           {activeExposure && (
-            <div className="border-t border-[#1E2530] bg-[#080A0F] px-3 py-2 text-[11px]">
-              <div className="flex items-center justify-between text-[#E6ECF2]">
-                <span className="font-mono text-[10px] text-[#38BDF8]">{activeExposure.obsId} · Synthetic</span>
-                <span className="font-mono text-[10px] text-[#94A3B8]">{activeExposure.dateUtc}</span>
+            <div className="border-t border-border bg-background px-3 py-2 text-[11px]">
+              <div className="flex items-center justify-between text-foreground">
+                <span className="font-mono text-[10px] text-primary">{activeExposure.obsId} · Synthetic</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{activeExposure.dateUtc}</span>
               </div>
-              <div className="mt-1 flex items-center justify-between text-[10px] text-[#94A3B8]">
+              <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
                 <span>
-                  HDU 6 WCS-WAVE: <strong className="font-mono text-[#E6ECF2]">{activeExposure.lambdaAtTargetUm} µm</strong> (R={activeExposure.detector.resolvingPower})
+                  HDU 6 WCS-WAVE: <strong className="font-mono text-foreground">{activeExposure.lambdaAtTargetUm} µm</strong> (R={activeExposure.detector.resolvingPower})
                 </span>
                 <span>
-                  HDU 4 ZODI: <strong className="font-mono text-[#E6ECF2]">{activeExposure.zodiMjySr} MJy/sr</strong>
+                  HDU 4 ZODI: <strong className="font-mono text-foreground">{activeExposure.zodiMjySr} MJy/sr</strong>
                 </span>
               </div>
             </div>
@@ -1691,27 +1697,29 @@ export const CelestialNavigator: React.FC = () => {
         </div>
 
         {/* 3. Explicit User-Initiated Workspace Actions (Zero Auto-Redirects) */}
-        <div className="border-t border-[#1E2530] bg-[#0F131A] p-3">
+        <div className="border-t border-border bg-card p-3">
           <div className="flex flex-col gap-2">
-            <button
-              type="button"
+            <Button
+              variant="default"
+              size="default"
               onClick={() => {
                 setRa(ra);
                 setDec(dec);
                 setUrlFov(fovArcsec);
                 setTab('comparator');
               }}
-              className="w-full rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-2 text-center text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:bg-[#38BDF8]/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+              className="w-full text-xs font-medium"
             >
               Open {fovArcsec}&quot; Cutout in Time-Domain Comparator →
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="outline"
+              size="default"
               onClick={() => setTab('spectral')}
-              className="w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-3 py-1.5 text-center text-xs text-[#94A3B8] transition-colors duration-150 hover:border-[#94A3B8] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+              className="w-full text-xs text-muted-foreground hover:text-foreground"
             >
               Extract 102-Channel Spectrum in Spectral Lab
-            </button>
+            </Button>
           </div>
         </div>
       </aside>
