@@ -35,6 +35,7 @@ This is the running source of truth for building the Panoptic-Beta application. 
 - **2026-10-31:** Exchange #26 recorded. User requested name simplification: renamed project from "SpectraScout" to **"Spectra"** across `SPECIFICATION.md` and database/token naming conventions (`spectra_ledger.db`, `spectra_admin_token`, etc.).
 - **2026-10-31:** Exchange #27 recorded. Modern type-safe stack upgrade: Replaced SQLite string boilerplate with **Supabase** (PostgreSQL 16 + `pgvector` + Supabase Auth + Supabase Realtime + Supabase Storage) and **`sqlc` + `pgx/v5`** compile-time code generation for the Go API Gateway. Implemented 102-channel spectral similarity querying via `vector(102)` cosine distance (`<=>`), instant live discussion synchronization via Supabase Realtime `postgres_changes`, JWT-based role authentication for `/admin`, type-safe URL query state (`nuqs`), asynchronous caching and prefetching (`@tanstack/react-query`), ultra-fast 60 FPS plotting (`uPlot`), 3D decision surfaces (`react-plotly.js`), and local developer orchestration via Supabase CLI (`supabase start`) and `Taskfile.yml`.
 - **2026-10-31:** Exchange #28 recorded. Zero-Auth & Ultra-High-Quality Institutional Blueprint: Dropped blocking login/auth for hackathon judges while maintaining clean route separation (`/explore` vs `/admin`). Implemented zero-auth session fingerprinting using implicit client telemetry IDs (`localStorage.getItem('spx_observer_id')` -> UUIDv4 + astronomical callsign like `Observer-Vega-409`) injected via `X-Observer-ID` and `X-Observer-Callsign` HTTP headers. Upgraded database schema to 6 production tables: `subjects`, `observers`, `classifications`, `discussion_threads`, `discussion_replies`, and `ml_training_runs`. Engineered ultra-high-quality toolchain: (1) Binary Float32Array streaming replacing 8-bit PNGs to eliminate posterization and quantization during client-side WebGL2 120 FPS Asinh and difference math ($t_N - t_0$), (2) End-to-end type generation via `openapi-typescript` from FastAPI OpenAPI 3.1 schemas, (3) `uv` + `ruff` for sub-3s deterministic Python environment setup (`uv.lock`), (4) `air` live-reloading for Go, (5) Radix UI unstyled primitives + `cmdk` command bar (Ctrl+K) + `TanStack Virtual`, (6) Offline resilience via `seed_benchmarks.sql` + local binary cache, and (7) Floating HUD crosshair readout (RA/Dec, MJy/sr, SNR, decoded FLAGS bitmask).
+- **2026-11-01:** Exchange #29 recorded. Production hosting spec ($0, always-warm): single-container multi-process deployment on Hugging Face Spaces (Docker, cpu-basic 2 vCPU/16 GB; Go gateway on public :7860 + Python worker on 127.0.0.1:8001), Cloudflare Pages frontend with static benchmark fallbacks, Supabase Cloud (session pooler, IPv4), and a dual-action `/api/health` keep-alive (touches Go, Python, Postgres) pinged by cron-job.org every 5 min with GitHub Actions as a 15-min backup. Added as SPECIFICATION.md Section 10 (v2.4.0-PROD) with corrections: `colorTo: black` is invalid (use `gray`); session pooler port 5432, not transaction 6543 (pgx/sqlc prepared statements); mandatory RLS because the anon key is public under zero-auth; uv-based Dockerfile with CPU-only torch index; ephemeral HF disk strategy; CORS/WSS origin allowlist; HF Space mirroring via `huggingface_hub`; zero-auth `/admin` abuse kill-switch. Old name "SpectraScout" in the source exchange was normalized to "Spectra".
 
 ---
 
@@ -137,7 +138,7 @@ _TBD_
 - Challenge selected: SPHEREx blink/time-series web tool (NASA Space Apps).
 - *(Tech stack is still only a proposal at this point.)*
 
-## Current Direction Snapshot (as of Exchange #28; Zero-Auth Flagship Architecture)
+## Current Direction Snapshot (as of Exchange #29; Zero-Auth Flagship Architecture + $0 Hosting)
 > Quick orientation for builders. The detailed reasoning is in the ★ sections below. Later exchanges override earlier ones.
 1. **Product Identity & Architecture:** **Spectra** (SPHEREx Spectral Explorers). Split into a **Dual-View Portal Architecture** with **Zero-Auth Route Isolation** (`/explore` for public citizen science vs `/admin` for science team Mission Control). Eliminates login friction for hackathon judges while tracking calibration and attribution via implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Callsign`). Backed by Supabase (PostgreSQL 16 + `pgvector`), Go API Gateway (`api-gateway` on `:8080` with `sqlc` + `pgx/v5` + `air`), and Python `astro-worker` (:8001 with `uv` + `astropy` + `torch`).
    - **Portal A: Public Discovery Suite (`/explore`):** 5-tab workspace for citizen scientists, replacing raw ML metrics with an interactive Talk-style discussion forum.
@@ -161,6 +162,7 @@ _TBD_
    - **Python Science Worker (:8001):** FastAPI + Astropy + PyVO + reproject for MEF FITS byte-range slicing, WCS rectification, and WCS-WAVE smile inversion.
    - **Frontend Accelerators:** `nuqs` for typed URL state, `@tanstack/react-query` v5 for background prefetching, `uPlot` for 60 FPS 2D spectra and loss curves, and `react-plotly.js` for 3D decision boundaries.
 6. **Mandatory Benchmarks:** Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis.
+7. **Hosting (Exchange #29):** Cloudflare Pages (SPA + `/benchmarks` static fallback) → Hugging Face Space Docker container (Go :7860 public + Python 127.0.0.1:8001 loopback) → Supabase Cloud (session pooler :5432, RLS on, Realtime on discussion tables). `/api/health` keep-alive every 5 min (cron-job.org) + 15 min (GitHub Actions). See SPECIFICATION.md Section 10.
 
 ## Open Questions / Unresolved Items
 - Where and how to get SPHEREx data. **Mostly answered (Exchanges #4–5):** IRSA SIA2 (`COLLECTION=spherex_qr3`), the IBE cutout service, or AWS S3 `s3://nasa-irsa-spherex/qr3/`. The exact parameters and columns still need verifying.
@@ -2150,7 +2152,8 @@ RETURNING *;
 
 | Tooling Upgrade | Technical Implementation | Scientific & Quality Impact |
 |---|---|---|
-| **A. End-to-End Type Generation** | FastAPI OpenAPI 3.1 JSON $ightarrow$ `npx openapi-typescript http://localhost:8001/openapi.json -o ./web-client/src/types/api.d.ts` | Complete cross-stack compile-time contract safety. Changing a Python Pydantic field or Go struct immediately flags breaking changes in React at compile time. |
+| **A. End-to-End Type Generation** | FastAPI OpenAPI 3.1 JSON $
+ightarrow$ `npx openapi-typescript http://localhost:8001/openapi.json -o ./web-client/src/types/api.d.ts` | Complete cross-stack compile-time contract safety. Changing a Python Pydantic field or Go struct immediately flags breaking changes in React at compile time. |
 | **B. Binary Float32 Tensor Streaming** | `astro-worker` packs aligned 6-band cutout matrices as raw IEEE-754 `Float32Array` buffers (or compressed Arrow/MessagePack tensors) alongside JSON metadata. | Eliminates 8-bit Base64 PNG quantization and posterization. WebGL2 fragment shaders compute 32-bit floating point Asinh stretch and difference subtraction ($t_N - t_0$) at 120 FPS with true scientific dynamic range. |
 | **C. `uv` + `Ruff` for Python Worker** | `uv init`, `uv add astropy pyvo reproject fastapi torch scikit-learn` with locked hashes in `uv.lock`. | Resolves and installs the heavy scientific Python stack in ~3 seconds. Zero dependency drift or C-extension compilation errors. |
 | **D. `air` Live Reload + `supabase db reset`** | `air` runs inside `api-gateway`, recompiling and restarting the Go binary in $<300\,	ext{ms}$ upon editing SQL queries or Go handlers. | Instant developer turnaround with 100% reproducible database schemas and seeds. |
@@ -2271,3 +2274,41 @@ CREATE TABLE ml_training_runs (
    Running `task db:up` immediately populates the 5 benchmark systems, 20 active-learning queue candidates, and 6 sample discussion threads into Supabase PostgreSQL, and pre-renders their Float32 arrays to disk. Even with complete network loss at the hackathon venue, every single feature (including 3D boundary morphing and pgvector search) executes at 60 FPS offline.
 3. **Interactive Hover-Crosshair HUD:**
    Hovering over any pixel in Tab 2 or Tab 3 renders a live monospace telemetry HUD displaying equatorial coordinates $(RA, Dec)$, surface brightness in $	ext{MJy/sr}$, local Signal-to-Noise Ratio ($	ext{SNR} = I/\sigma$), and decoded 12-bit FLAGS bitmask status.
+
+---
+
+## ★ PRODUCTION HOSTING: $0 ALWAYS-WARM TOPOLOGY (Exchange #29)
+> **Context:** User first asked to add hosting specs, then shared Gemini's answer after choosing to *"go with the idea of pinging the backend to keep it alive"* and asking for *"the full specifications on how we can host it. Use the best method possible."* The source text used the old name SpectraScout; normalized to **Spectra** here and in the spec.
+
+### Gemini's recommended topology
+| Tier | Provider | Free quota | Role |
+|---|---|---|---|
+| Frontend CDN | Cloudflare Pages | Unlimited bandwidth | React SPA (`/explore`, `/admin`), Aladin assets, static JSON backups for the 5 targets |
+| Unified compute | Hugging Face Spaces (Docker SDK, cpu-basic) | 2 vCPU, 16 GB RAM | Go gateway on public port 7860 + Python Astropy/PyTorch worker on 127.0.0.1:8001, same container |
+| DB & vectors | Supabase Cloud | 500 MB Postgres, pgvector, 1 GB Storage | 6 tables, 102-band vectors, Realtime forum |
+| Keep-alive | cron-job.org + GitHub Actions | 5-min trigger | Hits `/api/health`, which also writes to Supabase so neither tier sleeps |
+
+### Key mechanics (from Gemini)
+- **Why one container:** splitting Go and Python across providers adds network latency and hits 512 MB RAM limits on hosts like Render. HF's 16 GB fits Astropy + PyTorch + Go.
+- **HF rules:** non-root user UID 1000; only port 7860 (`app_port`) is routed, carrying HTTPS and WSS.
+- **Multi-stage Dockerfile:** Stage 1 builds a static Go binary (`CGO_ENABLED=0`); Stage 2 is `python:3.11-slim-bookworm` with CPU-only torch, Astropy deps, the Go binary, and `start.sh`.
+- **`start.sh` supervisor:** starts uvicorn on 127.0.0.1:8001 and the Go gateway on 7860; `wait -n` exits when either dies so HF restarts the container.
+- **Supabase keep-alive table** `system_heartbeats` (single row, `CHECK (id = 1)`); `/api/health` runs `UPDATE system_heartbeats SET last_ping = NOW()` and pings `/worker/health`.
+- **Supabase connection:** Session Pooler URI (port 5432, IPv4), because containers often lack IPv6.
+- **Direct Space URL:** `https://<user>-spectra-mission-engine.hf.space` (not the huggingface.co wrapper); WSS at `/api/admin/ws/training`.
+- **Cloudflare Pages:** `_redirects` with `/*  /index.html  200`; build `npm run build`, output `dist`; env `VITE_API_BASE_URL`, `VITE_WS_BASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; benchmark JSONs in `web-client/public/benchmarks/` for <15 ms loads.
+- **Pingers:** cron-job.org every 5 min (precise, failure email) as primary; GitHub Actions `*/15 * * * *` as backup (can be delayed 15–30 min).
+
+### ⚠ My notes and corrections (applied in SPECIFICATION.md Section 10)
+1. **`colorTo: black` is invalid** in HF Space frontmatter (allowed: red, yellow, green, blue, indigo, purple, pink, gray). Changed to `gray`.
+2. **Session vs transaction pooler:** use session mode (5432). Transaction mode (6543) breaks pgx's cached prepared statements and sqlc's `emit_prepared_queries`.
+3. **RLS is mandatory under zero-auth.** The anon key is in the public bundle and PostgREST exposes all `public` tables. Enable RLS on all 7 tables, allow only anon `SELECT` on discussion tables (for Realtime); all writes go through the Go gateway.
+4. **Dockerfile aligned to `uv`** (Exchange #28 chose uv over pip/requirements.txt): `uv sync --frozen`, with the CPU torch index pinned in `pyproject.toml` so the CUDA wheels never get pulled.
+5. **Ephemeral HF disk:** bake benchmark Float32 cutouts and model weights into the image; keep durable state in Supabase only.
+6. **Cross-origin:** Cloudflare and HF are different origins, so CORS must allow the `X-Observer-*` headers and the WS upgrader must check `Origin`. Add 25 s WS pings and client reconnect.
+7. **Separate `/api/health/live`** (liveness, no DB) for the Docker HEALTHCHECK, so `/api/health` stays the keep-alive.
+8. **Deployment path:** an HF Space is its own git repo. Added a GitHub Action that mirrors the backend using `huggingface_hub.upload_folder`.
+9. **GitHub schedules are disabled after 60 days** of repo inactivity, another reason it is only the backup.
+10. **Unauthenticated `/admin` risk:** add rate limits, a single-training-run lock, and a `SPECTRA_DEMO_READONLY_ADMIN` kill-switch.
+11. **Fallback hosts** if HF changes its sleep/keep-alive policy: same container on Fly.io or Cloud Run with min-instances=1 (needs only `PORT`).
+
