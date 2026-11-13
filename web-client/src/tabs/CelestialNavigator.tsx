@@ -44,8 +44,8 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
   vega: { pmRaMasYr: 200.9, pmDecMasYr: 286.2, totalArcsecYr: 0.35 },
 };
 
-// Progressive Multi-Order HEALPix (HiPS) & Feathered Spherical Survey Configurations
-type PhotographicSurveyId = 'unwise-neo7' | 'ls-dr10' | 'sdss2';
+// Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
+type PhotographicSurveyId = 'unwise-neo7' | '2mass-color' | 'ls-dr10' | 'dss2-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
@@ -60,97 +60,62 @@ const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
     id: 'unwise-neo7',
     hipsId: 'CDS/P/unWISE/color-W2-W1W2-W1',
     label: 'unWISE Infrared',
-    badge: 'NASA 3.4 & 4.6 µm (100% All-Sky)',
-    description: 'Continuous all-sky spherical projection of NASA WISE/NEOWISE infrared co-adds. Zero seams across 360°.',
+    badge: 'NASA 3.4 & 4.6 µm (All-Sky)',
+    description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of NASA WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
+  },
+  {
+    id: '2mass-color',
+    hipsId: 'CDS/P/2MASS/color',
+    label: '2MASS Near-IR',
+    badge: 'J/H/Ks (All-Sky)',
+    description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
     id: 'ls-dr10',
     hipsId: 'CDS/P/DESI-Legacy-Surveys/DR10/color',
     label: 'Legacy Survey DR10',
-    badge: 'Deep Optical g/r/z (Resolved Galaxies)',
-    description: 'DESI Legacy Imaging Surveys DR10 progressive mosaic resolving deep galaxy spirals and nebulae.',
+    badge: 'Optical (Resolved Galaxies)',
+    description: 'DESI Legacy Imaging Surveys DR10 (g, r, z). Resolves galaxy spiral arms, stellar bulges, and star-forming regions.',
   },
   {
-    id: 'sdss2',
+    id: 'dss2-color',
     hipsId: 'CDS/P/DSS2/color',
-    label: 'SDSS / All-Sky Blend',
-    badge: 'Optical + IR Hybrid',
-    description: 'Sloan Digital Sky Survey optical plates blended with all-sky infrared coverage at high latitudes.',
+    label: 'DSS2 Optical',
+    badge: 'Palomar/UKST (All-Sky)',
+    description: 'Digitized Sky Survey 2 full-sphere optical photographic mosaic covering 100% of both hemispheres.',
   },
 ];
 
-interface FeatheredSkyPlate {
-  key: string;
-  img: HTMLImageElement;
-  featheredCanvas: HTMLCanvasElement | null;
-  loaded: boolean;
-  loadedAt: number;
-  error: boolean;
-  ra: number;
-  dec: number;
-  sizeDeg: number;
-  level: number;
-  lastUsed: number;
-}
+// Calculate SPHEREx detector footprint 4 corners in (RA, Dec) degrees
+function getFootprintCorners(
+  centerRa: number,
+  centerDec: number,
+  widthDeg: number,
+  heightDeg: number,
+  rollAngleDeg: number
+): [number, number][] {
+  const toRad = Math.PI / 180;
+  const hw = widthDeg / 2;
+  const hh = heightDeg / 2;
+  const rollRad = rollAngleDeg * toRad;
+  const cosRoll = Math.cos(rollRad);
+  const sinRoll = Math.sin(rollRad);
+  const cosDec = Math.max(0.05, Math.cos(centerDec * toRad));
 
-function getSurveyPlateUrl(
-  survey: PhotographicSurveyId,
-  raDeg: number,
-  decDeg: number,
-  pixscale: number,
-  size = 512
-): string {
-  const normRa = (((raDeg % 360) + 360) % 360).toFixed(5);
-  const clampDec = Math.max(-89.6, Math.min(89.6, decDeg)).toFixed(5);
-  const clampScale = Math.max(0.262, Math.min(280.0, pixscale)).toFixed(3);
+  const localCorners: [number, number][] = [
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [-hw, hh],
+  ];
 
-  // Outside DR10/SDSS footprint, automatically fall back to 100% all-sky NASA unWISE-neo7 so there are never missing sky patches
-  let effectiveLayer: string = survey;
-  if (survey === 'ls-dr10' && (decDeg < -60.0 || decDeg > 32.0)) {
-    effectiveLayer = 'unwise-neo7';
-  } else if (survey === 'sdss2' && (decDeg < -15.0 || decDeg > 70.0)) {
-    effectiveLayer = 'unwise-neo7';
-  }
-
-  return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${effectiveLayer}&pixscale=${clampScale}&size=${size}`;
-}
-
-// Pre-bake a radially feathered circular vignette onto an offscreen canvas once on image load
-// Eliminates all rectangular tile seams, corners, and hard borders while running at 60 FPS
-function createFeatheredPlateCanvas(img: HTMLImageElement, size = 512): HTMLCanvasElement {
-  const off = document.createElement('canvas');
-  off.width = size;
-  off.height = size;
-  const octx = off.getContext('2d');
-  if (!octx) return off;
-
-  octx.drawImage(img, 0, 0, size, size);
-  octx.globalCompositeOperation = 'destination-in';
-  const r = size / 2;
-  const grad = octx.createRadialGradient(r, r, r * 0.52, r, r, r * 0.98);
-  grad.addColorStop(0.0, 'rgba(0, 0, 0, 1.0)');
-  grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.92)');
-  grad.addColorStop(0.82, 'rgba(0, 0, 0, 0.45)');
-  grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
-  octx.fillStyle = grad;
-  octx.fillRect(0, 0, size, size);
-  return off;
-}
-
-// Concentric Full-Viewport Spherical Clipmap Octaves
-// Each plate spans ~1.6x the viewport FoV so a single continuous plate covers the entire screen without seams!
-function getSphericalClipmapOctave(fovDeg: number): {
-  plateSizeDeg: number;
-  pixscale: number;
-  level: number;
-} {
-  if (fovDeg > 28.0) return { plateSizeDeg: 40.0, pixscale: 281.25, level: 0 };
-  if (fovDeg > 11.0) return { plateSizeDeg: 18.0, pixscale: 126.562, level: 1 };
-  if (fovDeg > 4.2) return { plateSizeDeg: 7.5, pixscale: 52.734, level: 2 };
-  if (fovDeg > 1.5) return { plateSizeDeg: 2.6, pixscale: 18.281, level: 3 };
-  if (fovDeg > 0.5) return { plateSizeDeg: 0.9, pixscale: 6.328, level: 4 };
-  if (fovDeg > 0.16) return { plateSizeDeg: 0.3, pixscale: 2.109, level: 5 };
-  return { plateSizeDeg: 0.1, pixscale: 0.703, level: 6 };
+  return localCorners.map(([dx, dy]) => {
+    const rx = dx * cosRoll - dy * sinRoll;
+    const ry = dx * sinRoll + dy * cosRoll;
+    const cRa = (((centerRa + rx / cosDec) % 360) + 360) % 360;
+    const cDec = Math.max(-89.9, Math.min(89.9, centerDec + ry));
+    return [cRa, cDec];
+  });
 }
 
 // SPHEREx Level-2 Spectral Image Exposure Metadata (Modelled after IRSA spherex_qr2 MEF table)
@@ -285,13 +250,14 @@ function generateSpherexExposuresForCoord(raDeg: number, decDeg: number): Sphere
 }
 
 export const CelestialNavigator: React.FC = () => {
-  const viewportRef = useRef<HTMLDivElement>(null);
   const aladinContainerRef = useRef<HTMLDivElement>(null);
   const aladinInstanceRef = useRef<any>(null);
-  const skyCanvasRef = useRef<HTMLCanvasElement>(null);
-  const featheredCacheRef = useRef<Map<string, FeatheredSkyPlate>>(new Map());
+  const footprintOverlayRef = useRef<any>(null);
+  const cutoutOverlayRef = useRef<any>(null);
+  const catalogOverlayRef = useRef<any>(null);
+  const deepFieldOverlayRef = useRef<any>(null);
 
-  // High-frequency DOM refs for 60 FPS cursor readouts (avoids React state re-renders on mousemove)
+  // High-frequency DOM refs for real-time cursor readouts
   const cursorRaDecDomRef = useRef<HTMLSpanElement>(null);
   const cursorSexaDomRef = useRef<HTMLSpanElement>(null);
   const cursorLvfDomRef = useRef<HTMLSpanElement>(null);
@@ -311,13 +277,11 @@ export const CelestialNavigator: React.FC = () => {
   // Layer & Filter Controls
   const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(true);
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(true);
-  const [showProperMotion, setShowProperMotion] = useState<boolean>(true);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
   const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('unwise-neo7');
   const [selectedBandFilter, setSelectedBandFilter] = useState<string>('ALL');
   const [hoveredObsId, setHoveredObsId] = useState<string | null>(null);
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
-  const [hoveredCatalogObject, setHoveredCatalogObject] = useState<BenchmarkPill | null>(null);
   const [displayFovDeg, setDisplayFovDeg] = useState<number>(6.0);
   const [hipsReady, setHipsReady] = useState<boolean>(false);
 
@@ -329,43 +293,6 @@ export const CelestialNavigator: React.FC = () => {
     setRaInputStr(ra.toFixed(5));
     setDecInputStr(dec.toFixed(5));
   }, [ra, dec]);
-
-  // High-frequency mutable 3D spherical camera state (upSign flips at ±90° poles for continuous 360° vertical looping)
-  const cameraRef = useRef<{
-    centerRa: number;
-    centerDec: number;
-    fovDeg: number;
-    upSign: 1 | -1;
-    cursorX: number | null;
-    cursorY: number | null;
-    cursorRa: number;
-    cursorDec: number;
-  }>({
-    centerRa: ra,
-    centerDec: dec,
-    fovDeg: 6.0,
-    upSign: 1,
-    cursorX: null,
-    cursorY: null,
-    cursorRa: ra,
-    cursorDec: dec,
-  });
-
-  const dragRef = useRef<{
-    active: boolean;
-    lastX: number;
-    lastY: number;
-    moved: boolean;
-  }>({
-    active: false,
-    lastX: 0,
-    lastY: 0,
-    moved: false,
-  });
-
-  const projectedCatalogRef = useRef<
-    Array<{ item: BenchmarkPill; x: number; y: number; inView: boolean }>
-  >([]);
 
   // Generate overlapping SPHEREx Level-2 spectral image exposures for the active target
   const allExposures = useMemo(() => generateSpherexExposuresForCoord(ra, dec), [ra, dec]);
@@ -384,53 +311,7 @@ export const CelestialNavigator: React.FC = () => {
   const coverageDepth = useMemo(() => computeCoverageDepth(ra, dec), [ra, dec]);
   const sexagesimalTarget = useMemo(() => formatSexagesimal(ra, dec), [ra, dec]);
 
-  // Keep latest render flags in a ref so the 60 FPS canvas draw function always reads current toggles
-  const renderStateRef = useRef({
-    targetRa: ra,
-    targetDec: dec,
-    targetName: activeTargetName,
-    fovArcsec,
-    showLvfFootprints,
-    showWcsGrid,
-    showProperMotion,
-    showCutoutBox,
-    activeSurvey,
-    filteredExposures,
-    activeExposure,
-    hipsReady,
-  });
-
-  useEffect(() => {
-    renderStateRef.current = {
-      targetRa: ra,
-      targetDec: dec,
-      targetName: activeTargetName,
-      fovArcsec,
-      showLvfFootprints,
-      showWcsGrid,
-      showProperMotion,
-      showCutoutBox,
-      activeSurvey,
-      filteredExposures,
-      activeExposure,
-      hipsReady,
-    };
-  }, [
-    activeExposure,
-    activeSurvey,
-    activeTargetName,
-    filteredExposures,
-    fovArcsec,
-    hipsReady,
-    ra,
-    dec,
-    showCutoutBox,
-    showLvfFootprints,
-    showProperMotion,
-    showWcsGrid,
-  ]);
-
-  // Mount Aladin Lite v3 WebGL2 Progressive HiPS All-Sky Engine
+  // Mount Aladin Lite v3 WebGL2 Progressive HiPS All-Sky Engine (100% Native, No Fake Canvases)
   useEffect(() => {
     let cancelled = false;
     if (!aladinContainerRef.current) return;
@@ -441,15 +322,17 @@ export const CelestialNavigator: React.FC = () => {
           await A.init;
         }
         if (cancelled || !aladinContainerRef.current) return;
+
         const surveySpec =
           PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey) || PHOTOGRAPHIC_SURVEYS[0];
+
         const instance = A.aladin(aladinContainerRef.current, {
           survey: surveySpec.hipsId,
-          target: `${cameraRef.current.centerRa} ${cameraRef.current.centerDec}`,
-          fov: cameraRef.current.fovDeg,
-          projection: 'STG',
+          target: `${ra} ${dec}`,
+          fov: fovArcsec > 0 ? Math.max(0.01, fovArcsec / 3600) : 6.0,
+          projection: 'SIN',
           cooFrame: 'ICRSd',
-          showReticle: false,
+          showReticle: true,
           showZoomControl: false,
           showFullscreenControl: false,
           showLayersControl: false,
@@ -457,15 +340,166 @@ export const CelestialNavigator: React.FC = () => {
           showShareControl: false,
           showSimbadPointerControl: false,
           showFrame: false,
-          showCooGrid: false,
+          showCooGrid: showWcsGrid,
           showCooGridControl: false,
           showProjectionControl: false,
           showContextMenu: false,
         });
+
         aladinInstanceRef.current = instance;
+
+        // Native Vector Overlay for SPHEREx LVF Footprints
+        try {
+          if (typeof A.graphicOverlay === 'function') {
+            const lvfOverlay = A.graphicOverlay({
+              name: 'SPHEREx Footprints',
+              color: '#38BDF8',
+              lineWidth: 1.5,
+            });
+            instance.addOverlay(lvfOverlay);
+            footprintOverlayRef.current = lvfOverlay;
+          }
+        } catch (e) {
+          console.warn('Aladin graphicOverlay init:', e);
+        }
+
+        // Native Vector Overlay for Cutout Stamp Bounding Box
+        try {
+          if (typeof A.graphicOverlay === 'function') {
+            const cutoutOverlay = A.graphicOverlay({
+              name: 'Cutout Box',
+              color: '#38BDF8',
+              lineWidth: 1.5,
+            });
+            instance.addOverlay(cutoutOverlay);
+            cutoutOverlayRef.current = cutoutOverlay;
+          }
+        } catch (e) {
+          console.warn('Aladin cutoutOverlay init:', e);
+        }
+
+        // Native Vector Overlay for NEP & SEP Deep Field Circles
+        try {
+          if (typeof A.graphicOverlay === 'function') {
+            const deepOverlay = A.graphicOverlay({
+              name: 'Deep Fields',
+              color: '#F59E0B',
+              lineWidth: 1.5,
+            });
+            instance.addOverlay(deepOverlay);
+            deepFieldOverlayRef.current = deepOverlay;
+
+            if (typeof A.circle === 'function') {
+              [NEP_COORDS, SEP_COORDS].forEach((p) => {
+                const c = A.circle(p.ra, p.dec, p.radiusDeg, {
+                  color: '#F59E0B',
+                  lineWidth: 1.5,
+                });
+                deepOverlay.add(c);
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Aladin deepFieldOverlay init:', e);
+        }
+
+        // Native Astronomical Target Catalog Overlay (NASA Benchmarks + Searchable Catalog)
+        try {
+          if (typeof A.catalog === 'function') {
+            const cat = A.catalog({
+              name: 'SPHEREx Targets',
+              sourceSize: 18,
+              color: '#38BDF8',
+              shape: 'circle',
+            });
+            instance.addCatalog(cat);
+            catalogOverlayRef.current = cat;
+
+            if (typeof A.source === 'function') {
+              SEARCHABLE_SKY_CATALOG.forEach((item) => {
+                const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === item.id);
+                const src = A.source(item.ra, item.dec, {
+                  name: item.name,
+                  description: item.description,
+                  isBench,
+                  item,
+                });
+                cat.addSources([src]);
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Aladin catalog init:', e);
+        }
+
+        // Sync telemetry when user drags or pans the sky
+        instance.on('positionChanged', (data: any) => {
+          if (!data) return;
+          const newRa = typeof data.ra === 'number' ? data.ra : Number(data.ra);
+          const newDec = typeof data.dec === 'number' ? data.dec : Number(data.dec);
+          if (Number.isFinite(newRa) && Number.isFinite(newDec)) {
+            const normRa = Number((((newRa % 360) + 360) % 360).toFixed(6));
+            const normDec = Number(Math.max(-90, Math.min(90, newDec)).toFixed(6));
+            setCoordinates(
+              normRa,
+              normDec,
+              `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
+              '[IRSA Live (spherex_qr2)]'
+            );
+            setRa(normRa);
+            setDec(normDec);
+          }
+        });
+
+        // Sync field of view when user zooms in or out
+        instance.on('zoomChanged', (fovDeg: number) => {
+          if (Number.isFinite(fovDeg)) {
+            setDisplayFovDeg(fovDeg);
+            const arcsec = Math.round(fovDeg * 3600);
+            setFov(arcsec);
+            setUrlFov(arcsec);
+          }
+        });
+
+        // Real-time cursor coordinates readout
+        instance.on('mouseMove', (data: any) => {
+          if (!data) return;
+          const cRa = typeof data.ra === 'number' ? data.ra : Number(data.ra);
+          const cDec = typeof data.dec === 'number' ? data.dec : Number(data.dec);
+          if (!Number.isFinite(cRa) || !Number.isFinite(cDec)) return;
+          if (cursorRaDecDomRef.current) {
+            cursorRaDecDomRef.current.textContent = `${cRa.toFixed(5)}° ${
+              cDec >= 0 ? `+${cDec.toFixed(5)}` : cDec.toFixed(5)
+            }°`;
+          }
+          if (cursorSexaDomRef.current) {
+            cursorSexaDomRef.current.textContent = formatSexagesimal(cRa, cDec);
+          }
+        });
+
+        // Click on catalog target
+        instance.on('objectClicked', (obj: any) => {
+          if (obj && obj.data && obj.data.item) {
+            const item = obj.data.item;
+            const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === item.id);
+            setCoordinates(
+              item.ra,
+              item.dec,
+              item.name,
+              isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
+            );
+            setRa(item.ra);
+            setDec(item.dec);
+            if (item.preset) {
+              setRgbPreset(item.preset);
+              setPreset(item.preset);
+            }
+          }
+        });
+
         setHipsReady(true);
-      } catch {
-        // Fallback to built-in 3D spherical renderer if WebGL2 context or WASM init fails
+      } catch (err) {
+        console.error('Failed to initialize Aladin Lite v3:', err);
         setHipsReady(false);
       }
     };
@@ -486,858 +520,92 @@ export const CelestialNavigator: React.FC = () => {
       PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey) || PHOTOGRAPHIC_SURVEYS[0];
     try {
       aladin.setImageSurvey(surveySpec.hipsId);
-    } catch {
-      // Ignore transient survey switch errors
+    } catch (e) {
+      console.warn('Error switching HiPS survey:', e);
     }
   }, [activeSurvey]);
 
   // Sync camera center when external target coordinates change (e.g. from search bar or catalog selection)
   useEffect(() => {
-    if (!dragRef.current.active) {
-      cameraRef.current.centerRa = ra;
-      cameraRef.current.centerDec = dec;
-      cameraRef.current.upSign = 1;
-      try {
-        aladinInstanceRef.current?.gotoRaDec(ra, dec);
-      } catch {
-        // Ignore if Aladin still initializing
-      }
+    const aladin = aladinInstanceRef.current;
+    if (!aladin) return;
+    try {
+      aladin.gotoRaDec(ra, dec);
+    } catch (e) {
+      console.warn('Error gotoRaDec:', e);
     }
   }, [ra, dec]);
 
-  // Primary 60 FPS True 3D Spherical Projection & SPHEREx LVF Footprint Renderer
+  // Toggle native WCS Coordinate Grid
   useEffect(() => {
-    const canvas = skyCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let animId: number;
-    const toRad = Math.PI / 180;
-    let lastSyncedRa = -999;
-    let lastSyncedDec = -999;
-    let lastSyncedFov = -999;
-
-    const renderFrame = () => {
-      const parent = canvas.parentElement;
-      const width = parent ? parent.clientWidth : 1024;
-      const height = parent ? parent.clientHeight : 720;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-
-      if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-        canvas.width = Math.floor(width * dpr);
-        canvas.height = Math.floor(height * dpr);
+    const aladin = aladinInstanceRef.current;
+    if (!aladin) return;
+    try {
+      if (typeof aladin.showCooGrid === 'function') {
+        aladin.showCooGrid(showWcsGrid);
       }
-      ctx.save();
-      ctx.scale(dpr, dpr);
+    } catch (e) {
+      console.warn('Error toggling WCS grid:', e);
+    }
+  }, [showWcsGrid]);
 
-      const { centerRa, centerDec, fovDeg, upSign } = cameraRef.current;
-      const state = renderStateRef.current;
-      const aladin = aladinInstanceRef.current;
-
-      // Sync Aladin Lite v3 ONLY when camera coordinates or FoV actually change (prevents 60Hz tile-abort thrashing)
-      if (
-        aladin &&
-        (Math.abs(centerRa - lastSyncedRa) > 1e-4 ||
-          Math.abs(centerDec - lastSyncedDec) > 1e-4 ||
-          Math.abs(fovDeg - lastSyncedFov) > 1e-4)
-      ) {
-        lastSyncedRa = centerRa;
-        lastSyncedDec = centerDec;
-        lastSyncedFov = fovDeg;
-        try {
-          aladin.gotoRaDec(centerRa, centerDec);
-          aladin.setFoV(fovDeg);
-          if (typeof aladin.setPositionAngle === 'function') {
-            aladin.setPositionAngle(upSign === 1 ? 0 : 180);
-          }
-        } catch {
-          // Ignore transient sync error
-        }
-      }
-
-      // True 3D Spherical Stereographic Orthonormal Basis (Seamless 360° Over-the-Poles Projection)
-      // Camera forward vector F = (fx, fy, fz) at (centerRa, centerDec)
-      const ra0 = centerRa * toRad;
-      const dec0 = centerDec * toRad;
-      const fx = Math.cos(dec0) * Math.cos(ra0);
-      const fy = Math.cos(dec0) * Math.sin(ra0);
-      const fz = Math.sin(dec0);
-
-      // Camera East tangent vector E (points toward increasing RA; multiplied by upSign so pole crossing is rigid)
-      const ex = -Math.sin(ra0) * upSign;
-      const ey = Math.cos(ra0) * upSign;
-      const ez = 0;
-
-      // Camera North tangent vector N = F × E (points toward increasing Dec when upSign = +1, and continues smoothly over ±90°)
-      const nx = -Math.sin(dec0) * Math.cos(ra0) * upSign;
-      const ny = -Math.sin(dec0) * Math.sin(ra0) * upSign;
-      const nz = Math.cos(dec0) * upSign;
-
-      // Stereographic focal scale: maps fovDeg across viewport width without edge blowup up to 180°
-      const focalPx = width / (4 * Math.tan(Math.max(0.005, Math.min(175, fovDeg)) * toRad * 0.25));
-      const scalePxPerDeg = width / Math.max(0.01, fovDeg);
-
-      const worldToScreen = (
-        sRa: number,
-        sDec: number
-      ): { x: number; y: number; inBounds: boolean } => {
-        const r = sRa * toRad;
-        const d = sDec * toRad;
-        const vx = Math.cos(d) * Math.cos(r);
-        const vy = Math.cos(d) * Math.sin(r);
-        const vz = Math.sin(d);
-
-        // Dot products with camera basis (F, E, N)
-        const cosC = vx * fx + vy * fy + vz * fz;
-        if (cosC <= -0.85) {
-          return { x: -9999, y: -9999, inBounds: false };
-        }
-        const k = 2.0 / (1.0 + cosC);
-        const uEast = k * (vx * ex + vy * ey + vz * ez);
-        const vNorth = k * (vx * nx + vy * ny + vz * nz);
-
-        // Astronomical convention: East is Left (-uEast), North is Up (-vNorth on screen Y)
-        const x = width / 2 - (uEast * focalPx) / 2;
-        const y = height / 2 - (vNorth * focalPx) / 2;
-        const inBounds = x >= -240 && x <= width + 240 && y >= -240 && y <= height + 240;
-        return { x, y, inBounds };
-      };
-
-      // 1. Deep Space Foundation
-      ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = '#05070B';
-      ctx.fillRect(0, 0, width, height);
-
-      const halfSpanDeg = Math.min(90, fovDeg * 0.85);
-      const cosDecClamp = Math.max(0.12, Math.cos(centerDec * toRad));
-      const raSpan = Math.min(180, halfSpanDeg / cosDecClamp);
-
-      // 2. Base 3D Spherical Starfield (Underlay while survey plates stream or at wide hemisphere FoV)
-      const starPalette = ['#cfe4ff', '#eef6ff', '#fff9eb', '#ffe3b3', '#ffbe85', '#ff9b6a'];
-      const octaves = [
-        { cellDeg: 6.0, minFov: 0.01, maxFov: 180.0, starsPerCell: 5, brightBoost: 1.35 },
-        { cellDeg: 2.0, minFov: 0.01, maxFov: 48.0, starsPerCell: 7, brightBoost: 1.15 },
-        { cellDeg: 0.5, minFov: 0.01, maxFov: 12.0, starsPerCell: 8, brightBoost: 1.0 },
-      ];
-
-      octaves.forEach((oct, octIdx) => {
-        if (fovDeg > oct.maxFov || fovDeg < oct.minFov) return;
-        const cDecStart = Math.max(
-          Math.floor(-89.5 / oct.cellDeg),
-          Math.floor((centerDec - halfSpanDeg) / oct.cellDeg)
-        );
-        const cDecEnd = Math.min(
-          Math.ceil(89.5 / oct.cellDeg),
-          Math.ceil((centerDec + halfSpanDeg) / oct.cellDeg)
-        );
-        const wrapCount = Math.max(1, Math.round(360 / oct.cellDeg));
-        const cRaStart =
-          raSpan >= 175 ? 0 : Math.floor((centerRa - raSpan) / oct.cellDeg);
-        const cRaEnd =
-          raSpan >= 175 ? wrapCount - 1 : Math.ceil((centerRa + raSpan) / oct.cellDeg);
-
-        for (let cDec = cDecStart; cDec <= cDecEnd; cDec++) {
-          for (let cRa = cRaStart; cRa <= cRaEnd; cRa++) {
-            const wrappedRa = ((cRa % wrapCount) + wrapCount) % wrapCount;
-            for (let s = 0; s < oct.starsPerCell; s++) {
-              const saltBase = octIdx * 100 + s * 5;
-              const u = hashSkyCell(wrappedRa, cDec, saltBase + 1);
-              const v = hashSkyCell(wrappedRa, cDec, saltBase + 2);
-              const magH = hashSkyCell(wrappedRa, cDec, saltBase + 3);
-              const colH = hashSkyCell(wrappedRa, cDec, saltBase + 4);
-
-              const starRa = (wrappedRa + u) * oct.cellDeg;
-              const starDec = (cDec + v) * oct.cellDeg;
-              if (starDec < -89.8 || starDec > 89.8) continue;
-
-              const pos = worldToScreen(starRa, starDec);
-              if (!pos.inBounds) continue;
-
-              const radiusPx = (0.65 + Math.pow(1 - magH, 2.8) * 2.1) * oct.brightBoost;
-              const alpha = 0.28 + (1 - magH) * 0.62;
-              const colorHex = starPalette[Math.floor(colH * starPalette.length)];
-
-              ctx.globalAlpha = alpha;
-              ctx.fillStyle = colorHex;
-              ctx.beginPath();
-              ctx.arc(pos.x, pos.y, radiusPx, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-        }
-      });
-      ctx.globalAlpha = 1.0;
-
-      // 3. Seamless 3D Spherical Feathered Survey Clipmap Engine (Real NASA unWISE / Legacy Survey DR10 Space Photography)
-      // Uses overlapping radially-feathered plates + a camera-centered Full-Viewport Master Plate so there are
-      // ZERO rectangular seams, ZERO missing sky patches, and smooth 3D rotation over the North & South poles!
-      const clipOctave = getSphericalClipmapOctave(fovDeg);
-      const { plateSizeDeg, pixscale, level } = clipOctave;
-      const now = Date.now();
-
-      const ensureFeatheredPlate = (pRa: number, pDec: number, pSizeDeg: number, pScale: number, pLevel: number) => {
-        const normRa = ((pRa % 360) + 360) % 360;
-        const clampDec = Math.max(-89.4, Math.min(89.4, pDec));
-        const key = `${state.activeSurvey}_L${pLevel}_${normRa.toFixed(2)}_${clampDec.toFixed(2)}`;
-        const existing = featheredCacheRef.current.get(key);
-        if (existing) {
-          existing.lastUsed = now;
-          return;
-        }
-        const img = new Image();
-        const entry: FeatheredSkyPlate = {
-          key,
-          img,
-          featheredCanvas: null,
-          loaded: false,
-          loadedAt: 0,
-          error: false,
-          ra: normRa,
-          dec: clampDec,
-          sizeDeg: pSizeDeg,
-          level: pLevel,
-          lastUsed: now,
-        };
-        featheredCacheRef.current.set(key, entry);
-        img.onload = () => {
-          entry.featheredCanvas = createFeatheredPlateCanvas(img, 512);
-          entry.loaded = true;
-          entry.loadedAt = Date.now();
-        };
-        img.onerror = () => {
-          entry.error = true;
-        };
-        img.src = getSurveyPlateUrl(state.activeSurvey, normRa, clampDec, pScale, 512);
-      };
-
-      // Priority 1: Camera-Centered Full-Viewport Master Plate (quantized to 20% of plateSizeDeg)
-      // Guarantees the active screen is covered by ONE single continuous, un-stitched space photograph!
-      const masterSnap = plateSizeDeg * 0.2;
-      const masterDec = Math.round(centerDec / masterSnap) * masterSnap;
-      const masterRaSnap = masterSnap / Math.max(0.15, Math.cos(masterDec * toRad));
-      const masterRa = Math.round(centerRa / masterRaSnap) * masterRaSnap;
-      ensureFeatheredPlate(masterRa, masterDec, plateSizeDeg, pixscale, level);
-
-      // Priority 2: Overlapping Spherical Geodesic Ring (55% step -> 45% overlap inside radial feather zone)
-      const stepDeg = plateSizeDeg * 0.55;
-      const baseDec = Math.round(centerDec / stepDeg) * stepDeg;
-      let requestedCount = 0;
-      for (let dIdx = -1; dIdx <= 1; dIdx++) {
-        let pDec = baseDec + dIdx * stepDeg;
-        let poleFlipRa = 0;
-        if (pDec > 90) {
-          pDec = 180 - pDec;
-          poleFlipRa = 180;
-        } else if (pDec < -90) {
-          pDec = -180 - pDec;
-          poleFlipRa = 180;
-        }
-        const cosP = Math.max(0.18, Math.cos(pDec * toRad));
-        const raStep = stepDeg / cosP;
-        const baseRa = Math.round(((centerRa + poleFlipRa) % 360) / raStep) * raStep;
-        for (let rIdx = -1; rIdx <= 1; rIdx++) {
-          if (requestedCount < 6) {
-            requestedCount++;
-            ensureFeatheredPlate(baseRa + rIdx * raStep, pDec, plateSizeDeg, pixscale, level);
-          }
-        }
-      }
-
-      // Evict stale plates beyond 180 entries
-      if (featheredCacheRef.current.size > 180) {
-        const all = Array.from(featheredCacheRef.current.entries());
-        all.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-        for (let i = 0; i < all.length - 130; i++) {
-          if (now - all[i][1].lastUsed > 25000) {
-            featheredCacheRef.current.delete(all[i][0]);
-          }
-        }
-      }
-
-      // Render loaded feathered plates from coarse parent level (background) to active crisp level (foreground)
-      // Each plate is rotated by the exact 3D spherical North convergence angle so pole transits are 100% seamless!
-      const activePlates = Array.from(featheredCacheRef.current.values()).filter(
-        (p) =>
-          p.loaded &&
-          !p.error &&
-          p.featheredCanvas &&
-          p.key.startsWith(state.activeSurvey) &&
-          p.sizeDeg >= plateSizeDeg * 0.45 &&
-          p.sizeDeg <= plateSizeDeg * 4.5
-      );
-      activePlates.sort((a, b) => b.sizeDeg - a.sizeDeg || a.loadedAt - b.loadedAt);
-
-      activePlates.forEach((plate) => {
-        if (!plate.featheredCanvas) return;
-        const pos = worldToScreen(plate.ra, plate.dec);
-        const drawSizePx = plate.sizeDeg * scalePxPerDeg * 1.18;
-        if (
-          drawSizePx < 8 ||
-          pos.x + drawSizePx < 0 ||
-          pos.x - drawSizePx > width ||
-          pos.y + drawSizePx < 0 ||
-          pos.y - drawSizePx > height
-        ) {
-          return;
-        }
-
-        // Compute local 3D spherical North tangent angle on screen so plates rotate smoothly over the poles
-        const deltaNorthDeg = plate.dec > 89.0 ? -0.15 : 0.15;
-        const northSign = plate.dec > 89.0 ? -1 : 1;
-        const northPt = worldToScreen(plate.ra, plate.dec + deltaNorthDeg);
-        const dxN = (northPt.x - pos.x) * northSign;
-        const dyN = (northPt.y - pos.y) * northSign;
-        const rotRad = Math.atan2(dxN, -dyN);
-
-        const fadeAlpha = Math.min(1.0, (now - plate.loadedAt) / 180);
-        ctx.save();
-        ctx.translate(pos.x, pos.y);
-        ctx.rotate(rotRad);
-        ctx.globalAlpha = fadeAlpha;
-        ctx.drawImage(
-          plate.featheredCanvas,
-          -drawSizePx / 2,
-          -drawSizePx / 2,
-          drawSizePx,
-          drawSizePx
-        );
-        ctx.restore();
-      });
-      ctx.globalAlpha = 1.0;
-
-      // 3. Curved 3D Spherical J2000 WCS Coordinate Graticule (Continuous Over North & South Poles)
-      if (state.showWcsGrid) {
-        const gridStepDeg =
-          fovDeg > 45
-            ? 15
-            : fovDeg > 18
-            ? 5
-            : fovDeg > 7
-            ? 2
-            : fovDeg > 2.5
-            ? 1
-            : fovDeg > 0.7
-            ? 0.25
-            : 0.05;
-
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.78)';
-        ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.lineWidth = 1;
-
-        const minDec = Math.max(
-          -85,
-          Math.floor((centerDec - halfSpanDeg) / gridStepDeg) * gridStepDeg
-        );
-        const maxDec = Math.min(
-          85,
-          Math.ceil((centerDec + halfSpanDeg) / gridStepDeg) * gridStepDeg
-        );
-        const minRa =
-          raSpan >= 175 ? 0 : Math.floor((centerRa - raSpan) / gridStepDeg) * gridStepDeg;
-        const maxRa =
-          raSpan >= 175 ? 360 : Math.ceil((centerRa + raSpan) / gridStepDeg) * gridStepDeg;
-
-        // Parallels of Declination (curved along sphere)
-        for (let gDec = minDec; gDec <= maxDec; gDec += gridStepDeg) {
-          ctx.beginPath();
-          let started = false;
-          let labelPos: { x: number; y: number } | null = null;
-          const raSampleStep = Math.max(0.02, gridStepDeg * 0.25);
-          for (let sRa = minRa; sRa <= maxRa; sRa += raSampleStep) {
-            const p = worldToScreen(sRa, gDec);
-            if (p.inBounds) {
-              if (!started) {
-                ctx.moveTo(p.x, p.y);
-                started = true;
-              } else {
-                ctx.lineTo(p.x, p.y);
-              }
-              if (!labelPos && p.x > 16 && p.x < width - 80 && p.y > 16 && p.y < height - 16) {
-                labelPos = p;
-              }
-            } else {
-              started = false;
-            }
-          }
-          ctx.stroke();
-          if (labelPos) {
-            ctx.fillText(
-              `Dec ${gDec >= 0 ? '+' : ''}${gDec.toFixed(gridStepDeg < 1 ? 2 : 0)}°`,
-              labelPos.x + 4,
-              labelPos.y - 4
-            );
-          }
-        }
-
-        // Meridians of Right Ascension (converging smoothly to North +90° and South -90° poles)
-        for (let gRa = minRa; gRa < maxRa; gRa += gridStepDeg) {
-          const normRa = ((gRa % 360) + 360) % 360;
-          ctx.beginPath();
-          let started = false;
-          const decSampleStep = Math.max(0.02, gridStepDeg * 0.25);
-          for (let sDec = Math.max(-89.5, minDec - gridStepDeg); sDec <= Math.min(89.5, maxDec + gridStepDeg); sDec += decSampleStep) {
-            const p = worldToScreen(normRa, sDec);
-            if (p.inBounds) {
-              if (!started) {
-                ctx.moveTo(p.x, p.y);
-                started = true;
-              } else {
-                ctx.lineTo(p.x, p.y);
-              }
-            } else {
-              started = false;
-            }
-          }
-          ctx.stroke();
-          const midP = worldToScreen(normRa, centerDec);
-          if (midP.inBounds && midP.x >= 8 && midP.x <= width - 65) {
-            ctx.fillText(
-              `RA ${normRa.toFixed(gridStepDeg < 1 ? 2 : 0)}°`,
-              midP.x + 4,
-              height - 10
-            );
-          }
-        }
-
-        // Mark Celestial Poles (+90° N, -90° S) when in view so pole transit is unmistakable
-        [
-          { dec: 90, label: 'North Celestial Pole (+90°)' },
-          { dec: -90, label: 'South Celestial Pole (−90°)' },
-        ].forEach((celPole) => {
-          const p = worldToScreen(0, celPole.dec);
-          if (p.inBounds) {
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillText(celPole.label, p.x + 10, p.y + 3);
-          }
-        });
-      }
-
-      // 4. NEP & SEP Deep-Field Calibration Zones (r = 5.64 deg)
-      [NEP_COORDS, SEP_COORDS].forEach((pole) => {
-        const pos = worldToScreen(pole.ra, pole.dec);
-        const rPx = pole.radiusDeg * scalePxPerDeg;
-        if (
-          pos.inBounds &&
-          pos.x + rPx >= 0 &&
-          pos.x - rPx <= width &&
-          pos.y + rPx >= 0 &&
-          pos.y - rPx <= height
-        ) {
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, rPx, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
-          ctx.setLineDash([4, 4]);
-          ctx.lineWidth = 1.25;
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = '#F59E0B';
-          ctx.font = '10px "JetBrains Mono", monospace';
-          ctx.fillText(pole.label, pos.x + 8, pos.y - 8);
-        }
-      });
-
-      // 5. Stitched SPHEREx Level-2 LVF Detector Footprints (Modelled after IRSA search-spectral-images)
-      if (state.showLvfFootprints) {
-        state.filteredExposures.forEach((exp) => {
-          const isFocused = state.activeExposure?.obsId === exp.obsId;
-          if (isFocused) return;
-
-          const pos = worldToScreen(exp.centerRa, exp.centerDec);
-          if (!pos.inBounds) return;
-          const wPx = exp.footprintWidthDeg * scalePxPerDeg;
-          const hPx = exp.footprintHeightDeg * scalePxPerDeg;
-          if (wPx < 12) return;
-
-          ctx.save();
-          ctx.translate(pos.x, pos.y);
-          ctx.rotate((exp.rollAngleDeg * Math.PI) / 180);
-
-          ctx.strokeStyle = exp.detector.colorHex;
-          ctx.globalAlpha = 0.24;
-          ctx.lineWidth = 1;
-          ctx.strokeRect(-wPx / 2, -hPx / 2, wPx, hPx);
-
-          ctx.restore();
-        });
-
-        if (state.activeExposure) {
-          const exp = state.activeExposure;
-          const pos = worldToScreen(exp.centerRa, exp.centerDec);
-          const wPx = exp.footprintWidthDeg * scalePxPerDeg;
-          const hPx = exp.footprintHeightDeg * scalePxPerDeg;
-
-          if (pos.inBounds && wPx >= 10) {
-            ctx.save();
-            ctx.translate(pos.x, pos.y);
-            ctx.rotate((exp.rollAngleDeg * Math.PI) / 180);
-
-            const lvfGrad = ctx.createLinearGradient(0, -hPx / 2, 0, hPx / 2);
-            lvfGrad.addColorStop(0, 'rgba(56, 189, 248, 0.16)');
-            lvfGrad.addColorStop(0.5, 'rgba(52, 211, 153, 0.12)');
-            lvfGrad.addColorStop(1, 'rgba(244, 63, 94, 0.18)');
-            ctx.fillStyle = lvfGrad;
-            ctx.fillRect(-wPx / 2, -hPx / 2, wPx, hPx);
-
-            ctx.strokeStyle = exp.detector.colorHex;
-            ctx.lineWidth = 1.75;
-            ctx.strokeRect(-wPx / 2, -hPx / 2, wPx, hPx);
-
-            ctx.strokeStyle = 'rgba(230, 236, 242, 0.22)';
-            ctx.lineWidth = 0.75;
-            ctx.setLineDash([3, 3]);
-            for (let frac = -0.25; frac <= 0.25; frac += 0.25) {
-              ctx.beginPath();
-              ctx.moveTo(-wPx / 2, hPx * frac);
-              ctx.lineTo(wPx / 2, hPx * frac);
-              ctx.stroke();
-            }
-            ctx.setLineDash([]);
-
-            if (wPx > 65) {
-              ctx.fillStyle = '#E6ECF2';
-              ctx.font = '10px "JetBrains Mono", monospace';
-              ctx.fillText(
-                `${exp.detector.id} · Pass ${exp.passNumber} (ψ=${exp.rollAngleDeg.toFixed(0)}°)`,
-                -wPx / 2 + 6,
-                -hPx / 2 + 13
-              );
-              ctx.fillStyle = '#94A3B8';
-              ctx.fillText(
-                `LVF ${exp.detector.lambdaMinUm.toFixed(2)}→${exp.detector.lambdaMaxUm.toFixed(2)} µm`,
-                -wPx / 2 + 6,
-                hPx / 2 - 6
-              );
-            }
-
-            ctx.restore();
-          }
-        }
-      }
-
-      // 6. Render Catalog Objects & Proper-Motion Vectors
-      const nextProjected: Array<{ item: BenchmarkPill; x: number; y: number; inView: boolean }> =
-        [];
-
-      SEARCHABLE_SKY_CATALOG.forEach((item) => {
-        const pos = worldToScreen(item.ra, item.dec);
-        nextProjected.push({ item, x: pos.x, y: pos.y, inView: pos.inBounds });
-        if (!pos.inBounds) return;
-
-        const isSelected =
-          Math.abs(state.targetRa - item.ra) < 0.01 &&
-          Math.abs(state.targetDec - item.dec) < 0.01;
-
-        if (state.showProperMotion) {
-          const pm = CATALOG_PROPER_MOTIONS[item.id];
-          if (pm && pm.totalArcsecYr >= 0.3) {
-            const vecScale = 4.2;
-            const vx = pos.x - (pm.pmRaMasYr / 1000) * vecScale * upSign;
-            const vy = pos.y - (pm.pmDecMasYr / 1000) * vecScale * upSign;
-            ctx.strokeStyle = '#38BDF8';
-            ctx.lineWidth = 1.4;
-            ctx.beginPath();
-            ctx.moveTo(pos.x, pos.y);
-            ctx.lineTo(vx, vy);
-            ctx.stroke();
-
-            const angle = Math.atan2(vy - pos.y, vx - pos.x);
-            ctx.beginPath();
-            ctx.moveTo(vx, vy);
-            ctx.lineTo(
-              vx - 5 * Math.cos(angle - Math.PI / 6),
-              vy - 5 * Math.sin(angle - Math.PI / 6)
-            );
-            ctx.lineTo(
-              vx - 5 * Math.cos(angle + Math.PI / 6),
-              vy - 5 * Math.sin(angle + Math.PI / 6)
-            );
-            ctx.closePath();
-            ctx.fillStyle = '#38BDF8';
-            ctx.fill();
-          }
-        }
-
-        ctx.strokeStyle = isSelected ? '#38BDF8' : 'rgba(230, 236, 242, 0.65)';
-        ctx.lineWidth = isSelected ? 1.5 : 1.1;
-        const gap = 4;
-        const arm = isSelected ? 10 : 7;
-        ctx.beginPath();
-        ctx.moveTo(pos.x - arm, pos.y);
-        ctx.lineTo(pos.x - gap, pos.y);
-        ctx.moveTo(pos.x + gap, pos.y);
-        ctx.lineTo(pos.x + arm, pos.y);
-        ctx.moveTo(pos.x, pos.y - arm);
-        ctx.lineTo(pos.x, pos.y - gap);
-        ctx.moveTo(pos.x, pos.y + gap);
-        ctx.lineTo(pos.x, pos.y + arm);
-        ctx.stroke();
-
-        ctx.fillStyle = '#E6ECF2';
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, isSelected ? 2.6 : 2.0, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = isSelected ? '#E6ECF2' : '#94A3B8';
-        ctx.font = `${isSelected ? '600 ' : ''}11px Inter, system-ui, sans-serif`;
-        ctx.fillText(item.label, pos.x + 12, pos.y + 3);
-      });
-
-      projectedCatalogRef.current = nextProjected;
-
-      // 7. Active Target Position Reticle & True-Scale Cutout Extraction Box
-      const activePos = worldToScreen(state.targetRa, state.targetDec);
-      if (activePos.inBounds) {
-        ctx.strokeStyle = '#38BDF8';
-        ctx.lineWidth = 1.25;
-        ctx.beginPath();
-        ctx.moveTo(activePos.x - 11, activePos.y);
-        ctx.lineTo(activePos.x - 4, activePos.y);
-        ctx.moveTo(activePos.x + 4, activePos.y);
-        ctx.lineTo(activePos.x + 11, activePos.y);
-        ctx.moveTo(activePos.x, activePos.y - 11);
-        ctx.lineTo(activePos.x, activePos.y - 4);
-        ctx.moveTo(activePos.x, activePos.y + 4);
-        ctx.lineTo(activePos.x, activePos.y + 11);
-        ctx.stroke();
-
-        if (state.showCutoutBox) {
-          const cutoutDeg = state.fovArcsec / 3600;
-          const boxPx = Math.max(16, cutoutDeg * scalePxPerDeg);
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 3]);
-          ctx.strokeRect(
-            activePos.x - boxPx / 2,
-            activePos.y - boxPx / 2,
-            boxPx,
-            boxPx
+  // Synchronize SPHEREx LVF Footprints Overlay
+  useEffect(() => {
+    const overlay = footprintOverlayRef.current;
+    if (!overlay) return;
+    try {
+      overlay.removeAll();
+      if (showLvfFootprints && typeof A.polygon === 'function') {
+        filteredExposures.forEach((exp) => {
+          const corners = getFootprintCorners(
+            exp.centerRa,
+            exp.centerDec,
+            exp.footprintWidthDeg,
+            exp.footprintHeightDeg,
+            exp.rollAngleDeg
           );
-          ctx.setLineDash([]);
-        }
+          const poly = A.polygon(corners, {
+            color: exp.detector.colorHex,
+            lineWidth: 1.5,
+          });
+          overlay.add(poly);
+        });
       }
+    } catch (e) {
+      console.warn('Error updating footprints overlay:', e);
+    }
+  }, [showLvfFootprints, filteredExposures]);
 
-      ctx.restore();
-      animId = requestAnimationFrame(renderFrame);
-    };
+  // Synchronize Cutout Bounding Box Overlay
+  useEffect(() => {
+    const overlay = cutoutOverlayRef.current;
+    if (!overlay) return;
+    try {
+      overlay.removeAll();
+      if (showCutoutBox && typeof A.polygon === 'function') {
+        const sizeDeg = fovArcsec / 3600;
+        const corners = getFootprintCorners(ra, dec, sizeDeg, sizeDeg, 0);
+        const poly = A.polygon(corners, {
+          color: '#38BDF8',
+          lineWidth: 1.5,
+        });
+        overlay.add(poly);
+      }
+    } catch (e) {
+      console.warn('Error updating cutout box overlay:', e);
+    }
+  }, [showCutoutBox, fovArcsec, ra, dec]);
 
-    animId = requestAnimationFrame(renderFrame);
-    return () => cancelAnimationFrame(animId);
-  }, []);
-
-  // Zoom Helper (Supports full 0.02° sub-arcminute precision up to 180° full-hemisphere view)
+  // Direct Zoom Preset Handler
   const applyZoom = useCallback((nextFovDeg: number) => {
-    const clamped = Math.max(0.02, Math.min(180.0, nextFovDeg));
-    cameraRef.current.fovDeg = clamped;
+    const clamped = Math.max(0.005, Math.min(180.0, nextFovDeg));
     setDisplayFovDeg(clamped);
     try {
       aladinInstanceRef.current?.setFoV(clamped);
-    } catch {
-      // Ignore if Aladin still initializing
+    } catch (e) {
+      console.warn('Error setFoV:', e);
     }
   }, []);
-
-  // Smooth Wheel Zoom (Damped exponential zoom with trackpad momentum guard)
-  const handleWheel = useCallback(
-    (e: React.WheelEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      const clampedDelta = Math.max(-40, Math.min(40, e.deltaY));
-      const factor = Math.exp(clampedDelta * 0.0016);
-      applyZoom(cameraRef.current.fovDeg * factor);
-    },
-    [applyZoom]
-  );
-
-  // Mouse Down (Start Pan)
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    dragRef.current = {
-      active: true,
-      lastX: e.clientX,
-      lastY: e.clientY,
-      moved: false,
-    };
-  }, []);
-
-  // Mouse Move (True 360° Over-the-Poles Spherical Great-Circle Rotation + 60 FPS Telemetry Readout)
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = viewportRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const cam = cameraRef.current;
-    const scalePxPerDeg = rect.width / Math.max(0.02, cam.fovDeg);
-    const cosCenterDec = Math.max(0.15, Math.cos((cam.centerDec * Math.PI) / 180));
-
-    if (dragRef.current.active) {
-      const dx = e.clientX - dragRef.current.lastX;
-      const dy = e.clientY - dragRef.current.lastY;
-      if (Math.hypot(dx, dy) > 2) {
-        dragRef.current.moved = true;
-      }
-
-      // Advance along the great circle in the current camera upSign orientation
-      let nextRa =
-        (((cam.centerRa + (dx * cam.upSign) / (scalePxPerDeg * cosCenterDec)) % 360) + 360) % 360;
-      let rawDec = cam.centerDec + (dy * cam.upSign) / scalePxPerDeg;
-
-      // Continuous 360° vertical pole transit: crossing +90° or -90° shifts RA by 180° and inverts upSign
-      // so continuing to drag in the same direction flies smoothly down the opposite side of the globe
-      // and returns 360° back to the exact starting coordinate!
-      if (rawDec > 90.0) {
-        rawDec = 180.0 - rawDec;
-        nextRa = (nextRa + 180.0) % 360.0;
-        cam.upSign = cam.upSign === 1 ? -1 : 1;
-      } else if (rawDec < -90.0) {
-        rawDec = -180.0 - rawDec;
-        nextRa = (nextRa + 180.0) % 360.0;
-        cam.upSign = cam.upSign === 1 ? -1 : 1;
-      }
-
-      cam.centerRa = nextRa;
-      cam.centerDec = Math.max(-90.0, Math.min(90.0, rawDec));
-      dragRef.current.lastX = e.clientX;
-      dragRef.current.lastY = e.clientY;
-    }
-
-    // Compute world coordinates under cursor
-    let curRa =
-      (((cam.centerRa - ((x - rect.width / 2) * cam.upSign) / (scalePxPerDeg * cosCenterDec)) %
-        360) +
-        360) %
-      360;
-    let curDec = Math.max(
-      -90,
-      Math.min(90, cam.centerDec - ((y - rect.height / 2) * cam.upSign) / scalePxPerDeg)
-    );
-    const aladin = aladinInstanceRef.current;
-    if (aladin && cam.upSign === 1 && typeof aladin.pix2world === 'function') {
-      try {
-        const w = aladin.pix2world(x, y);
-        if (Array.isArray(w) && Number.isFinite(w[0]) && Number.isFinite(w[1])) {
-          curRa = ((w[0] % 360) + 360) % 360;
-          curDec = Math.max(-90, Math.min(90, w[1]));
-        }
-      } catch {
-        // Use spherical tangent coordinates
-      }
-    }
-
-    cam.cursorX = x;
-    cam.cursorY = y;
-    cam.cursorRa = curRa;
-    cam.cursorDec = curDec;
-
-    if (cursorRaDecDomRef.current) {
-      cursorRaDecDomRef.current.textContent = `${curRa.toFixed(5)}° ${
-        curDec >= 0 ? `+${curDec.toFixed(5)}` : curDec.toFixed(5)
-      }°`;
-    }
-    if (cursorSexaDomRef.current) {
-      cursorSexaDomRef.current.textContent = formatSexagesimal(curRa, curDec);
-    }
-    if (cursorLvfDomRef.current && renderStateRef.current.activeExposure) {
-      const exp = renderStateRef.current.activeExposure;
-      const dDec = curDec - exp.centerDec;
-      const frac = Math.max(
-        0,
-        Math.min(1, 0.5 + dDec / Math.max(0.1, exp.footprintHeightDeg))
-      );
-      const localWave =
-        exp.detector.lambdaMinUm +
-        frac * (exp.detector.lambdaMaxUm - exp.detector.lambdaMinUm);
-      cursorLvfDomRef.current.textContent = `${exp.detector.id} λ=${localWave.toFixed(3)} µm (R=${
-        exp.detector.resolvingPower
-      })`;
-    }
-
-    if (!dragRef.current.active) {
-      const hit = projectedCatalogRef.current.find(
-        (b) => b.inView && Math.hypot(b.x - x, b.y - y) <= 14
-      );
-      setHoveredCatalogObject((prev) => (prev?.id === hit?.item.id ? prev : hit?.item || null));
-    }
-  }, []);
-
-  // Mouse Up (Commit panned position or select clicked sky coordinate / catalog source — NEVER redirects tabs)
-  const handleMouseUp = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!dragRef.current.active) return;
-      const wasMoved = dragRef.current.moved;
-      dragRef.current.active = false;
-
-      const cam = cameraRef.current;
-      if (wasMoved) {
-        // Sync panned camera center to store once drag completes
-        const finalRa = Number(cam.centerRa.toFixed(6));
-        const finalDec = Number(cam.centerDec.toFixed(6));
-        setCoordinates(
-          finalRa,
-          finalDec,
-          `Field ${finalRa.toFixed(4)}°, ${finalDec >= 0 ? '+' : ''}${finalDec.toFixed(4)}°`,
-          '[IRSA Live (spherex_qr2)]'
-        );
-        setRa(finalRa);
-        setDec(finalDec);
-        return;
-      }
-
-      // Single click: either select catalog object under cursor or set target crosshair to clicked sky position
-      const rect = viewportRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      const hit = projectedCatalogRef.current.find(
-        (b) => b.inView && Math.hypot(b.x - x, b.y - y) <= 16
-      );
-      if (hit) {
-        const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === hit.item.id);
-        setCoordinates(
-          hit.item.ra,
-          hit.item.dec,
-          hit.item.name,
-          isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
-        );
-        setRa(hit.item.ra);
-        setDec(hit.item.dec);
-        if (hit.item.preset) {
-          setRgbPreset(hit.item.preset);
-          setPreset(hit.item.preset);
-        }
-        cam.centerRa = hit.item.ra;
-        cam.centerDec = hit.item.dec;
-      } else {
-        const clickedRa = Number(cam.cursorRa.toFixed(6));
-        const clickedDec = Number(cam.cursorDec.toFixed(6));
-        setCoordinates(
-          clickedRa,
-          clickedDec,
-          `J2000 ${clickedRa.toFixed(4)}°, ${clickedDec >= 0 ? '+' : ''}${clickedDec.toFixed(4)}°`,
-          '[IRSA Live (spherex_qr2)]'
-        );
-        setRa(clickedRa);
-        setDec(clickedDec);
-      }
-    },
-    [setCoordinates, setDec, setPreset, setRa, setRgbPreset]
-  );
-
-  // Double-Click: Smoothly zoom in 2x at cursor position (NEVER switches tabs!)
-  const handleDoubleClick = useCallback(() => {
-    const cam = cameraRef.current;
-    cam.centerRa = cam.cursorRa;
-    cam.centerDec = cam.cursorDec;
-    applyZoom(cam.fovDeg * 0.5);
-  }, [applyZoom]);
 
   // Calibrated Angular Scale Bar
   const scaleBar = useMemo(() => {
@@ -1379,14 +647,17 @@ export const CelestialNavigator: React.FC = () => {
       );
       setRa(parsedRa);
       setDec(parsedDec);
-      cameraRef.current.centerRa = parsedRa;
-      cameraRef.current.centerDec = parsedDec;
+      try {
+        aladinInstanceRef.current?.gotoRaDec(parsedRa, parsedDec);
+      } catch (err) {
+        console.warn('Error gotoRaDec:', err);
+      }
     }
   };
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-[#080A0F] font-sans text-xs text-[#E6ECF2] select-none">
-      {/* LEFT 70%: Stitched Sky Mosaic & LVF Spectral Footprint Viewport */}
+      {/* LEFT 70%: Native Aladin Lite v3 WebGL2 Sky Viewport */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         {/* Top Overlay Instrument Toolbar (Modelled after IRSA Firefly Layer & Band Bar) */}
         <div
@@ -1418,18 +689,6 @@ export const CelestialNavigator: React.FC = () => {
               }`}
             >
               J2000 Grid
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowProperMotion((v) => !v)}
-              className={`rounded-sm border px-2 py-1 text-[11px] transition-colors duration-150 ${
-                showProperMotion
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
-              title="Toggle Gaia DR3 / astrometric proper motion vectors"
-            >
-              Proper Motion
             </button>
             <button
               type="button"
@@ -1500,7 +759,7 @@ export const CelestialNavigator: React.FC = () => {
           <div className="flex items-center rounded-sm border border-[#1E2530] bg-[#080A0F]">
             <button
               type="button"
-              onClick={() => applyZoom(cameraRef.current.fovDeg * 0.65)}
+              onClick={() => applyZoom(displayFovDeg * 0.65)}
               className="px-2 py-0.5 font-mono text-xs text-[#E6ECF2] hover:bg-[#151B24]"
               title="Zoom in"
               aria-label="Zoom in"
@@ -1510,7 +769,7 @@ export const CelestialNavigator: React.FC = () => {
             <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
             <button
               type="button"
-              onClick={() => applyZoom(cameraRef.current.fovDeg * 1.5)}
+              onClick={() => applyZoom(displayFovDeg * 1.5)}
               className="px-2 py-0.5 font-mono text-xs text-[#E6ECF2] hover:bg-[#151B24]"
               title="Zoom out"
               aria-label="Zoom out"
@@ -1553,39 +812,22 @@ export const CelestialNavigator: React.FC = () => {
           </div>
         </div>
 
-        {/* Interactive 60 FPS Continuous 3D Spherical Sky & HiPS Mosaic Viewport */}
+        {/* 100% Native Aladin Lite v3 WebGL2 All-Sky HiPS Viewport */}
         <div
-          ref={viewportRef}
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={() => {
-            dragRef.current.active = false;
-          }}
-          onDoubleClick={handleDoubleClick}
-          className="relative flex-1 w-full overflow-hidden bg-[#06080D] cursor-grab active:cursor-grabbing"
+          className="relative flex-1 w-full overflow-hidden bg-[#06080D]"
         >
-          {/* Aladin Lite v3 WebGL2 All-Sky HiPS Survey Layer */}
+          {/* Aladin Lite v3 Canvas Container (Receives all drag, scroll, touch, and click events directly) */}
           <div
             ref={aladinContainerRef}
-            className="pointer-events-none absolute inset-0 h-full w-full"
+            className="absolute inset-0 h-full w-full"
           />
 
-          {/* Primary 60 FPS 3D Spherical Starfield, Graticule & SPHEREx LVF Footprint Overlay */}
-          <canvas
-            ref={skyCanvasRef}
-            className="pointer-events-none absolute inset-0 z-10 h-full w-full"
-          />
-
-          {/* Top-Left North-Up / East-Left Astrometric Orientation Compass */}
+          {/* Top-Left Astrometric Compass / Status */}
           <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2.5 py-1.5">
             <svg className="h-7 w-7 text-[#38BDF8]" viewBox="0 0 32 32" fill="none">
               <circle cx="16" cy="16" r="13" stroke="#1E2530" strokeWidth="1" />
-              {/* North Arrow (Up) */}
               <path d="M16 5L16 20" stroke="#38BDF8" strokeWidth="1.5" />
               <path d="M13.5 8.5L16 4.5L18.5 8.5" stroke="#38BDF8" strokeWidth="1.5" />
-              {/* East Tick (Left on astronomical sky chart) */}
               <path d="M6 16L16 16" stroke="#94A3B8" strokeWidth="1.2" />
               <text x="14" y="3.8" fill="#E6ECF2" fontSize="5" fontFamily="monospace">
                 N
@@ -1596,30 +838,13 @@ export const CelestialNavigator: React.FC = () => {
             </svg>
             <div className="flex flex-col">
               <span className="font-mono text-[10px] text-[#E6ECF2]">
-                3D Spherical HiPS · {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'All-Sky Survey'}
+                Aladin Lite v3 WebGL2 · {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'All-Sky Survey'}
               </span>
               <span className="font-mono text-[10px] text-[#94A3B8]">
-                {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.badge || '360° Continuous Sphere'} · Drag across poles · Scroll to zoom
+                {PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.badge || 'Multi-Resolution HiPS Pyramid'} · Drag to pan · Scroll to zoom
               </span>
             </div>
           </div>
-
-          {/* Hovered Catalog Source Card */}
-          {hoveredCatalogObject && (
-            <div className="pointer-events-none absolute left-3 top-16 z-30 max-w-xs rounded-sm border border-[#38BDF8] bg-[#0F131A] p-2.5 text-xs">
-              <div className="font-semibold text-[#E6ECF2]">{hoveredCatalogObject.name}</div>
-              <div className="mt-0.5 text-[11px] text-[#94A3B8]">
-                {hoveredCatalogObject.description}
-              </div>
-              <div className="mt-1 font-mono text-[10px] tabular-nums text-[#38BDF8]">
-                J2000 {hoveredCatalogObject.ra.toFixed(5)}°,{' '}
-                {hoveredCatalogObject.dec >= 0
-                  ? `+${hoveredCatalogObject.dec.toFixed(5)}`
-                  : hoveredCatalogObject.dec.toFixed(5)}
-                °
-              </div>
-            </div>
-          )}
 
           {/* Bottom-Right Calibrated Angular Scale Bar */}
           <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2.5 py-1.5">
@@ -1697,8 +922,7 @@ export const CelestialNavigator: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  cameraRef.current.centerRa = ra;
-                  cameraRef.current.centerDec = dec;
+                  aladinInstanceRef.current?.gotoRaDec(ra, dec);
                 }}
                 className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:border-[#38BDF8] hover:text-[#E6ECF2]"
                 title="Center sky viewport on active target coordinates"
