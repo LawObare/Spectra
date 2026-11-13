@@ -24,51 +24,51 @@ export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
   {
     id: 'barnard',
     name: "Barnard's Star",
-    label: "Barnard's Star",
+    label: "Barnard's (Speed Demon)",
     ra: 269.44639,
     dec: 4.76676,
     preset: 'true_nir',
-    description: 'M4V high proper motion (+10.39"/yr North, 1.68 px/yr)',
+    description: 'The Cosmic Speed Demon — Fastest-moving star sprinting at +10.39"/yr North (1.68 px/yr)',
     category: 'SPHEREx Verification',
   },
   {
     id: 'wise0855',
     name: 'WISE 0855-0714',
-    label: 'WISE 0855',
+    label: 'WISE 0855 (Frozen Dwarf)',
     ra: 133.73712,
     dec: -7.24038,
     preset: 'brown_dwarf',
-    description: 'Y4 sub-brown dwarf (8.15"/yr West, thermal peak in D5/D6)',
+    description: 'The Frozen Brown Dwarf — Cold as ice (-10°C), glowing in SPHEREx mid-IR (8.15"/yr West)',
     category: 'SPHEREx Verification',
   },
   {
     id: 'eps_indi_b',
     name: 'Epsilon Indi B',
-    label: 'Epsilon Indi B',
+    label: 'Eps Indi B (Twin Worlds)',
     ra: 331.09566,
     dec: -56.80031,
     preset: 'brown_dwarf',
-    description: 'T1+T6 binary (4.68"/yr SE, 1/cos(dec) astrometric test)',
+    description: 'The Invisible Twin Worlds — T1+T6 binary pair blended in a single pixel (4.68"/yr SE)',
     category: 'SPHEREx Verification',
   },
   {
     id: 'rw_aur',
     name: 'RW Aurigae',
-    label: 'RW Aurigae',
+    label: 'RW Aurigae (Flashing Star)',
     ra: 76.95647,
     dec: 30.4013,
     preset: 'comet_outgassing',
-    description: 'T Tauri variable (>1.5 mag optical/NIR occultation dimming)',
+    description: 'The Flashing Baby Star — Violent dust clouds blocking 75% of light across seasons',
     category: 'SPHEREx Verification',
   },
   {
     id: 'r_dra',
     name: 'R Draconis',
-    label: 'R Draconis',
+    label: 'R Draconis (Pulsing Giant)',
     ra: 248.16773,
     dec: 66.75504,
     preset: 'water_ice',
-    description: 'Mira AGB variable (245d pulsation cycle, NEP deep field)',
+    description: 'The Beating Giant Heart — Red giant pulsating in brightness every 245 days',
     category: 'SPHEREx Verification',
   },
 ];
@@ -292,12 +292,53 @@ export const SEARCHABLE_SKY_CATALOG: BenchmarkPill[] = [
 ];
 
 const TABS = [
-  { id: 'navigator', label: '1. Sky & Spectral Search' },
-  { id: 'comparator', label: '2. Time-Domain' },
-  { id: 'spectral', label: '3. Spectral Lab' },
-  { id: 'ice', label: '4. Ice Studio' },
-  { id: 'discussions', label: '5. Discussions' },
+  { id: 'navigator', label: 'Navigator', number: '1' },
+  { id: 'comparator', label: 'Time-Domain', number: '2' },
+  { id: 'spectral', label: '102-Band Spectrum', number: '3' },
+  { id: 'ice', label: 'Ice Studio', number: '4' },
+  { id: 'discussions', label: 'Community Forum', number: '5' },
 ];
+
+/**
+ * Official NASA Insignia (Meatball) Vector
+ */
+export const NasaMeatballSvg: React.FC<{ className?: string }> = ({ className = 'h-6 w-7' }) => (
+  <svg
+    viewBox="0 0 110 92"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    aria-label="NASA Logo"
+  >
+    <circle cx="55" cy="46" r="42" fill="#0B3D91" />
+    <path
+      d="M14 62L62 18L56 42L96 34L54 48L60 68L14 62Z"
+      fill="#F64137"
+    />
+    <ellipse
+      cx="55"
+      cy="46"
+      rx="46"
+      ry="19"
+      transform="rotate(-28 55 46)"
+      stroke="#FFFFFF"
+      strokeWidth="2.5"
+      fill="none"
+    />
+    <text
+      x="55"
+      y="54"
+      textAnchor="middle"
+      fill="#FFFFFF"
+      fontFamily="Impact, Arial Black, sans-serif"
+      fontWeight="900"
+      fontSize="26"
+      letterSpacing="1.5"
+    >
+      NASA
+    </text>
+  </svg>
+);
 
 /**
  * Client-Side Coordinate & Sexagesimal Parser
@@ -344,12 +385,16 @@ export function parseCoordinateInput(input: string): { ra: number; dec: number }
   return null;
 }
 
-interface GlobalCommandHeaderProps {
+export interface GlobalCommandHeaderProps {
   onOpenCommandPalette?: () => void;
+  onToggleMissionBriefing?: () => void;
+  isMissionBriefingActive?: boolean;
 }
 
 export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   onOpenCommandPalette,
+  onToggleMissionBriefing,
+  isMissionBriefingActive = false,
 }) => {
   const {
     ra,
@@ -590,41 +635,55 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-card px-4 font-sans text-xs text-foreground select-none">
-      {/* 1. Brand & Archive Status */}
+    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-black/90 backdrop-blur-md px-4 font-sans text-xs text-foreground select-none">
+      {/* 1. Official NASA Branding & Mission Status */}
       <div className="flex items-center gap-3 shrink-0">
-        <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold tracking-tight text-foreground">Spectra</span>
-          <span className="hidden sm:inline text-[11px] text-muted-foreground">
-            SPHEREx Spectral Archive
-          </span>
+        <div className="flex items-center gap-2.5">
+          <NasaMeatballSvg className="h-6 w-7 drop-shadow-sm" />
+          <div className="flex flex-col">
+            <span className="text-sm font-extrabold tracking-tight text-white leading-none">
+              SPHEREx
+            </span>
+            <span className="hidden sm:inline text-[9px] tracking-wider uppercase text-neutral-400 font-medium">
+              NASA All-Sky Survey
+            </span>
+          </div>
         </div>
 
-        <span className="h-3.5 w-px bg-border" aria-hidden="true" />
+        <span className="h-4 w-px bg-neutral-800" aria-hidden="true" />
 
-        {/* Archive Connection Badge */}
-        <Badge
-          variant={isBackendLive ? 'emerald' : 'sky'}
-          className="gap-1.5 py-0.5 text-[11px] cursor-default"
-          title={
-            isBackendLive
-              ? 'FastAPI science engine online (port 7860)'
-              : 'Archive local tensor & catalog engine active'
-          }
-        >
-          <span
+        {/* Option A: Mission Briefing Toggle Button */}
+        {onToggleMissionBriefing && (
+          <button
+            type="button"
+            onClick={onToggleMissionBriefing}
             className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              isBackendLive ? 'bg-emerald-400' : 'bg-primary'
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all',
+              isMissionBriefingActive
+                ? 'bg-primary text-white shadow-sm ring-1 ring-primary/50'
+                : 'border border-neutral-700 bg-neutral-900/80 text-neutral-300 hover:border-neutral-500 hover:text-white'
             )}
-          />
-          <span>{isBackendLive ? 'Live API' : 'Archive Ready'}</span>
-        </Badge>
+            title="Toggle between NASA SPHEREx Mission Launchpad and Workstation"
+          >
+            <span className="text-[10px]">🚀</span>
+            <span>{isMissionBriefingActive ? 'Sky Workstation' : 'Mission Briefing'}</span>
+          </button>
+        )}
+
+        {/* Active Mission Operational Status Badge */}
+        <div
+          className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 cursor-default"
+          title="SPHEREx Operational Status: All 6 Near-IR Detectors Active (0.75 - 5.0 μm)"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="hidden lg:inline">Active Mission</span>
+          <span className="lg:hidden">Active</span>
+        </div>
 
         {/* Data Provenance Badge */}
         <Badge
           variant="secondary"
-          className="hidden 2xl:inline-flex font-mono text-[11px] tabular-nums"
+          className="hidden 2xl:inline-flex font-mono text-[10px] tabular-nums bg-neutral-900 border-neutral-800 text-neutral-400"
           title="Active dataset provenance"
         >
           {sourceBadge}
@@ -666,9 +725,9 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
             placeholder={
               activeTargetName
                 ? `${activeTargetName} (${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°) — Search RA/Dec or object...`
-                : 'Search RA/Dec, HMS/DMS, or object name (SIMBAD/IRSA)...'
+                : "Search RA/Dec (e.g. 269.44, 4.76) or object (Barnard's Star, WISE 0855)..."
             }
-            className="w-full pl-8 pr-16 bg-background font-mono text-xs tabular-nums text-foreground placeholder:text-muted-foreground"
+            className="w-full pl-8 pr-16 bg-neutral-950/90 border border-neutral-800 focus:border-primary font-mono text-xs tabular-nums text-foreground placeholder:text-muted-foreground rounded-full"
           />
           <div className="absolute right-1.5 flex items-center gap-1">
             {isResolving && (
@@ -795,25 +854,31 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
 
         <nav
           aria-label="Workspaces"
-          className="flex items-center gap-0.5 rounded-sm border border-border bg-background p-0.5"
+          className="flex items-center gap-1 rounded-full border border-neutral-800 bg-neutral-950/90 p-0.5"
         >
           {TABS.map((t) => {
-            const isActive = tab === t.id;
+            const isActive = tab === t.id && !isMissionBriefingActive;
             return (
               <Button
                 key={t.id}
                 variant={isActive ? 'secondary' : 'ghost'}
                 size="sm"
-                onClick={() => setTab(t.id)}
+                onClick={() => {
+                  setTab(t.id);
+                  if (isMissionBriefingActive && onToggleMissionBriefing) {
+                    onToggleMissionBriefing();
+                  }
+                }}
                 aria-current={isActive ? 'page' : undefined}
                 className={cn(
-                  'h-7 px-2.5 text-xs font-sans',
+                  'h-7 px-2.5 sm:px-3 text-xs font-sans rounded-full transition-all',
                   isActive
-                    ? 'border-primary/50 text-foreground font-medium shadow-none'
-                    : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-primary text-white font-medium shadow-sm'
+                    : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
                 )}
               >
-                {t.label}
+                <span className="opacity-60 text-[10px] font-mono mr-1.5">{t.number}</span>
+                <span>{t.label}</span>
               </Button>
             );
           })}
