@@ -2728,3 +2728,31 @@ To ensure that **any** agent working in the repository—whether running via Ant
 ### Status
 - Passed comprehensive integrity verification across `SPECIFICATION.md` (2,575 lines) and `SYSTEM_ARCHITECTURE.md` (1,028 lines, 78,904 chars, 38 balanced code fences).
 - Committed and pushed to `main`.
+
+---
+
+## Exchange #43: Codification of High-Throughput & Low-Latency Optimization Architecture
+
+### Context & Goals
+- User requested formal specification of the platform optimization proposal into `SPECIFICATION.md` (v3.0.0-PROD) and `SYSTEM_ARCHITECTURE.md` (SDD), verifying zero quality loss and preserving bit-for-bit IEEE-754 precision.
+
+### Changes Integrated into SPECIFICATION.md & SYSTEM_ARCHITECTURE.md
+1. **Lossless Byte-Shuffled Zstandard Stream Compression (SPEC §3.2 & SDD §6.2, ADR-009):**
+   - Transmits transparent byte-shuffled Float32 tensors (`"compression": "zstd-shuffle"`), grouping exponent/sign bytes to achieve a 4x–7x lossless compression ratio in $<2\,	ext{ms}$ on CPU.
+   - Decoded via `zstd-wasm` (<25 KB WASM module) in a dedicated Web Worker (`worker.ts`) and transferred to the main thread via zero-copy Transferable Objects (`postMessage(..., [buffer])`).
+2. **Exhaustive In-Memory BLAS GEMV Spectral Engine (SPEC §4.2.4 & SDD §4.2.3):**
+   - Pre-normalized 10,000-reference spectrum matrix $\mathbf{S}_{	ext{norm}} \in \mathbb{R}^{10000 	imes 102}$ (~4.08 MB) stored in contiguous RAM.
+   - Computes exact mathematical cosine similarity via OpenBLAS SIMD vectorization and `np.argpartition` for top-$k$ matches in $<8\,	ext{ms}$ with 100% exact recall (bypassing database round-trips and vector index bloat).
+3. **`uvloop` Event Loop & Multiprocessing GIL Bypass (SPEC §4.2.5 & SDD §4.2.5):**
+   - Replaces default asyncio loop with `uvloop` (`asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())`), delivering 2x–4x request throughput and $<0.5\,	ext{ms}$ scheduling jitter.
+   - Offloads `reproject_exact` and Chebyshev continuum baseline fitting to `ProcessPoolExecutor(max_workers=2)`, leaving FastAPI's event loop 100% free for sub-millisecond SSE progress countdowns and WebSocket telemetry.
+4. **Tangent Coordinate Meshgrid Pre-Caching (SPEC §4.2.5 & SDD §4.2.5):**
+   - Pre-computes target world coordinates $(lpha, \delta)$ once per master tangent grid ($w 	imes h$) and reuses the coordinate grid across all 6 detector bands and survey epochs, eliminating 80% of redundant spherical coordinate transformations.
+5. **Strict IEEE-754 Float32 Precision Guardrail (SPEC §6.1.6 & SDD ADR-010):**
+   - Rejects lossy 16-bit half-float downsampling for scientific data; enforces full 24-bit mantissa precision (`gl.R32F`) across WebGL2 GPU fragment shaders and forced aperture photometry.
+6. **Route-Level Code Splitting & Performance Budget (SDD §4.1):**
+   - Employs dynamic `React.lazy()` chunking to maintain initial public bundle size `<280 KB` gzipped, isolating Plotly 3D WebGL and Admin telemetry to on-demand chunks.
+
+### Status
+- Passed all integrity and verification suites across `SPECIFICATION.md` (2,588 lines) and `SYSTEM_ARCHITECTURE.md` (1,052 lines, 82,268 chars, 38 balanced code fences).
+- Committed and pushed to `main`.
