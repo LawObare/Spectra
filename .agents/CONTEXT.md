@@ -2553,3 +2553,52 @@ To ensure that **any** agent working in the repository—whether running via Ant
     - Added heavy job concurrency lock (`asyncio.Lock` returning HTTP 409 Conflict), rate limiting (60 writes/min), and 4.0 GB memory cap.
 14. **Section 12 Authoritative Scientific Sources Appended:**
     - Added 8 official archive documentation references linking IRSA data access, PSF tutorials, AWS Open Data, and SPLICES catalog.
+
+---
+
+## Exchange #37: Master Reconciliation of Specification v3.0.0-PROD (Single FastAPI Architecture)
+
+### Context & Goals
+- Execute complete reconciliation of `SPECIFICATION.md` to eliminate contradictory architectures, runtime/schema bugs, superseded v2.5 text, and ungrounded relics.
+- Standardize the entire stack on a single FastAPI backend (`backend/` via `uv` on port 7860), eliminating the legacy two-process Go + Python loopback layout.
+
+### Key Decisions & Changes Applied
+1. **Single Backend Unification (FastAPI / Port :7860):**
+   - Purged all references to Go gateway (`api-gateway`, `:8080`, `sqlc`, `Chi`, `pgx/v5`).
+   - Standardized on a single FastAPI service (`backend/` orchestrated with `uv`) running on port 7860.
+   - Updated system architecture diagram (§3), pipeline diagram (§4.1), and hosting diagram (§10.2).
+2. **Database Schema & Queries Reconciliation:**
+   - Table name unified as `heartbeat` (single row `id=1`, `last_ping`, `irsa_status`, `active_workers`), eliminating `system_heartbeats`.
+   - Standardized foreign keys across all tables to `observers(observer_id)` via UUID (`author_id UUID NOT NULL REFERENCES observers(observer_id)` in `classifications`, `discussion_threads`, `discussion_replies`).
+   - Removed `spectrum_vector` / `vector_cosine_ops`; standardized on `spectrum_array REAL[] NOT NULL` with in-memory NumPy cosine similarity (<20 ms) in P0/P1.
+   - Replaced Go `query.sql` with type-safe Python asyncpg query module `backend/db/queries.py` matching exact DDL columns.
+3. **WebGL2 Shader & Rendering Mechanics:**
+   - Declared all uniforms (`u_black`, `u_white`, `u_asinh_a`, `u_diff_scale`, `u_mode`, `u_var_current`, `u_var_reference`).
+   - Implemented signed difference centered on mid-grey (0.5):
+     `display = clamp(0.5 + 0.5 * stretched_diff, 0.0, 1.0);`
+   - Implemented true inverse-variance coaddition using `u_var_current` and `u_var_reference` variance samplers.
+4. **Concurrency Guard (Bounded Task Queue):**
+   - Replaced blunt `HTTP 409 Conflict` with bounded asynchronous queue (`asyncio.Queue(maxsize=5)`) reporting queue position countdown over SSE (`Retry-After: 15` on 503).
+5. **Astrophysics & Catalog Ground Truth:**
+   - Top of §2.2 proper motion formula: $\alpha(t) = \alpha_0 + \frac{\mu_\alpha^*}{\cos\delta_0} \cdot \Delta t$ where $\mu_\alpha^* = \mu_\alpha \cos\delta_0$ (eliminating double-counting $\cos\delta$).
+   - Replaced hardcoded survey pass dates with dynamic survey passes derived from observation exposure MJDs.
+   - Epsilon Indi B: $4.68''/\text{yr} = 0.76\,\text{px/yr}$, center $331.09566^\circ, -56.80031^\circ$. HUD reticle: `[Motion: 0.76 px/yr | Centroid Displacement: Δx=-0.64 px, Δy=-0.40 px]`.
+   - RW Aurigae: stationary variable source; report measured light curves and fluxes with error bars.
+   - Tab 4 Ice Studio (§6.3.4): purged diffuse cloud paint brush; implemented Point-Source Background Star (SPLICES) workflow with verified literature A-values.
+6. **Zero-Auth Security & Routing:**
+   - Frontend has zero direct database credentials (no `@supabase/supabase-js`, no anon key in bundle). Live forum sync via FastAPI SSE feed (`/api/forum/stream`).
+   - Purged `X-Spectra-Portal` and `[Verified by Science Team]`. Standardized `ADMIN_MUTATIONS_ENABLED=false` (read-only default; mutations require server-held `ADMIN_TOKEN`). Mock thread: `Moderator_Dave [Moderator] (Demo)`.
+   - CORS `AllowedHeaders: ["Origin", "Content-Type", "Accept", "Authorization", "X-Observer-ID", "X-Observer-Key"]`.
+7. **Roadmap (§8), Taskfile (§9), and Deployment (§10):**
+   - Roadmap aligns with single FastAPI backend and realistic person-day estimates (P0 = 22–27 person-days).
+   - `Taskfile.yml`: Port 7860 for FastAPI backend, Port 3000 for Vite frontend, Port 54322 for local Supabase.
+   - Single-stage `Dockerfile` (uv-based, CPU PyTorch) and supervisor `start.sh` running FastAPI on port 7860.
+8. **Citations & LaTeX Cleanups:**
+   - Pipeline paper citation updated to `arXiv:2511.15823`.
+   - SPLICES title: "SPHEREx Target List of Ice Sources".
+   - Purged all corrupted LaTeX escapes (`\x0crac`, `\t ext`, `\r\rightarrow`).
+
+### Verification & Status
+- Run `verify_spec_integrity.py`: Passed 100% of structural integrity checks (2,537 lines, 177,917 chars).
+- Residual audit: 0 stale architecture tokens outside the historical evolution log table.
+- `SPECIFICATION.md` is clean, fully aligned with v3.0.0-PROD single FastAPI architecture.
