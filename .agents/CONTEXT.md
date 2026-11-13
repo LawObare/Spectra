@@ -2453,3 +2453,23 @@ To ensure that **any** agent working in the repository—whether running via Ant
    - Synchronized across all agent directories: `.claude/skills/`, `.codemaker/skills/`, `.goose/skills/`, `.junie/skills/`, `.kilocode/skills/`, and `.kiro/skills/`.
    - Registered in `skills-lock.json`.
    - Allows explicit invocation via `/spectra-protocol` to force any model into strict compliance with the project specifications and phase gates.
+
+---
+
+## ★ SPECIFICATION v3.0 UPGRADE & SCIENTIFIC GROUND-TRUTH REVISION (Exchange #34)
+> **Context:** The user provided the 19-point audit document `"Spectra: Corrected Engineering Specification v3.0 (SPHEREx Spectral Explorers · revision of v2.5.0 · 1 November 2026)"` and requested an honest evaluation and immediate implementation.
+
+### 1. The 19 Corrective Audits & Critical Astrophysical Saves
+1. **Wavelength-Matched Differencing (Point 1):** SPHEREx Linear Variable Filters (LVF) shift bandpass continuously along the detector. Differencing arbitrary exposures across epochs without matching wavelength produces severe false variability and false dipoles. v3.0 restricts differencing strictly to exposures where the target pixel falls within matching wavelength bin $[\lambda_0(1-w), \lambda_0(1+w)]$.
+2. **Epsilon Indi B Proper Motion Spherical Trig Error (Point 2):** v2.5 omitted the $1/\cos \delta$ division in $\Delta\alpha = \mu_\alpha^* \Delta t / \cos \delta$. At $\delta = -56.8^\circ$ ($\cos \delta \approx 0.5476$), the center in v2.5 was off by $46''$ (~7.5 native pixels!). Corrected to $331.09566^\circ, -56.80031^\circ$.
+3. **Archive Realities & Configurable Collection (Points 3, 4, 5):** Replaced hardcoded unverified `spherex_qr3` with runtime config `IRSA_COLLECTION` (verified `spherex_qr2` / prefix `qr2/`). Replaced 16 MB S3 byte-range thrashing with server-side IRSA Cutout API as primary path. Dynamic epoch grouping driven by observation MJDs.
+4. **Database Memory Blowout Averted (Point 11):** $1\text{M} \times 102$ floats in `pgvector` requires $>408\text{ MB}$ raw + index overhead, instantly exhausting Supabase free-tier (500 MB limit). Dropped from P0 in favor of in-memory NumPy cosine similarity (<10 MB RAM, $<20\text{ ms}$).
+5. **Unified Single-Service FastAPI Backend (Point 12):** Eliminated unnecessary Go gateway complexity and cross-service proxy overhead. Unified under single FastAPI service on Python 3.11 with `uv` on port 7860 (Hugging Face Spaces native).
+6. **Zero-Auth Security & Data Honesty (Points 13, 16, 17, 19):** Browser creates secret 32-byte `observer_key` alongside `observer_id`. Backend stores strictly `sha256(observer_key)`. Read-only `/admin` by default (`ADMIN_MUTATIONS_ENABLED=false`). Verified badge changed to `[Moderator]`. All products branded `Community Product`.
+
+### 2. Synchronization Across Repository
+- **[`SPECIFICATION.md`](SPECIFICATION.md):** Fully updated to `v3.0.0-PROD` (Sections 1–11 complete with Day-0 Spikes, recomputed benchmark coordinates, coverage matrix, binary tensor specification, single-service Dockerfile, and risk mitigation).
+- **[`AGENTS.md`](AGENTS.md) (and symlinks `CLAUDE.md`, `GEMINI.md`):** Updated to bind all AI agents to `SPECIFICATION.md` v3.0.0-PROD.
+- **`.agents/skills/spectra-protocol/SKILL.md`:** Updated and mirrored across `.claude`, `.codemaker`, `.goose`, `.junie`, `.kilocode`, and `.kiro`.
+- **[`README.md`](README.md):** Synchronized badges, architecture, and recomputed benchmark target coordinates.
+- **[`prerequisites.md`](prerequisites.md):** Updated backend architecture roles.

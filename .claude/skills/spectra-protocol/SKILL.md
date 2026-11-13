@@ -8,30 +8,33 @@ description: "Mandatory engineering protocol for all agents working on the Spect
 Use this skill whenever planning, building, or modifying code in the Spectra repository.
 
 ## 1. Single Source of Truth
-- [`SPECIFICATION.md`](../../SPECIFICATION.md) is the master blueprint (v2.5.0-PROD).
+- [`SPECIFICATION.md`](../../SPECIFICATION.md) is the master blueprint (v3.0.0-PROD).
 - Never guess or extrapolate: coordinates, formulas, schemas, and UI layout wireframes are explicitly specified. Quote `file:line` before editing code.
 
 ## 2. Priority-Gated Execution
-Agents must strictly obey the phase sequence. Never work on Phase 2/3/4 until the prior phase's Milestone Gate is verified:
+Agents must strictly obey the phase sequence preceded by Day-0 Spikes. Never work on Phase 2/3/4 until the prior phase's Milestone Gate is verified:
+0. **Day-0 Spikes (Gating):** S1 (IRSA collection & parameter resolution), S2 (Benchmark exposure coverage matrices & saturation check), S3 (IRSA Cutout API vs S3 byte-range latency benchmark).
 1. **Phase 1 (P0): Core NASA Challenge Foundation**
-   - Tab 1 (Navigator / Aladin 3D dome) + Tab 2 (Blinker / WebGL2 Float32 multi-epoch player).
-   - 5 NASA benchmark targets (Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis).
-   - Python worker (`uv`), Go gateway (`air`), local Supabase DB (`seed_benchmarks.sql`).
-   - *Milestone Gate 1:* Core NASA challenge 100% satisfied.
+   - Tab 1 (Navigator / Aladin Lite v3 with MOC) + Tab 2 (Time-Domain Comparator / WebGL2 Float32 multi-epoch player, wavelength-matched difference mode, coverage matrix).
+   - 5 NASA benchmark targets (recomputed coordinates: Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis).
+   - Single FastAPI backend (`uv`) on port 7860, local Supabase DB.
+   - *Milestone Gate 1:* Core NASA challenge 100% satisfied with honest non-detection states.
 2. **Phase 2 (P1): Scientific Differentiator**
-   - Tab 3 (Spectrophotometric Lab, 102 channels, `uPlot`, photo-$z$) + Tab 5 (Discussions with Supabase Realtime).
-   - PostgreSQL `pgvector` HNSW vector similarity search (`vector(102)` cosine distance `<=>`).
+   - Tab 3 (Spectrophotometric Lab, 102 channels, `uPlot`, rest-frame redshift ruler) + Tab 5 (Discussions with SSE live stream).
+   - In-memory NumPy spectral cosine similarity (<20 ms) against reference libraries.
 3. **Phase 3 (P2): Institutional Polish**
-   - Tab 4 (Molecular & Ice Studio, column density $N_{\text{ice}}$, laboratory rulers).
-   - Admin Mission Control Tabs 1–5 (`/admin`) + live PyTorch WebSocket training streamer (`/api/admin/ws/training`).
+   - Tab 4 (Molecular & Ice Studio, point-source column density $N_{\text{ice}}$, verified laboratory $A$-values).
+   - Admin Mission Control Tabs 1–5 (`/admin`, read-only default) + synthetic injection calibration loop.
 4. **Phase 4: Production Deployment & Hardening**
-   - HF Space Dockerfile + Cloudflare Pages CDN + Supabase Cloud RLS + keep-alive pingers.
+   - Single-service HF Space Dockerfile + Cloudflare Pages CDN + Supabase Session Pooler RLS + keep-alive pinger.
 
-## 3. Zero-Auth Identity
+## 3. Zero-Auth Identity & Security
 - Never build login dialogs or blocking JWT walls.
 - Separate `/explore` from `/admin`.
-- Ingest/inject `X-Observer-ID` and `X-Observer-Callsign` headers on every request.
-- Auto-badge `/admin` actions with `posted_from_admin = TRUE`.
+- Inject `X-Observer-ID` and secret `X-Observer-Key` headers on mutating requests. Store only `sha256(observer_key)` in database.
+- `/admin` is read-only by default (`ADMIN_MUTATIONS_ENABLED=false`). Mutating requires server-held `ADMIN_TOKEN`.
+- Verified admin replies receive gold `[Moderator]` badge.
+- All exported data products carry `Community Product` label (no false NASA endorsement).
 
 ## 4. Token & Workflow Efficiency
 - **Terse communication:** Strip conversational filler. Use dense, factual caveman-style responses.

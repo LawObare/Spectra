@@ -2,9 +2,9 @@
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Target Mission: NASA SPHEREx](https://img.shields.io/badge/Mission-NASA%20SPHEREx-red.svg)](https://spherex.caltech.edu/)
-[![Archive: NASA IRSA QR3](https://img.shields.io/badge/Archive-IRSA%20SPHEREx%20QR3-orange.svg)](https://doi.org/10.26131/IRSA662)
-[![Backend: Go 1.23 + Python 3.11](https://img.shields.io/badge/Backend-Go%201.23%20%2B%20FastAPI-00ADD8.svg)](api-gateway/)
-[![Database: Supabase + pgvector](https://img.shields.io/badge/Database-Supabase%20Postgres%20%2B%20pgvector-3ECF8E.svg)](https://supabase.com)
+[![Archive: NASA IRSA QR2](https://img.shields.io/badge/Archive-IRSA%20SPHEREx%20QR2-orange.svg)](https://irsa.ipac.caltech.edu/Missions/spherex.html)
+[![Backend: FastAPI + uv](https://img.shields.io/badge/Backend-FastAPI%20%2B%20uv-009688.svg)](backend/)
+[![Database: Supabase Postgres](https://img.shields.io/badge/Database-Supabase%20Postgres-3ECF8E.svg)](https://supabase.com)
 [![Frontend: React 18 + WebGL2](https://img.shields.io/badge/Frontend-React%2018%20%2B%20WebGL2%20%2B%20Aladin-61DAFB.svg)](web-client/)
 [![Hosting: HF Spaces + Cloudflare Pages](https://img.shields.io/badge/Hosting-HF%20Spaces%20%2B%20Cloudflare-yellow.svg)](https://huggingface.co/spaces)
 
@@ -25,7 +25,7 @@ Traditional astronomical portals fail citizen scientists and researchers attempt
 3. **Linear Variable Filter (LVF) "Smile":** Wavelength shifts continuously along the detector $Y$-axis. Raw detector cutouts are *not* monochromatic.
 4. **Large Pixel Crowding ($6.2''$):** Dense starfields blend multiple sources into single spatial elements.
 
-**Spectra solves all four challenges:** It provides an inside-out 3D virtual planetarium dome (Aladin Lite v3 WebGL2) that de-warps detector footprints into North-Up tangent planes, executes zero-copy 32-bit floating-point difference math in GPU shaders at 120 FPS, extracts calibrated 102-band spectra via `WCS-WAVE` smile inversion, and indexes spectral similarity using PostgreSQL `pgvector` in $<2\,\text{ms}$.
+**Spectra solves all four challenges:** It provides an inside-out 3D virtual planetarium dome (Aladin Lite v3 WebGL2) that de-warps detector footprints into North-Up tangent planes, executes zero-copy 32-bit floating-point wavelength-matched difference math in GPU shaders, extracts calibrated 102-band spectra via `WCS-WAVE` smile inversion, and enables instant in-memory spectral similarity search.
 
 ---
 
@@ -70,26 +70,30 @@ All coordinates, proper motions, and spectral features are mathematically propag
 
 | Target | Object Class | Propagated Coordinates (2025.5) | Time-Domain Behavior (Tab 2) | Spectral Signatures (Tabs 3 & 4) |
 |---|---|---|---|---|
-| **Barnard's Star** | M4V Red Dwarf | `269.446410°, +4.766860°` | Moves $+10.36''/\text{yr}$ North; high-SNR vertical dipole ($1.67\,\text{px/yr}$) | Peaks at $1.1\,\mu\text{m}$; deep $\text{H}_2\text{O}$ steam absorption |
-| **WISE 0855-0714** | Y4 Sub-Brown Dwarf | `133.737400°, -7.240380°` | Faint $<3.5\,\mu\text{m}$; moves Westward in Band D5 ($4.1-4.4\,\mu\text{m}$) | Deep $\text{CH}_4$ ($3.3\,\mu\text{m}$) & $\text{H}_2\text{O}$ ($3.05\,\mu\text{m}$) valleys; $4.5\,\mu\text{m}$ peak |
-| **Epsilon Indi B** | T1 + T6 Binary | `331.072400°, -56.800310°` | Moves $4.8''/\text{yr}$ SE; sub-pixel Gaia centroid reticle ($0.77\,\text{px/yr}$) | Blended 6.2" pixel unmixes into T1+T6 brown dwarf templates |
-| **RW Aurigae** | T Tauri Variable | `76.956470°, +30.401290°` | Zero shift; flashing monopole ring ($>1.5\,\text{mag}$ dimming) | Multi-epoch spectrum dims in D1 with thermal IR dust excess in D4/D5 |
-| **R Draconis** | Mira AGB Variable | `248.167690°, +66.755040°` | Stationary pulsing monopole ($245\,\text{d}$ period; $8.61°$ from NEP) | Animated spectrum reveals $\text{H}_2\text{O}$ and $\text{CO}$ bands "breathing" |
+| **Barnard's Star** | M4V Red Dwarf | `269.44639°, +4.76676°` | Moves $+10.39''/\text{yr} = 1.68\,\text{px/yr}$ North; saturation handling | Peaks at $1.1\,\mu\text{m}$; deep $\text{H}_2\text{O}$ steam absorption |
+| **WISE 0855-0714** | Y4 Sub-Brown Dwarf | `133.73712°, -7.24038°` | Faint $<3.5\,\mu\text{m}$; moves Westward in D5 ($8.15''/\text{yr}$); honest non-detection | Deep $\text{CH}_4$ ($3.3\,\mu\text{m}$) & $\text{H}_2\text{O}$ ($3.05\,\mu\text{m}$) valleys; $4.5\,\mu\text{m}$ peak |
+| **Epsilon Indi B** | T1 + T6 Binary | `331.09566°, -56.80031°` | Moves $4.68''/\text{yr} = 0.76\,\text{px/yr}$ SE; corrected $1/\cos \delta$ (46″ fix); blended in 6.2″ px | Blended 6.2" pixel unmixes into T1+T6 brown dwarf templates |
+| **RW Aurigae** | T Tauri Variable | `76.95647°, +30.40130°` | Stationary ($<0.3\,\text{px}$); flashing monopole ring ($>1.5\,\text{mag}$ dimming) | Multi-epoch spectrum dims in D1 with thermal IR dust excess in D4/D5 |
+| **R Draconis** | Mira AGB Variable | `248.16773°, +66.75504°` | Stationary pulsating monopole ($245\,\text{d}$ period; $8.61°$ from NEP) | Animated spectrum reveals $\text{H}_2\text{O}$ and $\text{CO}$ bands non-simultaneous |
 
 ---
 
 ## 4. Zero-Auth Identity Model
 
-To remove all login friction for hackathon judges while maintaining full database relational integrity and active-learning calibration:
-- **No blocking login walls:** Routes `/explore` and `/admin` are directly accessible.
-- **Client Session Fingerprinting:** On initial mount, the browser checks `localStorage.getItem('spx_observer_id')`. If empty, it generates a persistent UUIDv4 alongside a celestial callsign (e.g. `Observer-Vega-409`, customizable in 1 click).
-- **HTTP Header Auto-Injection:** Every frontend request transmits:
+To remove all login friction for hackathon judges while maintaining cryptographic authenticity, security, and calibration:
+- **No blocking login walls:** Routes `/explore` and `/admin` are directly accessible without passwords or sign-up forms.
+- **Client Session Fingerprinting:** On initial mount, the browser generates:
+  1. `spx_observer_id`: Public UUIDv4 stored in `localStorage`.
+  2. `spx_observer_key`: Secret 32-byte cryptographic string stored in `localStorage`.
+  3. Celestial callsign (e.g. `Observer-Vega-409`).
+- **HTTP Header Injection:** Mutating requests transmit:
   ```http
   X-Observer-ID: 7b3d1f8a-4092-4e8c-a1e9-5cf287a911e3
-  X-Observer-Callsign: Observer-Vega-409
+  X-Observer-Key: <secret_32_byte_string>
   ```
-- **Automatic Observer Tracking:** Go gateway middleware automatically registers/updates the observer in the `observers` table, tracking their calibration accuracy score and volunteer reliability weight ($w_u$).
-- **Admin Verification Badging:** Actions or forum replies submitted from `/admin` automatically set `posted_from_admin = TRUE` to display the gold `[Verified by Science Team]` badge.
+- **Hashed Storage & Privacy:** The backend stores strictly `sha256(observer_key)` in the `observers` table (`key_hash`). Neither the raw key nor internal observer ID is ever exposed in read endpoints or public discussions.
+- **Admin Moderation & Badging:** `/admin` is read-only by default (`ADMIN_MUTATIONS_ENABLED=false`). Mutations require a server-held `ADMIN_TOKEN`. Verified admin replies receive the gold `[Moderator]` badge.
+- **Data Honesty:** All catalogs, candidates, and artifacts are branded `Community Product` (no false NASA endorsement).
 
 ---
 
@@ -98,19 +102,17 @@ To remove all login friction for hackathon judges while maintaining full databas
 | Layer | Technologies | Key Responsibility |
 |---|---|---|
 | **Frontend UI** | React 18, Vite 5, TypeScript 5.5, Tailwind CSS | High-performance single-page application with isolated route chunks. |
-| **Sky Visualizer** | Aladin Lite v3 (WebGL2), Canvas 2D | Inside-out 3D celestial sphere (`SIN` projection) with SPHEREx MOC. |
-| **Float32 Blinker** | WebGL2 fragment shaders, IEEE-754 `Float32Array` | Zero-copy 32-bit floating point Asinh stretch and difference math at 120 FPS. |
-| **URL State** | `nuqs` | Type-safe URL parameters (`tab`, `ra`, `dec`, `mode`, `preset`, `z`, `px`, `py`). |
+| **Sky Visualizer** | Aladin Lite v3 (WebGL2), Canvas 2D | Inside-out 3D celestial sphere (`SIN` projection) with SPHEREx coverage MOC. |
+| **Float32 Comparator** | WebGL2 fragment shaders, IEEE-754 `Float32Array` | Zero-copy 32-bit floating point Asinh stretch, wavelength-matched differencing, and coverage matrix. |
+| **URL State** | `nuqs` (query strings) | Type-safe URL parameters (`tab`, `ra`, `dec`, `band`, `win`, `mode`, `epoch`, `px`, `py`, `z`, `embed`). |
 | **Async Caching** | `@tanstack/react-query` v5 | Background prefetching on target hover; 30-min stale time; deduplication. |
-| **Fast Plotting** | `uPlot` (Canvas 2D) | Ultra-fast 60 FPS rendering (<1.5ms/frame) for 102-band spectra and loss curves. |
-| **3D Manifolds** | `react-plotly.js` (`plotly.js-gl3d-dist`) | 3D meshgrid decision surfaces and sequential weight histograms. |
+| **Fast Plotting** | `uPlot` (Canvas 2D) | Ultra-fast 60 FPS rendering (<1.5ms/frame) for 102-band spectra and MJD scatter points. |
 | **UI Primitives** | Radix UI, `cmdk` (Ctrl+K palette), TanStack Virtual | Accessible unstyled primitives, instant command bar, virtualized feeds. |
-| **API Gateway** | Go 1.23, Chi router (`go-chi/chi/v5`), `air` | Concurrent proxy, thread-safe LRU cache (<15ms), WebSocket hub. |
-| **Persistence** | `sqlc` + `pgx/v5` connection pool | 100% type-safe Go structs and queries generated from raw SQL. Zero ORM. |
-| **Science Worker** | Python 3.11, FastAPI, `uv`, `Ruff` | Sub-3s environment resolution (`uv.lock`), OpenAPI 3.1 schema generation. |
-| **Astro Pipeline** | `astropy`, `pyvo`, `reproject`, `scipy`, `torch` | IRSA SIA2 client, S3 byte-range FITS slicing, WCS de-warping, WCS-WAVE lookup. |
-| **Database** | Supabase Cloud (PostgreSQL 16 + `pgvector`) | `vector(102)` HNSW cosine similarity search, Realtime live forum sync, RLS. |
-| **Dev Runner** | `Taskfile.yml` + Supabase CLI | One-command orchestration across Docker, Go, Python, and Vite. |
+| **Backend Service** | Python 3.11, FastAPI, `uv`, `Ruff` | Single-service architecture on port 7860 (HF Spaces native), sub-3s environment resolution (`uv.lock`). |
+| **Astro Pipeline** | `astropy`, `pyvo`, `reproject`, `scipy`, `numpy` | IRSA Cutout API client, SIA2 discovery, WAVE-TAB smile evaluation, `reproject_exact`, PSF centroid fitting. |
+| **Vector Similarity** | In-Memory NumPy Cosine Search | Instant sub-20ms spectral template matching without database memory bloat. |
+| **Database** | Supabase Postgres 16 (Session Pooler) | IPv4 port 5432 session-mode pooler, RLS enabled on all tables with zero anon policies. |
+| **Dev Runner** | `Taskfile.yml` + Supabase CLI | One-command orchestration across Python, React, and local DB. |
 
 ---
 
