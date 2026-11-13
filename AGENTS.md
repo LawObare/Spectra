@@ -103,12 +103,12 @@ You are 1 of 6 concurrent AI coding agents operating on `LawObare/Spectra`. Unco
      > *"STOP: Role `<E_k>` (`<role:E_k-*>`) is already locked to `@<existing_owner>`. Under the 1-to-1 Developer-to-Role Bijection Rule (`AGENTS.md` §6.1 & `tasks.md` §0.1), two developers cannot take the same role."*
 2. **The Zero Cross-Role Poaching Rule ([`tasks.md`](tasks.md) is Law):**
    - Every GitHub Issue (`#1`–`#30`) has **strictly one owner role (`E1`–`E6`)** assigned by domain relevance in [`tasks.md`](tasks.md):
-     - **`E1` (`role:E1-astro`):** `#3, #9, #10, #11, #19, #24` (6 issues)
+     - **`E1` (`role:E1-astro`):** `#3, #9, #10, #11, #19` (5 issues)
      - **`E2` (`role:E2-backend`):** `#5, #7, #8, #12, #22` (5 issues)
-     - **`E3` (`role:E3-webgl`):** `#17, #18, #27` (3 issues)
-     - **`E4` (`role:E4-frontend`):** `#14, #15, #16, #23, #28` (5 issues)
-     - **`E5` (`role:E5-datasci`):** `#20, #21, #25, #26` (4 issues)
-     - **`E6` (`role:E6-devops`):** `#1, #2, #4, #6, #13, #29, #30` (7 issues)
+     - **`E3` (`role:E3-webgl`):** `#1, #17, #18, #27` (4 issues)
+     - **`E4` (`role:E4-frontend`):** `#14, #15, #16, #23` (4 issues)
+     - **`E5` (`role:E5-datasci`):** `#2, #20, #21, #25, #26` (5 issues)
+     - **`E6` (`role:E6-devops`):** `#4, #6, #13, #24, #28, #29, #30` (7 issues)
    - **Mandatory Agent Refusal:** Before writing any code, verify your human operator's role (`E1`–`E6`) against [`tasks.md`](tasks.md). If prompted to implement an issue or modify files owned by another developer's role, **refuse and halt immediately**:
      > *"STOP: Issue `#<N>` (`<path>`) is locked to Role `<Owner>` in `tasks.md`. Under the Zero Cross-Role Poaching Rule (`AGENTS.md` §6.1), I cannot execute another developer's assigned job."*
 3. **Bind to Exactly One GitHub Issue (`#1`–`#30`):** Before reading or writing code, run `gh issue view <N> --comments` to load your assigned issue's Specification Anchors, Target Files, Acceptance Criteria, and any upstream agent handover notes.
@@ -127,12 +127,12 @@ Each agent role has an **Exclusive Write Territory** matching [`tasks.md`](tasks
 
 | Agent Role Label | Assigned Issues | Allowed Write Paths | Forbidden Paths (Read-Only) |
 |---|---|---|---|
-| `role:E1-astro` | `#3, #9, #10, #11, #19, #24` | `backend/science/{wave_match,reproject,centroid,wave,injector}.py`, `backend/api/spectrum.py`, `scripts/spike_s3_*`, `backend/tests/test_science_*` | `backend/db/*`, `backend/science/{ingest,similarity}.py`, `web-client/*` |
+| `role:E1-astro` | `#3, #9, #10, #11, #19` | `backend/science/{wave_match,reproject,centroid,wave}.py`, `backend/api/spectrum.py`, `scripts/spike_s3_*`, `backend/tests/test_science_{wave_match,reproject,centroid,wave}.py` | `backend/db/*`, `backend/science/{ingest,injector,similarity}.py`, `web-client/*` |
 | `role:E2-backend` | `#5, #7, #8, #12, #22` | `backend/main.py`, `backend/db/*`, `backend/cache/*`, `backend/science/ingest.py`, `backend/api/{resolve,cutout,auth,classify}.py`, `backend/tests/{test_sql,test_api_*,test_science_ingest}.py` | `backend/science/{wave_match,reproject,centroid,wave,injector,similarity}.py`, `backend/ml/*`, `web-client/*` |
-| `role:E3-webgl` | `#17, #18, #27` | `web-client/src/shaders/*`, `web-client/src/workers/*`, `web-client/src/tabs/TimeDomainComparator.tsx`, `web-client/src/components/WebGLComparatorCanvas.tsx`, `web-client/src/admin/{AdminLayout,TrainingDynamics,ActivationInspector,DecisionBoundaries}.tsx`, `web-client/src/admin/hooks/useAdminTelemetry.ts` | `backend/*`, `web-client/src/store/*` |
-| `role:E4-frontend` | `#14, #15, #16, #23, #28` | `web-client/src/App.tsx`, `web-client/src/store/*`, `web-client/src/hooks/*`, `web-client/src/components/*`, `web-client/src/tabs/{CelestialNavigator,ObservationDiscussions}.tsx`, `web-client/src/admin/{HardNegativeTriage,DataProductExports}.tsx`, `backend/api/{forum,export}.py` | `backend/science/*`, `web-client/src/shaders/*`, `web-client/src/tabs/{TimeDomainComparator,SpectrophotometricLab,MolecularIceStudio}.tsx` |
-| `role:E5-datasci` | `#20, #21, #25, #26` | `web-client/src/tabs/SpectrophotometricLab.tsx`, `web-client/src/tabs/MolecularIceStudio.tsx`, `backend/science/similarity.py`, `backend/ml/*`, `backend/admin_ws.py`, `backend/data/*.json` | `backend/api/*`, `backend/db/*`, `web-client/src/store/*`, `web-client/src/admin/*` |
-| `role:E6-devops` | `#1, #2, #4, #6, #13, #29, #30` | `scripts/*`, `benchmarks/*`, `.github/workflows/*`, `Dockerfile`, `start.sh`, `Taskfile.yml`, `web-client/public/benchmarks/*`, `backend/db/seed_benchmarks.sql` | Application feature code in `backend/api/*`, `backend/science/*`, `web-client/src/tabs/*` |
+| `role:E3-webgl` | `#1, #17, #18, #27` | `scripts/spike_s1_irsa.py`, `backend/config/{flags,detectors}.json`, `web-client/src/shaders/*`, `web-client/src/workers/*`, `web-client/src/tabs/TimeDomainComparator.tsx`, `web-client/src/components/WebGLComparatorCanvas.tsx`, `web-client/src/admin/{AdminLayout,TrainingDynamics,ActivationInspector,DecisionBoundaries}.tsx`, `web-client/src/admin/hooks/useAdminTelemetry.ts` | `backend/{api,db,science,ml}/*`, `web-client/src/store/*` |
+| `role:E4-frontend` | `#14, #15, #16, #23` | `web-client/src/App.tsx`, `web-client/src/store/*`, `web-client/src/hooks/*`, `web-client/src/components/{GlobalCommandHeader,CommandPalette}.tsx`, `web-client/src/tabs/{CelestialNavigator,ObservationDiscussions}.tsx`, `backend/api/forum.py`, `backend/tests/test_api_forum.py` | `backend/science/*`, `web-client/src/shaders/*`, `web-client/src/admin/*`, `web-client/src/tabs/{TimeDomainComparator,SpectrophotometricLab,MolecularIceStudio}.tsx` |
+| `role:E5-datasci` | `#2, #20, #21, #25, #26` | `scripts/spike_s2_benchmarks.py`, `backend/config/survey_passes.json`, `web-client/src/tabs/{SpectrophotometricLab,MolecularIceStudio}.tsx`, `backend/science/similarity.py`, `backend/ml/*`, `backend/admin_ws.py`, `backend/data/*.json` | `backend/api/*`, `backend/db/*`, `web-client/src/store/*`, `web-client/src/admin/*` |
+| `role:E6-devops` | `#4, #6, #13, #24, #28, #29, #30` | `backend/science/injector.py`, `backend/tests/test_science_injector.py`, `web-client/src/admin/{HardNegativeTriage,DataProductExports}.tsx`, `backend/api/export.py`, `backend/tests/test_api_export.py`, `scripts/{build_benchmark_bundle,verify_bundle_security,smoke_test}.py`, `benchmarks/*`, `.github/workflows/*`, `Dockerfile`, `start.sh`, `Taskfile.yml`, `web-client/public/benchmarks/*`, `backend/db/{seed_benchmarks,rls_lockdown}.sql` | `backend/science/{ingest,wave_match,reproject,centroid,wave,similarity}.py`, `backend/api/{resolve,cutout,auth,classify,forum,spectrum}.py`, `web-client/src/tabs/*` |
 
 - **Shared File Lock Rule:** Once Issue `#4` (Scaffold) and Issue `#14` (Zustand Store & URL Hooks) are merged, `backend/pyproject.toml`, `backend/uv.lock`, `web-client/package.json`, `web-client/src/store/useTelemetryStore.ts`, and `web-client/src/hooks/useSpectraUrlState.ts` are **FROZEN**.
 - **No Unapproved Package Installs:** Never run `uv add <pkg>` or `npm install <pkg>` after Issue `#4`. Modifying lockfiles on feature branches guarantees merge conflicts across all 6 agents.
