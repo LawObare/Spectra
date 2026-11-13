@@ -32,6 +32,10 @@ const SPHEREX_DETECTORS: DetectorSpec[] = [
 ];
 
 const FOV_CUTOUT_PRESETS = [60, 120, 180, 300, 600];
+const DEFAULT_SKY_FOV_DEG = 18;
+const MIN_SKY_FOV_DEG = 0.02;
+const MAX_SKY_FOV_DEG = 60;
+const SIMULATED_PREVIEW_BADGE = '[Synthetic Injection Mode]';
 
 // Verified Astrometric Proper Motions (mas/yr) for Catalog Objects
 const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: number; totalArcsecYr: number }> = {
@@ -45,11 +49,11 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
-type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'panstarrs-color' | 'dss2-color';
+type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'dss2-color' | 'spitzer-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
-  hipsId: string;
+  hipsUrl: string;
   label: string;
   badge: string;
   description: string;
@@ -58,31 +62,31 @@ interface PhotographicSurveySpec {
 const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
     id: 'allwise-color',
-    hipsId: 'P/allWISE/color',
+    hipsUrl: 'https://skies.esac.esa.int/AllWISEColor',
     label: 'AllWISE Infrared',
-    badge: 'NASA 3.4 & 4.6 µm (All-Sky)',
-    description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of NASA WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
+    badge: 'WISE 3.4 & 4.6 µm (All-Sky)',
+    description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
   },
   {
     id: '2mass-color',
-    hipsId: 'P/2MASS/color',
+    hipsUrl: 'https://skies.esac.esa.int/2MASSColor',
     label: '2MASS Near-IR',
     badge: 'J/H/Ks (All-Sky)',
     description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
-    id: 'panstarrs-color',
-    hipsId: 'P/PanSTARRS/DR1/color-z-zg-g',
-    label: 'Pan-STARRS DR1',
-    badge: 'Deep Optical (Resolved Galaxies)',
-    description: 'Pan-STARRS DR1 high-resolution optical sky survey resolving galaxies and nebulae with extreme clarity.',
-  },
-  {
     id: 'dss2-color',
-    hipsId: 'P/DSS2/color',
+    hipsUrl: 'https://skies.esac.esa.int/DSSColor',
     label: 'DSS2 Optical',
     badge: 'Palomar/UKST (All-Sky)',
-    description: 'Digitized Sky Survey 2 full-sphere optical photographic mosaic covering 100% of both hemispheres.',
+    description: 'Digitized Sky Survey full-sphere optical photographic mosaic covering 100% of both hemispheres.',
+  },
+  {
+    id: 'spitzer-color',
+    hipsUrl: 'https://skies.esac.esa.int/Spitzer/IRAC1_bright_ISM',
+    label: 'Spitzer 3.6 µm',
+    badge: 'IRAC Ch 1 (Deep IR)',
+    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions.',
   },
 ];
 
@@ -261,6 +265,7 @@ export const CelestialNavigator: React.FC = () => {
   const cursorRaDecDomRef = useRef<HTMLSpanElement>(null);
   const cursorSexaDomRef = useRef<HTMLSpanElement>(null);
   const cursorLvfDomRef = useRef<HTMLSpanElement>(null);
+  const cursorSkyPositionRef = useRef<{ ra: number; dec: number } | null>(null);
 
   const {
     ra,
@@ -276,14 +281,48 @@ export const CelestialNavigator: React.FC = () => {
 
   // Layer & Filter Controls
   const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(true);
-  const [showWcsGrid, setShowWcsGrid] = useState<boolean>(true);
+  const [showWcsGrid, setShowWcsGrid] = useState<boolean>(false);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
   const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('allwise-color');
   const [selectedBandFilter, setSelectedBandFilter] = useState<string>('ALL');
   const [hoveredObsId, setHoveredObsId] = useState<string | null>(null);
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
-  const [displayFovDeg, setDisplayFovDeg] = useState<number>(6.0);
+  const [displayFovDeg, setDisplayFovDeg] = useState<number>(DEFAULT_SKY_FOV_DEG);
   const [hipsReady, setHipsReady] = useState<boolean>(false);
+  const [hipsError, setHipsError] = useState<boolean>(false);
+  const surveyLoadIdRef = useRef<number>(0);
+  const surveyLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const createHiPSSurvey = useCallback((surveySpec: PhotographicSurveySpec) => {
+    const requestId = ++surveyLoadIdRef.current;
+    if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
+    setHipsReady(false);
+    setHipsError(false);
+    surveyLoadTimerRef.current = setTimeout(() => {
+      if (requestId === surveyLoadIdRef.current) {
+        setHipsReady(false);
+        setHipsError(true);
+      }
+    }, 25000);
+    return A.HiPS(surveySpec.hipsUrl, {
+      name: surveySpec.label,
+      cooFrame: 'equatorial',
+      successCallback: () => {
+        if (requestId === surveyLoadIdRef.current) {
+          if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
+          setHipsReady(true);
+          setHipsError(false);
+        }
+      },
+      errorCallback: () => {
+        if (requestId === surveyLoadIdRef.current) {
+          if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
+          setHipsReady(false);
+          setHipsError(true);
+        }
+      },
+    });
+  }, []);
 
   // Direct coordinate input fields in the right-hand inspector
   const [raInputStr, setRaInputStr] = useState<string>(ra.toFixed(5));
@@ -327,10 +366,10 @@ export const CelestialNavigator: React.FC = () => {
           PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey) || PHOTOGRAPHIC_SURVEYS[0];
 
         const instance = A.aladin(aladinContainerRef.current, {
-          survey: surveySpec.hipsId,
+          survey: createHiPSSurvey(surveySpec),
           target: `${ra} ${dec}`,
-          fov: fovArcsec > 0 ? Math.max(0.01, fovArcsec / 3600) : 6.0,
-          projection: 'SIN',
+          fov: DEFAULT_SKY_FOV_DEG,
+          projection: 'TAN',
           cooFrame: 'ICRSd',
           showReticle: true,
           showZoomControl: false,
@@ -340,13 +379,14 @@ export const CelestialNavigator: React.FC = () => {
           showShareControl: false,
           showSimbadPointerControl: false,
           showFrame: false,
-          showCooGrid: showWcsGrid,
+          showCooGrid: false,
           showCooGridControl: false,
           showProjectionControl: false,
           showContextMenu: false,
         });
 
         aladinInstanceRef.current = instance;
+        instance.setFoVRange?.(MIN_SKY_FOV_DEG, MAX_SKY_FOV_DEG);
 
         // Native Vector Overlay for SPHEREx LVF Footprints
         try {
@@ -444,7 +484,7 @@ export const CelestialNavigator: React.FC = () => {
               normRa,
               normDec,
               `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
-              '[IRSA Live (spherex_qr2)]'
+              SIMULATED_PREVIEW_BADGE
             );
             setRa(normRa);
             setDec(normDec);
@@ -467,6 +507,7 @@ export const CelestialNavigator: React.FC = () => {
           const cRa = typeof data.ra === 'number' ? data.ra : Number(data.ra);
           const cDec = typeof data.dec === 'number' ? data.dec : Number(data.dec);
           if (!Number.isFinite(cRa) || !Number.isFinite(cDec)) return;
+          cursorSkyPositionRef.current = { ra: cRa, dec: cDec };
           if (cursorRaDecDomRef.current) {
             cursorRaDecDomRef.current.textContent = `${cRa.toFixed(5)}° ${
               cDec >= 0 ? `+${cDec.toFixed(5)}` : cDec.toFixed(5)
@@ -475,6 +516,28 @@ export const CelestialNavigator: React.FC = () => {
           if (cursorSexaDomRef.current) {
             cursorSexaDomRef.current.textContent = formatSexagesimal(cRa, cDec);
           }
+        });
+
+        // Selecting empty sky updates the target coordinates just like selecting a catalog source.
+        instance.on('click', (data: any) => {
+          const clickedPosition =
+            data && Number.isFinite(Number(data.ra)) && Number.isFinite(Number(data.dec))
+              ? { ra: Number(data.ra), dec: Number(data.dec) }
+              : cursorSkyPositionRef.current;
+          if (!clickedPosition) return;
+          const { ra: clickedRa, dec: clickedDec } = clickedPosition;
+          if (!Number.isFinite(clickedRa) || !Number.isFinite(clickedDec)) return;
+
+          const normRa = Number((((clickedRa % 360) + 360) % 360).toFixed(6));
+          const normDec = Number(Math.max(-90, Math.min(90, clickedDec)).toFixed(6));
+          setCoordinates(
+            normRa,
+            normDec,
+            `J2000 ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
+            SIMULATED_PREVIEW_BADGE
+          );
+          setRa(normRa);
+          setDec(normDec);
         });
 
         // Click on catalog target
@@ -486,7 +549,7 @@ export const CelestialNavigator: React.FC = () => {
               item.ra,
               item.dec,
               item.name,
-              isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
+              isBench ? '[NASA Benchmark (Pre-cached)]' : SIMULATED_PREVIEW_BADGE
             );
             setRa(item.ra);
             setDec(item.dec);
@@ -497,20 +560,22 @@ export const CelestialNavigator: React.FC = () => {
           }
         });
 
-        setHipsReady(true);
       } catch (err) {
         console.error('Failed to initialize Aladin Lite v3:', err);
         setHipsReady(false);
+        setHipsError(true);
       }
     };
 
     initAladin();
     return () => {
       cancelled = true;
+      if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
       aladinInstanceRef.current = null;
     };
+    // Aladin captures the initial target and survey when it mounts; later changes sync through event handlers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [createHiPSSurvey]);
 
   // Switch HiPS survey layer when user clicks survey selector
   useEffect(() => {
@@ -519,11 +584,11 @@ export const CelestialNavigator: React.FC = () => {
     const surveySpec =
       PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey) || PHOTOGRAPHIC_SURVEYS[0];
     try {
-      aladin.setImageSurvey(surveySpec.hipsId);
+      aladin.setImageSurvey(createHiPSSurvey(surveySpec));
     } catch (e) {
       console.warn('Error switching HiPS survey:', e);
     }
-  }, [activeSurvey]);
+  }, [activeSurvey, createHiPSSurvey]);
 
   // Sync camera center when external target coordinates change (e.g. from search bar or catalog selection)
   useEffect(() => {
@@ -598,7 +663,7 @@ export const CelestialNavigator: React.FC = () => {
 
   // Direct Zoom Preset Handler
   const applyZoom = useCallback((nextFovDeg: number) => {
-    const clamped = Math.max(0.005, Math.min(180.0, nextFovDeg));
+    const clamped = Math.max(MIN_SKY_FOV_DEG, Math.min(MAX_SKY_FOV_DEG, nextFovDeg));
     setDisplayFovDeg(clamped);
     try {
       aladinInstanceRef.current?.setFoV(clamped);
@@ -643,7 +708,7 @@ export const CelestialNavigator: React.FC = () => {
         matched
           ? matched.name
           : `J2000 ${parsedRa.toFixed(4)}°, ${parsedDec >= 0 ? '+' : ''}${parsedDec.toFixed(4)}°`,
-        isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
+        isBench ? '[NASA Benchmark (Pre-cached)]' : SIMULATED_PREVIEW_BADGE
       );
       setRa(parsedRa);
       setDec(parsedDec);
@@ -779,11 +844,11 @@ export const CelestialNavigator: React.FC = () => {
             <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
             <button
               type="button"
-              onClick={() => applyZoom(90.0)}
+              onClick={() => applyZoom(60.0)}
               className="px-2 py-0.5 font-mono text-[10px] text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]"
-              title="Hemisphere context (90°)"
+              title="Maximum wide-field context (60°)"
             >
-              90°
+              60°
             </button>
             <button
               type="button"
@@ -821,6 +886,17 @@ export const CelestialNavigator: React.FC = () => {
             ref={aladinContainerRef}
             className="absolute inset-0 h-full w-full"
           />
+
+          {!hipsReady && !hipsError && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#080A0F]/85 font-mono text-xs text-[#94A3B8]">
+              Loading {PHOTOGRAPHIC_SURVEYS.find((survey) => survey.id === activeSurvey)?.label} sky imagery…
+            </div>
+          )}
+          {hipsError && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#080A0F]/90 px-6 text-center font-mono text-xs text-[#FBBF24]">
+              Survey imagery failed to load. Select another survey or check access to the HiPS image service.
+            </div>
+          )}
 
           {/* Top-Left Astrometric Compass / Status */}
           <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-sm border border-[#1E2530] bg-[#0F131A]/90 px-2.5 py-1.5">
@@ -907,10 +983,10 @@ export const CelestialNavigator: React.FC = () => {
         <div className="border-b border-[#1E2530] p-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-semibold text-[#E6ECF2]">
-              SPHEREx Spectral Image Search
+              SPHEREx Coverage Preview
             </h2>
             <span className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#38BDF8]">
-              spherex_qr2 MEF
+              SIMULATED PREVIEW
             </span>
           </div>
 
@@ -1003,9 +1079,9 @@ export const CelestialNavigator: React.FC = () => {
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-[#1E2530] bg-[#151B24]/60 px-3 py-1.5">
             <span className="text-[11px] font-medium text-[#E6ECF2]">
-              Overlapping Level-2 Spectral Images ({filteredExposures.length})
+              Simulated Exposure Preview ({filteredExposures.length})
             </span>
-            <span className="text-[10px] text-[#94A3B8]">Hover row to inspect footprint</span>
+            <span className="text-[10px] text-[#FBBF24]">Not archive observations · hover row to inspect</span>
           </div>
 
           <div className="flex-1 overflow-y-auto">
