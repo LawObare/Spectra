@@ -189,11 +189,14 @@ Because 6 agents work concurrently off `develop`, you must leave a dense, zero-f
    gh pr create --base develop --title "feat(phase-X): <summary> (#<N>)" --body-file <handover.md>
    gh pr merge --squash --delete-branch
    ```
-2. **Explicitly Close Issue `#<N>` on `develop` Merge** *(since GitHub only auto-closes issues on the default branch `main`)*:
-   ```bash
-   gh issue comment <N> --body-file <handover.md>
-   gh issue close <N> --comment "✅ Verified, dual-axis code-reviewed, and squash-merged into \`develop\`. Queued for Phase Milestone batch promotion to \`main\`."
-   ```
+2. **Mandatory Issue Closure Immediately Upon PR Merge (`gh issue close <N>`):**
+   - **THE HARD RULE FOR ALL BOTS:** The moment a PR is successfully merged into `develop`, the agent **MUST immediately close the associated GitHub Issue `#<N>`**. Leaving an issue in `OPEN` status after PR merge is a protocol violation.
+   - Because GitHub only auto-closes issues when merging into the default branch (`main`), bots must explicitly run:
+     ```bash
+     gh issue comment <N> --body-file <handover.md>
+     gh issue close <N> --comment "✅ Verified, dual-axis code-reviewed, and squash-merged into \`develop\`. Issue officially CLOSED."
+     ```
+   - **Verification Check:** Every bot must assert closure by verifying `gh issue view <N> --json state` returns `"state": "CLOSED"` before concluding work on that issue.
 3. **Milestone Batch Promotion (`develop` $\rightarrow$ `main`):**
    - Only when all issues in a Phase Milestone (`Phase 0`, `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`) are closed on `develop` and verified end-to-end does the team promote the batch to `main`:
      ```bash
@@ -261,3 +264,51 @@ Verification:
 - Frontend: npm run build (0 errors, zero leaked keys)
 - Gate-1 Smoke: All 5 NASA benchmarks + live RA/Dec verified in Tab 1 & Tab 2
 ```
+
+---
+
+## 9. Zero-Deferral & Anti-Hallucination Execution Proof Protocol (Mandatory for All Models & Flash Subagents)
+
+To make it physically and structurally impossible for any model (especially `flash` / `flash_lite`) to defer work, spend an entire turn on research without editing, or falsely claim changes were made:
+
+1. **The Edit-Before-Claim Hard Lock:**
+   - An agent is **strictly forbidden** from stating or implying that code was modified, fixed, or updated unless an `edit_file` or `write_file` tool call **succeeded in that exact turn** (or a verified commit hash from that turn is quoted).
+   - If zero `edit_file` / `write_file` calls succeeded in the turn, the agent **must** begin its response with:
+     > `STATUS: NO FILES MODIFIED IN THIS TURN.`
+2. **Hard Cap on Pre-Edit Reconnaissance (`<= 2` Read Calls):**
+   - When the user asks for a code change or says *"yes"* / *"do it"*, the agent may execute **at most 2 `read_file` calls** before calling `edit_file`.
+   - Spending a turn on web searches, browser subagents, or multi-file reads and then ending the turn without editing the target file is a **critical protocol violation**.
+3. **Mandatory Machine-Verifiable Execution Proof Block:**
+   - Every response that claims a code change **must** end with this exact proof block populated from real tool outputs in the same turn:
+     ```text
+     [EXECUTION PROOF]
+     - Tool Call: edit_file / write_file on <path> (+A/-B lines)
+     - Build/Test: <exact command & exit code>
+     - Git Commit / Diff: <commit SHA or git status --short output>
+     ```
+   - Any agent or `flash` subagent response lacking `[EXECUTION PROOF]` is automatically treated as **unexecuted / rejected**.
+
+
+---
+
+## 9. Zero-Deferral & Anti-Hallucination Execution Proof Protocol (Mandatory for All Models & Flash Subagents)
+
+To make it physically and structurally impossible for any model (especially `flash` / `flash_lite`) to defer work, spend an entire turn on research without editing, or falsely claim changes were made:
+
+1. **The Edit-Before-Claim Hard Lock:**
+   - An agent is **strictly forbidden** from stating or implying that code was modified, fixed, or updated unless an `edit_file` or `write_file` tool call **succeeded in that exact turn** (or a verified commit hash from that turn is quoted).
+   - If zero `edit_file` / `write_file` calls succeeded in the turn, the agent **must** begin its response with:
+     > `STATUS: NO FILES MODIFIED IN THIS TURN.`
+2. **Hard Cap on Pre-Edit Reconnaissance (`<= 2` Read Calls):**
+   - When the user asks for a code change or says *"yes"* / *"do it"*, the agent may execute **at most 2 `read_file` calls** before calling `edit_file`.
+   - Spending a turn on web searches, browser subagents, or multi-file reads and then ending the turn without editing the target file is a **critical protocol violation**.
+3. **Mandatory Machine-Verifiable Execution Proof Block:**
+   - Every response that claims a code change **must** end with this exact proof block populated from real tool outputs in the same turn:
+     ```text
+     [EXECUTION PROOF]
+     - Tool Call: edit_file / write_file on <path> (+A/-B lines)
+     - Build/Test: <exact command & exit code>
+     - Git Commit / Diff: <commit SHA or git status --short output>
+     ```
+   - Any agent or `flash` subagent response lacking `[EXECUTION PROOF]` is automatically treated as **unexecuted / rejected**.
+

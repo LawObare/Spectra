@@ -1,0 +1,112 @@
+{
+  "version": "3.0.0-PROD",
+  "description": "SPHEREx 6 Hawaii-2RG Detector Array Specifications and RGB Color Presets",
+  "pixel_scale_arcsec": 6.2,
+  "active_detector_pixels": [
+    2040,
+    2040
+  ],
+  "raw_array_pixels": [
+    2048,
+    2048
+  ],
+  "detectors": {
+    "D1": {
+      "array_index": 1,
+      "band_name": "Band D1",
+      "wavelength_min_um": 0.75,
+      "wavelength_max_um": 1.11,
+      "resolving_power_min": 35,
+      "resolving_power_max": 41,
+      "nominal_resolving_power": 41,
+      "primary_features": "Paschen series hydrogen lines, stellar photospheres"
+    },
+    "D2": {
+      "array_index": 2,
+      "band_name": "Band D2",
+      "wavelength_min_um": 1.11,
+      "wavelength_max_um": 1.63,
+      "resolving_power_min": 41,
+      "resolving_power_max": 50,
+      "nominal_resolving_power": 41,
+      "primary_features": "Warm brown dwarf H2O steam, 1.6 um galaxy H-bump"
+    },
+    "D3": {
+      "array_index": 3,
+      "band_name": "Band D3",
+      "wavelength_min_um": 1.63,
+      "wavelength_max_um": 2.42,
+      "resolving_power_min": 50,
+      "resolving_power_max": 64,
+      "nominal_resolving_power": 41,
+      "primary_features": "Stellar CO overtone (2.3 um), Brackett-gamma (2.16 um)"
+    },
+    "D4": {
+      "array_index": 4,
+      "band_name": "Band D4",
+      "wavelength_min_um": 2.42,
+      "wavelength_max_um": 3.82,
+      "resolving_power_min": 64,
+      "resolving_power_max": 96,
+      "nominal_resolving_power": 35,
+      "primary_features": "H2O ice (3.05 um), CH4 (3.32 um), CH3OH (3.53 um), PAH"
+    },
+    "D5": {
+      "array_index": 5,
+      "band_name": "Band D5",
+      "wavelength_min_um": 3.82,
+      "wavelength_max_um": 4.42,
+      "resolving_power_min": 96,
+      "resolving_power_max": 118,
+      "nominal_resolving_power": 110,
+      "primary_features": "CO2 ice (4.27 um), 13CO2 ice (4.38 um), Cold Y-dwarfs"
+    },
+    "D6": {
+      "array_index": 6,
+      "band_name": "Band D6",
+      "wavelength_min_um": 4.42,
+      "wavelength_max_um": 5.0,
+      "resolving_power_min": 118,
+      "resolving_power_max": 130,
+      "nominal_resolving_power": 130,
+      "primary_features": "CO gas/ice (4.67 um), Pf-beta, Asteroid thermal emission"
+    }
+  },
+  "presets": {
+    "true_nir": {
+      "name": "True NIR (Stellar)",
+      "description": "RGB false-color emphasizing stellar photospheres and galaxy morphologies",
+      "r": "D3",
+      "g": "D2",
+      "b": "D1"
+    },
+    "brown_dwarf": {
+      "name": "Cool Sub-Stellar / Y-Dwarf",
+      "description": "Highlights methane and steam absorption features distinguishing cold brown dwarfs",
+      "r": "D5",
+      "g": "D3",
+      "b": "D1"
+    },
+    "water_ice": {
+      "name": "Biogenic Water Ice",
+      "description": "Isolates the 3.05 um H2O ice absorption mantle against stellar continua",
+      "r": "D4",
+      "g": "D3",
+      "b": "D2"
+    },
+    "comet_outgassing": {
+      "name": "Comet & Outgassing Volatiles",
+      "description": "Distinguishes 4.27 um CO2 and 4.67 um CO ice/gas outgassing plumes",
+      "r": "D6",
+      "g": "D5",
+      "b": "D4"
+    },
+    "custom": {
+      "name": "Custom Channel Map",
+      "description": "Arbitrary user-assigned detector or spectral slice channels",
+      "r": "D5",
+      "g": "D2",
+      "b": "D1"
+    }
+  }
+}

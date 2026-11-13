@@ -24,7 +24,7 @@ The scientific problem addressed by this platform stems from a fundamental diver
 
 ### 1.2 Evolution of the Platform Architecture
 1. **Initial Concept:** A hybrid client-server model inspired by *WiseView* (client-side Canvas blinking and URL hash state) and *Pan-STARRS* (server-side cutout slicing).
-2. **Clarification of 3D Mechanics:** The 3D component is not an arbitrary or speculative spatial distance plot; it is an **inside-out 3D Celestial Sphere** (virtual planetarium dome in Aladin Lite v3 WebGL2) that de-warps raw detector footprints into a rectified, North-Up tangent plane.
+2. **Clarification of Sky Viewport Mechanics:** The sky navigator is not an external 3D toy sphere floating in a box; it is an **immersed, full-bleed tangent-plane sky survey window** (`TAN`/`STG` projection in Aladin Lite v3 WebGL2 and a continuous procedural astrometric starfield fallback) where observers pan seamlessly in all directions and zoom from wide-field sky context ($12^\circ\text{–}60^\circ$) down to arcminute patches of space ($1'\text{–}10'$), governed by [`DESIGN.md`](DESIGN.md).
 3. **Mandatory NASA Benchmark Requirement:** The core hackathon requirement demands that an arbitrary user can type an RA/Dec coordinate or target name and view an animated video of that patch across time, tested explicitly against 5 benchmark targets (**Barnard’s Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis**).
 4. **Resolution of the Single-Screen vs. Tabbed Dilemma:** Multi-pane dashboards displaying 102-channel spectra, 3D globes, and blinking canvases simultaneously cause severe visual fatigue. The system isolates each tool into a full-screen dedicated tab while maintaining zero state loss via a global Zustand store and URL hash persistence.
 5. **Dual-Portal Route Isolation:** Active users are not exposed to machine learning agent training internals. The platform is partitioned into a public exploration and community discussion portal (`/explore`) and a hidden, token-authenticated administrative mission control console (`/admin`).
@@ -1355,54 +1355,57 @@ Mounted persistently at the top of the viewport in `/explore` (fixed `56px` heig
 ### 6.3 Public Workspace Tabs: Detailed Component Breakdown
 
 #### 6.3.1 Tab 1: Celestial Navigator (`<CelestialNavigator />`)
-Serves as the spatial macro-gateway, replacing IRSA’s 2D Aitoff oval with a full-viewport inside-out WebGL 3D celestial sphere.
+Serves as the spatial sky survey gateway (`DESIGN.md` §5), replacing distorted 2D Aitoff ovals and external 3D toy spheres with a **full-bleed, edge-to-edge immersed tangent-plane sky window** (`TAN` projection) where users pan continuously in all directions ($0^\circ\text{–}360^\circ$ RA, $\pm 90^\circ$ Dec) and zoom smoothly across real photographic space imagery.
 
 ```
 +---------------------------------------------------------------------------------------------------+
-| LAYER 1: WebGL 3D Sky Dome (Aladin Lite v3 Canvas in 'SIN' Projection)                            |
-|          Background Survey: P/allWISE/color HiPS                                                  |
+| LAYER 1: Stitched Real Space Photography Mosaic Engine (DESI Legacy Survey DR10 / unWISE / 2MASS) |
+|          Photographic Survey Plates: ls-dr10 (resolved galaxies), unwise-neo7, AllWISE, 2MASS     |
 |                                                                                                   |
-| LAYER 2: Cyan Wireframe SPHEREx MOC Coverage (12% opacity) + Deep Field HUD Beacons               |
+| LAYER 2: SPHEREx 6-Detector Array Level-2 MEF Footprints (D1–D6) with Linear Variable Filter (LVF)|
+|          WCS-WAVE dispersion gradients + Pass 1–4 coverage footprint rotation + Zodi estimates    |
 |                                                                                                   |
-| LAYER 3: Dynamic Overlay: Gaia DR3 Proper Motion Arrows (mu_alpha, mu_delta) + SkyBot Asteroids    |
+| LAYER 3: Hairline J2000 WCS Grid + NEP/SEP 5.64° Deep-Field Rings + Astrometric Starfield         |
 |                                                                                                   |
-| LAYER 4: Interactive Target Reticle (180" x 180" Square) Tracking Mouse Cursor                    |
+| LAYER 4: Gaia DR3 Proper Motion Vectors + Interactive Reticle + Calibrated Physical Scale Bar     |
 +---------------------------------------------------------------------------------------------------+
-| FLOATING HUD CARD (Bottom-Left): RA/Dec Readout | Dynamic Survey Passes (MJD) | [Inspect in Time-Domain ->]  |
+| DOCKED INSTRUMENT STRIP (Bottom): J2000 Decimal & Sexagesimal | Field FoV | WCS-WAVE λ | [Open Cutout]|
 +---------------------------------------------------------------------------------------------------+
 ```
 
-- **Aladin Lite v3 Initialization Protocol:**
+- **Stitched Real Space Photography Mosaic Architecture:**
+  - *Photographic Fidelity & Galaxy Resolution:* Real astronomical survey tiles are dynamically stitched and projected in tangent plane (TAN), eliminating synthetic star loops and artificial dot arrays. Extended astrophysical sources (spiral galaxies like M31, M51, NGC 253; star-forming nebulae, and dust filaments) are rendered from calibrated survey plates:
+    1. **DESI Legacy Survey DR10 (`ls-dr10`)**: High-resolution optical/near-IR imaging ($g,r,z$ bands, resolution down to $0.262''/\text{px}$) resolving galaxy spiral arms, HII regions, and tidal streams down to $24\,\text{mag}$.
+    2. **unWISE NEO7 Infrared (`unwise-neo7`)**: NASA WISE/NEOWISE co-adds at $3.4\,\mu\text{m}$ (W1) and $4.6\,\mu\text{m}$ (W2), revealing interstellar dust and cool substellar targets across the SPHEREx spectral regime.
+    3. **IRSA 2MASS Color (`J/H/Ks`)**: NASA/IPAC IRSA calibrated near-infrared survey ($1.23, 1.66, 2.16\,\mu\text{m}$) capturing stellar bulges and unreddened galactic stars.
+    4. **IRSA AllWISE Color (`W4/W2/W1`)**: NASA/IPAC IRSA 4-band mid-infrared survey ($3.4, 4.6, 12, 22\,\mu\text{m}$).
+  - *Dynamic Survey Plate Tiling:* Photographic plates are addressed via WCS tangent projection, smoothly updated on canvas drag/zoom, and seamlessly composited under the SPHEREx instrument overlay.
+- **SPHEREx Level-2 MEF Instrument Overlay:**
+  - Renders the six HgCdTe focal plane arrays (`D1`–`D6`) with Linear Variable Filter (LVF) color spectrum gradients ($0.75\text{–}5.00\,\mu\text{m}$).
+  - Displays exposure footprints across survey passes 1–4 with roll orientation angle $\psi$, estimated zodiacal emission (HDU 4 ZODI), and live cursor wavelength $\lambda(\mu\text{m})$.
+- **Aladin Lite v3 Fallback & HiPS Integration Protocol:**
   ```javascript
+  await A.init;
   const aladin = A.aladin('#sky-globe-mount', {
     survey: 'P/allWISE/color',
-    projection: 'SIN', // Orthographic 3D globe projection (inside planetarium view)
-    fov: 180,          // Macro all-sky orientation
+    projection: 'TAN', // Immersed gnomonic tangent-plane sky window (fills 100% of viewport)
+    fov: 12,           // Wide-field immersed sky context (zoomable from 60 deg down to 0.02 deg)
+    target: `${ra} ${dec}`,
     cooFrame: 'ICRSd',
     showReticle: false,
     showCooGrid: true,
     showCooGridControl: false
   });
   ```
-- **MOC Layer Configuration:**
-  - Loads `spherex_qr2` coverage map via `aladin.addMOC(A.MOCFromURL('/data/spherex_moc.fits', { color: '#00f0ff', opacity: 0.12, lineWidth: 1 }))`.
-  - Loads North and South Ecliptic Pole deep fields as persistent glowing magenta circles (`#ff0055`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
-- **3-Stage Camera Dive Implementation:**
-  - *Stage 1 (Macro):* User navigates 3D sphere via click-and-drag rotation.
-  - *Stage 2 (Reticle Lock):* Moving cursor renders a dynamic square bounding box corresponding to the selected FoV ($180''$). Hovering over known benchmark beacons displays preview tooltips.
-  - *Stage 3 (The Dive):* Double-clicking or clicking `[Inspect in Time-Domain]` triggers smooth camera interpolation:
-    ```javascript
-    aladin.animateToRaDec(targetRa, targetDec, {
-      duration: 1.2, // seconds
-      endFoV: fovArcsec / 3600, // Converts arcsec to degrees
-      onComplete: () => {
-        // Triggers background prefetch in FastAPI backend and routes smoothly to Tab 2
-        navigate('/explore/comparator');
-      }
-    });
-    ```
+- **MOC & Deep-Field Layer Configuration:**
+  - Loads `spherex_qr2` coverage map via `aladin.addMOC(A.MOCFromJSON(SPHEREX_MOC_JSON, { color: '#38bdf8', opacity: 0.12, lineWidth: 1 }))`.
+  - Loads North and South Ecliptic Pole deep fields as `1px` amber boundary rings (`#f59e0b`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
+- **Continuous Sky Pan, Zoom & Cutout Extraction:**
+  - *Continuous Navigation:* User pans across the sky via click-and-drag or arrow keys and zooms in/out via scroll wheel or on-screen `+` / `−` / preset controls (`60°` down to `0.05°`).
+  - *Calibrated Scale Bar:* Renders physical angular width ($10^\circ, 2^\circ, 30', 5', 1', 10''$) dynamically scaled to active viewport pixels per degree.
+  - *Cutout Transition:* Clicking `Extract Spectral Cutout →` passes active target coordinates directly into Tab 2 (Time-Domain Comparator) without unsolicited redirects.
 - **Real-Time Catalog Layers (VizieR & SkyBot):**
-  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$ within a $300''$ radius (limited to top 50 brightest sources with compact JSON delivery). Renders circles scaled by magnitude with vector arrows calculated as:
+  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$ within a $300''$ radius. Renders circles scaled by magnitude with vector arrows calculated as:
     $$\Delta x = \mu_\alpha^* \cdot \text{scale}, \quad \Delta y = \mu_\delta \cdot \text{scale}$$
   - SkyBot Ephemerides: Invokes `A.catalogFromSkyBot({ epoch: observationMjd })` to overlay known asteroids and comets. Protected by a **2.0-second circuit breaker**: if SkyBot times out or fails under heavy VO load, the response falls back gracefully to `"skybot_status": "cached_only"` without blocking the primary cutout stream.
 
@@ -1443,16 +1446,28 @@ The core motion detection and visual blinking engine, combining *WiseView* image
    - Frame 0 Loop Reset Indicator: When `activeEpochIndex === 0`, draws an inner dashed cyan border ($1\,\text{px}$, `#00f0ff`) inside the canvas boundary so the human eye immediately recognizes loop reset vs continuous linear motion.
 2. **Client-Side Pixel Arithmetic Engine:**
    - **Blink Mode:** Renders via WebGL2 `Float32Array` texture shader with GPU Asinh stretch (fallback to `ImageBitmap` created from pre-stretched preview if WebGL2 float textures are unavailable on client device).
-   - **Pairwise Difference Mode ($t_N - t_0$):**
+   - **Multi-Algorithm Difference Imaging:**
      Executes in floating-point space using the raw matrices (`rawMatrixD4` or `rawMatrixD5`):
-     $$\Delta I(x, y) = I_{t_N}(x, y) - I_{t_0}(x, y)$$
+     - **Mode 1A: Fixed Baseline Difference ($t_N - t_0$):**
+       $$\Delta I(x, y) = I_{t_N}(x, y) - I_{t_0}(x, y)$$
+     - **Mode 1B: Pairwise Step Difference ($t_N - t_{N-1}$):**
+       $$\Delta I_{\text{step}}(x, y) = I_{t_N}(x, y) - I_{t_{N-1}}(x, y)$$
+       Isolates rapid short-term episodic flares and sudden obscuration events (e.g. *RW Aurigae*).
+     - **Mode 1C: Median-Subtracted Difference ($t_N - \text{median}(t)$):**
+       $$\Delta I_{\text{med}}(x, y) = I_{t_N}(x, y) - \text{median}_{k}(I_{t_k}(x, y))$$
+       Cancels non-variable static background stars across all epochs to leave strictly dynamic or moving sources.
      Pixel values are mapped to an 8-bit grayscale `ImageData` buffer centered at mid-gray ($128$):
      $$\text{pixelVal} = \text{clamp}\left(128 + \frac{\Delta I(x, y)}{\text{scaleFactor}} \times 127, \, 0, \, 255\right)$$
      - Static background stars cancel to neutral gray ($128$).
      - Moving objects (e.g. WISE 0855) produce a classic **dipole**: a black cavity at $(x_0, y_0)$ and a bright white peak at $(x_N, y_N)$.
      - Variable stars (RW Aurigae, R Draconis) are stationary sources with dynamic multi-epoch flux variations; report measured light curves with photometric uncertainties.
+     - **Zodiacal Light Subtraction Toggle:** When `zodiSubtracted: true`, $I_{\text{clean}} = I_{\text{IMAGE}} - I_{\text{ZODI}}$ is applied prior to differencing, eliminating seasonal solar elongation gradients.
    - **Co-Add Stack Mode:**
      Computes average pixel value $\bar{I}(x, y) = \frac{1}{N} \sum_{k=0}^{N-1} I_{t_k}(x, y)$. Boosts SNR by $\sqrt{N}$ to reveal faint static background galaxies.
+   - **6-Band Mini-SED Quick-Look (D1–D6):**
+     Clicking any probed pixel in Tab 2 instantly extracts and displays a 6-point broadband Spectral Energy Distribution sparkline ($F_{\text{D1}}$ through $F_{\text{D6}}$) from the cutout tensor in $<2\,\text{ms}$, allowing observers to identify brown dwarf spectral slopes (steep rise into D4/D5) prior to navigating to Tab 3.
+   - **Embedded Pan-STARRS PS1 Optical Comparison Thumbnail:**
+     Embeds a side-by-side sub-arcsecond ($0.25''/\text{px}$) $g/r/i$ optical false-color composite from the STScI Pan-STARRS cutout API. Instantly debunks whether a $6.2''$ SPHEREx infrared blob is a true optical dropout (brown dwarf) or an optical background star blend.
 3. **Raw vs. Rectified Inspector Toggle:**
    - Switching to `[Raw Sensor]` replaces the rectified North-Up canvas with the raw un-interpolated $2040 \times 2040$ detector frame.
    - Renders the spacecraft roll angle ($\theta$) and draws curved yellow isolines showing the physical curvature of the Linear Variable Filter ("LVF Smile").
@@ -1617,6 +1632,10 @@ The citizen-science collaboration hub modeled on Zooniverse Talk, connecting raw
      - VizieR Gaia DR3: `https://vizier.cds.unistra.fr/viz-bin/VizieR-3?-source=I/355/gaiadr3&-c={ra}+{dec}&-c.rs=15`
      - Legacy Survey: `https://www.legacysurvey.org/viewer?ra={ra}&dec={dec}&zoom=14`
      - WiseView: `http://byw.tools/wiseview#ra={ra}&dec={dec}&size=176&band=2`
+     - Pan-STARRS PS1: `https://ps1images.stsci.edu/cgi-bin/ps1cutouts?pos={ra}+{dec}&filter=color&filter=g&filter=r&filter=i&filter=z&filter=y&filetypes=stack`
+4. **1-Click Structured Classification Taxonomy:**
+   - Volunteers can classify candidates with structured 1-click taxonomy buttons (`[+ Dipole / Mover]`, `[+ Flashing Variable]`, `[+ Interstellar Ice]`, `[+ Optical Blend / Artifact]`) alongside free-form discussion text.
+   - Submissions auto-attach `#hashtags` and increment class votes ($V_{\text{mover}}, V_{\text{var}}, V_{\text{artifact}}$) in the `subjects` table, updating Bayesian observer reliability weights $w_u$ and Shannon entropy consensus $H(S)$ without requiring long textual debates.
 
 ---
 
@@ -2043,7 +2062,7 @@ flowchart TD
 3. **Public Frontend Workspaces (Tabs 1 & 2):**
    - Scaffold React 18 + Vite 5 + TypeScript with `nuqs` (type-safe URL parameters: `tab`, `ra`, `dec`, `mode`, `preset`) and TanStack Query v5.
    - Global Command Header with sexagesimal coordinate parsing, CDS Sesame resolver, 5 benchmark quick-loader pills, and `cmdk` command bar (`Ctrl+K`).
-   - **Tab 1 (Celestial Navigator):** Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx MOC layer, Gaia DR3 vectors, target reticle, and 3-stage camera dive.
+   - **Tab 1 (Celestial Navigator):** Full-bleed immersed tangent-plane sky viewport (`TAN` projection in Aladin Lite v3 WebGL2 + procedural astrometric starfield fallback) with continuous all-direction pan, smooth zoom (`60°` to `1'`), SPHEREx MOC layer, Gaia DR3 proper-motion vectors, cutout reticle, and docked instrument strip (`DESIGN.md`).
    - **Tab 2 (Time-Domain Comparator):** WebGL2 multi-epoch player with Asinh stretch slider, pairwise difference subtraction ($t_N - t_0$), inverse-variance coaddition for faint WISE 0855, sub-pixel Gaia centroid pins for Epsilon Indi B ($0.76\,\text{px/yr}$), discrete survey epoch stepping derived from exposure MJDs, and live hover crosshair HUD.
 
 > [!IMPORTANT]
