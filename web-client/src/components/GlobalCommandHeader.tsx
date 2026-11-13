@@ -309,9 +309,9 @@ export function parseCoordinateInput(input: string): { ra: number; dec: number }
   const trimmed = input.trim();
   if (!trimmed) return null;
 
-  // Pattern 1: Sexagesimal (e.g. 08h54m56.91s -07d14m25.4s or 08:54:56.91 -07:14:25.4)
+  // Pattern 1: Sexagesimal (e.g. 08h54m56.91s, -07d14m25.4s or 08:54:56.91, -07:14:25.4)
   const sexaRegex =
-    /^(\d{1,2})[h:\s]\s*(\d{1,2})[m:\s]\s*(\d{1,2}(?:\.\d+)?)[s]?\s*([+-]?\d{1,2})[d°:\s]\s*(\d{1,2})[m':\s]\s*(\d{1,2}(?:\.\d+)?)[s"]?$/i;
+    /^(\d{1,2})[h:\s]\s*(\d{1,2})[m:\s]\s*(\d{1,2}(?:\.\d+)?)[s]?[\s,]+\s*([+-]?\d{1,2})[d°:\s]\s*(\d{1,2})[m':\s]\s*(\d{1,2}(?:\.\d+)?)[s"]?$/i;
   const sexaMatch = trimmed.match(sexaRegex);
   if (sexaMatch) {
     const rh = parseFloat(sexaMatch[1]);
