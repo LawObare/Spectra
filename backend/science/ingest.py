@@ -15,9 +15,11 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import numpy as np
+import requests
 from astropy.io import fits
 
 
@@ -104,7 +106,7 @@ async def query_sia2_cone(
     }
     params.update(kwargs)
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             response = await client.get(SIA2_ENDPOINT, params=params)
             if response.status_code != 200:
@@ -202,8 +204,7 @@ def _parse_sia2_votable(votable_text: str, collection: str) -> dict[str, Any]:
                 result["detector_ids"].append(band or "UNKNOWN")
                 result["footprints"].append(s_region)
                 result["access_urls"].append(access_url)
-                if s3_uri:
-                    result["s3_uris"].append(s3_uri)
+                result["s3_uris"].append(s3_uri)
 
             if result["exposure_ids"]:
                 return result
@@ -288,6 +289,7 @@ async def fetch_cutout_from_irsa(
     adaptive_window: bool = False,
     window_half_width: float = 1.0 / 41.0,  # 1/R_b for D1-D3
     collection: str = DEFAULT_COLLECTION,
+    s3_uri: str | None = None,
 ) -> dict[str, Any]:
     """Fetch server-side MEF cutout from IRSA Cutout Service.
 
@@ -309,34 +311,335 @@ async def fetch_cutout_from_irsa(
     # IRSA Cutout Service endpoint
     cutout_url = f"{data_url}?center={ra},{dec}&size={size_deg}"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            response = await client.get(cutout_url)
-            if response.status_code != 200:
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for attempt in range(2):
+            try:
+                response = await client.get(cutout_url)
+                if response.status_code != 200:
+                    logger.warning(
+                        "IRSA Cutout returned HTTP %s for collection=%s: %s",
+                        response.status_code,
+                        collection,
+                        cutout_url,
+                    )
+                    if response.status_code not in {429, 500, 502, 503, 504} or attempt:
+                        break
+                else:
+                    cutout_data = _parse_irsa_mef_cutout(
+                        response.content, collection=collection
+                    )
+                    required_hdus = (
+                        "hdu1_image",
+                        "hdu1_header",
+                        "hdu2_flags",
+                        "hdu3_variance",
+                        "hdu6_wave_tab",
+                    )
+                    if all(cutout_data.get(key) is not None for key in required_hdus):
+                        if adaptive_window:
+                            cutout_data = _apply_adaptive_wavelength_window(
+                                cutout_data, window_half_width
+                            )
+                        return cutout_data
+                    logger.warning(
+                        "Incomplete IRSA MEF cutout for collection=%s (attempt %s/2)",
+                        collection,
+                        attempt + 1,
+                    )
+                    if attempt:
+                        break
+            except (httpx.HTTPError, OSError, ValueError) as exc:
                 logger.warning(
-                    f"IRSA Cutout returned HTTP {response.status_code}: {cutout_url}"
+                    "IRSA Cutout request failed for collection=%s (attempt %s/2): %s",
+                    collection,
+                    attempt + 1,
+                    exc,
                 )
-                return {}
+                if attempt:
+                    break
+            await asyncio.sleep(0.5)
+    if s3_uri:
+        try:
+            cutout_data = await asyncio.to_thread(
+                _fetch_cutout_from_s3, s3_uri, ra, dec, size_deg, collection
+            )
+            required_hdus = (
+                "hdu1_image",
+                "hdu1_header",
+                "hdu2_flags",
+                "hdu3_variance",
+                "hdu6_wave_tab",
+            )
+            if all(cutout_data.get(key) is not None for key in required_hdus):
+                if adaptive_window:
+                    cutout_data = _apply_adaptive_wavelength_window(
+                        cutout_data, window_half_width
+                    )
+                return cutout_data
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("S3 cutout fallback failed for collection=%s: %s", collection, exc)
+    return {}
 
-            # IRSA returns complete MEF structure with all 6 HDUs
-            # Parse the FITS MEF structure
-            # In production, use astropy.io.fits with fsspec
-            cutout_data = _parse_irsa_mef_cutout(response.content, collection=collection)
 
-            # Apply adaptive wavelength window if requested
-            if adaptive_window and "hdu6_wave_tab" in cutout_data:
-                cutout_data = _apply_adaptive_wavelength_window(
-                    cutout_data, window_half_width
+def _parse_s3_access(s3_access: str) -> tuple[str, str | None]:
+    """Normalize IRSA cloud_access values to an S3 URI and optional region."""
+    value: Any = s3_access
+    if s3_access.lstrip().startswith("{"):
+        value = json.loads(s3_access)
+    if isinstance(value, str) and value.startswith("s3://"):
+        return value, None
+    if not isinstance(value, dict):
+        raise TypeError("Unsupported IRSA cloud_access value")
+    aws = value.get("aws", value)
+    if not isinstance(aws, dict):
+        raise TypeError("IRSA cloud_access is missing AWS object metadata")
+    bucket = aws.get("bucket_name") or aws.get("bucket")
+    key = aws.get("key") or aws.get("path")
+    if not bucket or not key:
+        raise ValueError("IRSA cloud_access is missing bucket or key")
+    return f"s3://{str(bucket).strip('/')}/{str(key).lstrip('/')}", aws.get("region")
+
+
+def _read_fits_image_section(
+    hdu: Any,
+    y0: int,
+    y1: int,
+    x0: int,
+    x1: int,
+    image_shape: tuple[int, int],
+    dtype: Any,
+) -> np.ndarray:
+    """Read a spatial FITS section without materializing the full image HDU."""
+    ndim = int(hdu.header.get("NAXIS", 0))
+    shape = tuple(int(hdu.header[f"NAXIS{axis}"]) for axis in range(ndim, 0, -1))
+    y_slice, x_slice = slice(y0, y1), slice(x0, x1)
+    if len(shape) == 2 and shape == image_shape:
+        section = (y_slice, x_slice)
+    elif len(shape) > 2 and shape[-2:] == image_shape:
+        section = (slice(None),) * (len(shape) - 2) + (y_slice, x_slice)
+    elif len(shape) > 2 and shape[:2] == image_shape:
+        section = (y_slice, x_slice) + (slice(None),) * (len(shape) - 2)
+    else:
+        raise ValueError(f"FITS extension {hdu.name!r} does not match the image dimensions")
+    return np.asarray(hdu.section[section], dtype=dtype)
+
+
+class _HTTPRangeReader(io.RawIOBase):
+    """Seekable FITS source backed by bounded anonymous HTTP Range requests."""
+
+    def __init__(self, url: str, block_size: int = 1024 * 1024) -> None:
+        super().__init__()
+        self._url = url
+        self._block_size = block_size
+        self._position = 0
+        self._cached_start = -1
+        self._cached_data = b""
+        self._session = requests.Session()
+        try:
+            response = self._session.get(
+                self._url, headers={"Range": "bytes=0-0"}, timeout=(10, 30)
+            )
+            try:
+                response.raise_for_status()
+                content_range = response.headers.get("Content-Range", "")
+                expected_prefix = "bytes 0-0/"
+                if response.status_code != 206 or not content_range.startswith(expected_prefix):
+                    raise OSError("S3 endpoint did not honor the FITS byte-range request")
+                self._size = int(content_range[len(expected_prefix) :])
+            finally:
+                response.close()
+        except Exception:
+            self._session.close()
+            raise
+
+    def _fetch_range(self, start: int, end: int) -> bytes:
+        expected_size = end - start + 1
+        with self._session.get(
+            self._url,
+            headers={"Range": f"bytes={start}-{end}"},
+            timeout=(10, 30),
+        ) as response:
+            response.raise_for_status()
+            expected_range = f"bytes {start}-{end}/{self._size}"
+            if response.status_code != 206 or response.headers.get("Content-Range") != expected_range:
+                raise OSError("S3 returned an unexpected FITS byte range")
+            data = response.content
+            if len(data) != expected_size:
+                raise OSError("S3 returned an incomplete FITS byte range")
+            return data
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_CUR:
+            offset += self._position
+        elif whence == io.SEEK_END:
+            offset += self._size
+        elif whence != io.SEEK_SET:
+            raise ValueError(f"Invalid seek mode: {whence}")
+        if offset < 0:
+            raise ValueError("Cannot seek before the start of the FITS object")
+        self._position = offset
+        return offset
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            size = self._size - self._position
+        remaining = min(size, max(0, self._size - self._position))
+        chunks = []
+        while remaining:
+            block_start = (self._position // self._block_size) * self._block_size
+            if block_start != self._cached_start:
+                block_end = min(self._size, block_start + self._block_size) - 1
+                cached_data = self._fetch_range(block_start, block_end)
+                self._cached_start = block_start
+                self._cached_data = cached_data
+            offset = self._position - self._cached_start
+            count = min(remaining, len(self._cached_data) - offset)
+            if count <= 0:
+                raise OSError("S3 returned an incomplete FITS byte range")
+            chunks.append(self._cached_data[offset : offset + count])
+            self._position += count
+            remaining -= count
+        return b"".join(chunks)
+
+    def readinto(self, buffer: Any) -> int:
+        data = self.read(len(buffer))
+        buffer[: len(data)] = data
+        return len(data)
+
+    def close(self) -> None:
+        if not self.closed:
+            self._session.close()
+        super().close()
+
+
+def _fetch_cutout_from_s3(
+    s3_access: str,
+    ra: float,
+    dec: float,
+    size_deg: float,
+    collection: str,
+) -> dict[str, Any]:
+    """Read FITS sections from anonymous S3 ranges and crop them around the target."""
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+    from astropy.wcs import WCS
+    from astropy.wcs.utils import proj_plane_pixel_scales
+
+    s3_uri, region = _parse_s3_access(s3_access)
+    bucket, key = s3_uri[5:].split("/", 1)
+    endpoint_region = region or "us-east-1"
+    hostname = (
+        f"{bucket}.s3.amazonaws.com"
+        if endpoint_region == "us-east-1"
+        else f"{bucket}.s3.{endpoint_region}.amazonaws.com"
+    )
+    object_url = f"https://{hostname}/{quote(key, safe='/')}"
+    result: dict[str, Any] = {
+        "hdu1_image": None,
+        "hdu2_flags": None,
+        "hdu3_variance": None,
+        "hdu4_zodi": None,
+        "hdu5_psf": None,
+        "hdu6_wave_tab": None,
+        "hdu1_header": None,
+        "metadata": {"collection": collection, "wcs": "TAN/SIP"},
+    }
+    with _HTTPRangeReader(object_url) as remote_file, fits.open(
+        remote_file, memmap=False, lazy_load_hdus=True
+    ) as hdul:
+            image_hdu = next(
+                (
+                    hdu
+                    for index, hdu in enumerate(hdul)
+                    if str(hdu.name or "").strip().upper() == "IMAGE"
+                    or (index == 1 and int(hdu.header.get("NAXIS", 0)) > 0)
+                ),
+                None,
+            )
+            if image_hdu is None:
+                return result
+            wcs = WCS(image_hdu.header).celestial
+            x_center, y_center = wcs.world_to_pixel(SkyCoord(ra * u.deg, dec * u.deg))
+            pixel_scales = np.abs(proj_plane_pixel_scales(wcs))
+            half_x = int(np.ceil(size_deg / pixel_scales[0] / 2.0))
+            half_y = int(np.ceil(size_deg / pixel_scales[1] / 2.0))
+            x0 = max(0, int(np.floor(x_center)) - half_x)
+            x1 = min(int(image_hdu.header["NAXIS1"]), int(np.floor(x_center)) + half_x + 1)
+            y0 = max(0, int(np.floor(y_center)) - half_y)
+            y1 = min(int(image_hdu.header["NAXIS2"]), int(np.floor(y_center)) + half_y + 1)
+            if x0 >= x1 or y0 >= y1:
+                return result
+
+            section = (slice(y0, y1), slice(x0, x1))
+            result["hdu1_image"] = np.asarray(image_hdu.section[section], dtype=np.float32)
+            image_shape = (int(image_hdu.header["NAXIS2"]), int(image_hdu.header["NAXIS1"]))
+            result["hdu1_header"] = image_hdu.header.copy()
+            result["hdu1_header"].update(wcs.slice(section).to_header(relax=True))
+            result["hdu1_header"]["NAXIS1"] = x1 - x0
+            result["hdu1_header"]["NAXIS2"] = y1 - y0
+            result["hdu1_header"]["LTV1"] = float(image_hdu.header.get("LTV1", 0.0)) - x0
+            result["hdu1_header"]["LTV2"] = float(image_hdu.header.get("LTV2", 0.0)) - y0
+            result["metadata"].update(
+                {
+                    "LTV1": result["hdu1_header"]["LTV1"],
+                    "LTV2": result["hdu1_header"]["LTV2"],
+                    "pixel_scale_arcsec": float(np.mean(pixel_scales) * 3600.0),
+                }
+            )
+
+            extension_keys = (
+                ("hdu2_flags", {"FLAGS", "MASK"}, 2, np.uint32),
+                ("hdu3_variance", {"VARIANCE", "VAR"}, 3, np.float32),
+                ("hdu4_zodi", {"ZODI"}, 4, np.float32),
+                ("hdu5_psf", {"PSF"}, 5, np.float32),
+            )
+            for output_key, names, fallback_index, dtype in extension_keys:
+                hdu = next(
+                    (
+                        hdu
+                        for index, hdu in enumerate(hdul)
+                        if str(hdu.name or "").strip().upper() in names
+                        or (index == fallback_index and int(hdu.header.get("NAXIS", 0)) > 0)
+                    ),
+                    None,
                 )
+                if hdu is not None:
+                    try:
+                        if output_key == "hdu5_psf":
+                            result[output_key] = _copy_psf_data(hdu.data)
+                        else:
+                            result[output_key] = _read_fits_image_section(
+                                hdu, y0, y1, x0, x1, image_shape, dtype
+                            )
+                    except ValueError:
+                        if output_key in {"hdu2_flags", "hdu3_variance"}:
+                            raise
+                        logger.warning("Skipping incompatible optional FITS extension %s", hdu.name)
 
-            return cutout_data
-
-        except httpx.TimeoutException:
-            logger.error(f"IRSA Cutout timeout for RA={ra}, Dec={dec}")
-            return {}
-        except (httpx.HTTPError, OSError, ValueError) as e:
-            logger.error(f"IRSA Cutout error: {e}")
-            return {}
+            wave_hdu = next(
+                (
+                    hdu
+                    for index, hdu in enumerate(hdul)
+                    if str(hdu.name or "").strip().upper() in {"WCS-WAVE", "WAVE-TAB"}
+                    or (index == 6 and int(hdu.header.get("NAXIS", 0)) > 0)
+                ),
+                None,
+            )
+            if wave_hdu is not None and wave_hdu.data is not None:
+                wave_tab: dict[str, np.ndarray] = {}
+                for name in ("X", "Y", "VALUES"):
+                    wave_tab[name] = np.asarray(wave_hdu.data[name][0], dtype=np.float64)
+                result["hdu6_wave_tab"] = wave_tab
+    return result
 
 
 def _parse_irsa_mef_cutout(fits_data: bytes, collection: str) -> dict[str, Any]:
@@ -349,7 +652,7 @@ def _parse_irsa_mef_cutout(fits_data: bytes, collection: str) -> dict[str, Any]:
         "hdu2_flags": None,  # 32-bit integer FLAGS bitmask
         "hdu3_variance": None,  # 32-bit float VARIANCE
         "hdu4_zodi": None,  # 32-bit float ZODI background
-        "hdu5_psf": None,  # 32-bit float PSF cube
+        "hdu5_psf": None,  # PSF image or structured PSF table
         "hdu6_wave_tab": None,  # Binary Table WCS-WAVE
         "hdu1_header": None,
         "metadata": {
@@ -376,7 +679,7 @@ def _parse_irsa_mef_cutout(fits_data: bytes, collection: str) -> dict[str, Any]:
                 elif extname == "ZODI" or (idx == 4 and out["hdu4_zodi"] is None and hdu.data is not None):
                     out["hdu4_zodi"] = np.asarray(hdu.data, dtype=np.float32)
                 elif extname == "PSF" or (idx == 5 and out["hdu5_psf"] is None and hdu.data is not None):
-                    out["hdu5_psf"] = np.asarray(hdu.data, dtype=np.float32)
+                    out["hdu5_psf"] = _copy_psf_data(hdu.data)
                 elif extname in ("WCS-WAVE", "WAVE-TAB") or (idx == 6 and out["hdu6_wave_tab"] is None and hdu.data is not None):
                     try:
                         out["hdu6_wave_tab"] = {
@@ -400,6 +703,13 @@ def _parse_irsa_mef_cutout(fits_data: bytes, collection: str) -> dict[str, Any]:
         logger.debug(f"FITS MEF parse fallback: {exc}")
 
     return out
+
+
+def _copy_psf_data(data: Any) -> np.ndarray:
+    """Preserve structured PSF FITS tables and normalize numeric image HDUs."""
+    if getattr(getattr(data, "dtype", None), "names", None):
+        return data.copy()
+    return np.asarray(data, dtype=np.float32)
 
 
 def _apply_adaptive_wavelength_window(
@@ -589,6 +899,7 @@ async def ingest_exposures_for_target(
                     bands=bands,
                     adaptive_window=adaptive_window,
                     collection=str(exposure["collection"]),
+                    s3_uri=exposure.get("s3_uri"),
                 )
             if cutout.get("hdu1_image") is None or cutout.get("hdu1_header") is None:
                 return None
@@ -629,6 +940,7 @@ def _format_exposures_for_grouping(
     detector_ids = sia2_result.get("detector_ids", [])
     footprints = sia2_result.get("footprints", [])
     access_urls = sia2_result.get("access_urls", [])
+    s3_uris = sia2_result.get("s3_uris", [])
 
     for i, exp_id in enumerate(exposure_ids):
         exp = {
@@ -637,6 +949,7 @@ def _format_exposures_for_grouping(
             "band": detector_ids[i] if i < len(detector_ids) else "D1",
             "footprint": footprints[i] if i < len(footprints) else None,
             "access_url": access_urls[i] if i < len(access_urls) else None,
+            "s3_uri": s3_uris[i] if i < len(s3_uris) else None,
         }
         exposures.append(exp)
 
