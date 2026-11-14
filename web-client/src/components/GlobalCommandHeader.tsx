@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { queryClient } from '../App';
+import { Button, Badge, Input } from './ui';
+import { cn } from '../lib/utils';
 
 export interface BenchmarkPill {
   id: string;
@@ -588,45 +590,45 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-[#1E2530] bg-[#0F131A] px-4 font-sans text-xs text-[#E6ECF2] select-none">
+    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-card px-4 font-sans text-xs text-foreground select-none">
       {/* 1. Brand & Archive Status */}
       <div className="flex items-center gap-3 shrink-0">
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold tracking-tight text-[#E6ECF2]">Spectra</span>
-          <span className="hidden sm:inline text-[11px] text-[#94A3B8]">
+          <span className="text-sm font-semibold tracking-tight text-foreground">Spectra</span>
+          <span className="hidden sm:inline text-[11px] text-muted-foreground">
             SPHEREx Spectral Archive
           </span>
         </div>
 
-        <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
+        <span className="h-3.5 w-px bg-border" aria-hidden="true" />
 
         {/* Archive Connection Badge */}
-        <div
-          className="flex items-center gap-1.5 rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-0.5 text-[11px] text-[#94A3B8]"
+        <Badge
+          variant={isBackendLive ? 'emerald' : 'sky'}
+          className="gap-1.5 py-0.5 text-[11px] cursor-default"
           title={
             isBackendLive
               ? 'FastAPI science engine online (port 7860)'
               : 'Archive local tensor & catalog engine active'
           }
         >
-          <svg className="h-2 w-2 shrink-0" viewBox="0 0 8 8" aria-hidden="true">
-            <circle
-              cx="4"
-              cy="4"
-              r="3.5"
-              fill={isBackendLive ? '#22C55E' : '#38BDF8'}
-            />
-          </svg>
+          <span
+            className={cn(
+              'h-1.5 w-1.5 rounded-full',
+              isBackendLive ? 'bg-emerald-400' : 'bg-primary'
+            )}
+          />
           <span>{isBackendLive ? 'Live API' : 'Archive Ready'}</span>
-        </div>
+        </Badge>
 
         {/* Data Provenance Badge */}
-        <div
-          className="hidden 2xl:flex items-center rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-0.5 font-mono text-[11px] tabular-nums text-[#94A3B8]"
+        <Badge
+          variant="secondary"
+          className="hidden 2xl:inline-flex font-mono text-[11px] tabular-nums"
           title="Active dataset provenance"
         >
           {sourceBadge}
-        </div>
+        </Badge>
       </div>
 
       {/* 2. Universal Coordinate & Object Name Resolver (SIMBAD / NED / ICRS / Catalog) */}
@@ -642,7 +644,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
             Search sky coordinates (J2000 decimal or sexagesimal) or astronomical object name
           </label>
           <svg
-            className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#94A3B8]"
+            className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground"
             viewBox="0 0 16 16"
             fill="none"
             stroke="currentColor"
@@ -652,7 +654,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
             <circle cx="7" cy="7" r="4.5" />
             <path d="M10.5 10.5L14 14" strokeLinecap="round" />
           </svg>
-          <input
+          <Input
             id="spectra-coord-search"
             type="text"
             value={searchInput}
@@ -666,28 +668,29 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                 ? `${activeTargetName} (${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°) — Search RA/Dec or object...`
                 : 'Search RA/Dec, HMS/DMS, or object name (SIMBAD/IRSA)...'
             }
-            className="w-full rounded-sm border border-[#1E2530] bg-[#080A0F] py-1.5 pl-8 pr-16 font-mono text-xs tabular-nums text-[#E6ECF2] placeholder-[#94A3B8] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#38BDF8]"
+            className="w-full pl-8 pr-16 bg-background font-mono text-xs tabular-nums text-foreground placeholder:text-muted-foreground"
           />
           <div className="absolute right-1.5 flex items-center gap-1">
             {isResolving && (
-              <span className="px-1 font-sans text-[10px] text-[#38BDF8]">Resolving…</span>
+              <span className="px-1 font-sans text-[10px] text-primary">Resolving…</span>
             )}
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="xs"
               onClick={onOpenCommandPalette}
-              className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#94A3B8] transition-colors duration-150 hover:border-[#38BDF8] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+              className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
               title="Open command palette (⌘K / Ctrl+K)"
               aria-label="Open command palette"
             >
               ⌘&nbsp;K
-            </button>
+            </Button>
           </div>
         </form>
 
         {/* Search Resolver Autocomplete & Coordinate Format Helper Popover */}
         {isSearchFocused && (
-          <div className="absolute left-0 right-0 top-9 z-50 max-h-80 overflow-y-auto rounded-sm border border-[#1E2530] bg-[#0F131A] p-1.5">
-            <div className="flex items-center justify-between border-b border-[#1E2530] px-2 py-1 text-[10px] text-[#94A3B8]">
+          <div className="absolute left-0 right-0 top-9 z-50 max-h-80 overflow-y-auto rounded-sm border border-border bg-popover p-1.5 shadow-xl">
+            <div className="flex items-center justify-between border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
               <span>Enter J2000 decimal, sexagesimal (HH:MM:SS ±DD:MM:SS), or SIMBAD object name</span>
               <span className="font-mono">↵ Enter</span>
             </div>
@@ -696,10 +699,10 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
               <button
                 type="button"
                 onClick={() => executeSearchResolution(searchInput)}
-                className="mt-1 flex w-full items-center justify-between rounded-sm border border-[#38BDF8]/50 bg-[#151B24] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] hover:bg-[#38BDF8]/15"
+                className="mt-1 flex w-full items-center justify-between rounded-sm border border-primary/40 bg-secondary/80 px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-primary/10 transition-colors"
               >
                 <span>Go to J2000 coordinates</span>
-                <span className="font-mono text-[#38BDF8]">
+                <span className="font-mono text-primary">
                   {parseCoordinateInput(searchInput)?.ra.toFixed(5)}°,{' '}
                   {parseCoordinateInput(searchInput)?.dec.toFixed(5)}°
                 </span>
@@ -727,26 +730,27 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                         item.preset
                       )
                     }
-                    className={`flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left transition-colors duration-150 ${
+                    className={cn(
+                      'flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left transition-colors duration-150',
                       isCurrent
-                        ? 'bg-[#151B24] text-[#E6ECF2]'
-                        : 'text-[#94A3B8] hover:bg-[#151B24] hover:text-[#E6ECF2]'
-                    }`}
+                        ? 'bg-secondary text-foreground'
+                        : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                    )}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate font-medium text-[#E6ECF2]">{item.name}</span>
+                        <span className="truncate font-medium text-foreground">{item.name}</span>
                         {item.category && (
-                          <span className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-1 py-0.2 text-[10px] text-[#94A3B8]">
+                          <Badge variant="outline" className="text-[10px]">
                             {item.category}
-                          </span>
+                          </Badge>
                         )}
                       </div>
-                      <div className="truncate text-[11px] text-[#94A3B8]">
+                      <div className="truncate text-[11px] text-muted-foreground">
                         {item.description}
                       </div>
                     </div>
-                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-[#38BDF8]">
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-primary">
                       {item.ra.toFixed(3)}° {item.dec >= 0 ? `+${item.dec.toFixed(3)}` : item.dec.toFixed(3)}°
                     </span>
                   </button>
@@ -757,12 +761,12 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                 <button
                   type="button"
                   onClick={() => executeSearchResolution(searchInput)}
-                  className="mt-1 flex w-full items-center justify-between rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] hover:border-[#38BDF8]"
+                  className="mt-1 flex w-full items-center justify-between rounded-sm border border-border bg-secondary px-2.5 py-1.5 text-left text-xs text-foreground hover:border-primary transition-colors"
                 >
                   <span>
                     Query SIMBAD / NED / IRSA resolver for &ldquo;{searchInput.trim()}&rdquo;
                   </span>
-                  <span className="font-mono text-[11px] text-[#38BDF8]">Resolve ↵</span>
+                  <span className="font-mono text-[11px] text-primary">Resolve ↵</span>
                 </button>
               )}
             </div>
@@ -774,78 +778,83 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
       <div className="flex items-center gap-2.5 shrink-0">
         {/* Compact Tensor Memory Readout */}
         <div
-          className={`hidden xl:flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums ${
+          className={cn(
+            'hidden xl:flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums',
             payloadMb >= 2.0
-              ? 'border-[#F59E0B] bg-[#151B24] text-[#F59E0B]'
-              : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8]'
-          }`}
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
+              : 'border-border bg-background text-muted-foreground'
+          )}
           title={`Cutout FoV: ${fovArcsec}" · Uncompressed float32 tensor payload (${
             totalEpochs || 4
           } passes × 6 bands × 14 B/px)`}
         >
           <span>{fovArcsec}&quot;</span>
-          <span className="text-[#1E2530]">|</span>
+          <span className="text-border">|</span>
           <span>{payloadMb.toFixed(2)}&nbsp;MB</span>
         </div>
 
         <nav
           aria-label="Workspaces"
-          className="flex items-center gap-0.5 rounded-sm border border-[#1E2530] bg-[#080A0F] p-0.5"
+          className="flex items-center gap-0.5 rounded-sm border border-border bg-background p-0.5"
         >
           {TABS.map((t) => {
             const isActive = tab === t.id;
             return (
-              <button
+              <Button
                 key={t.id}
-                type="button"
+                variant={isActive ? 'secondary' : 'ghost'}
+                size="sm"
                 onClick={() => setTab(t.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`relative rounded-sm px-2.5 py-1 text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
+                className={cn(
+                  'h-7 px-2.5 text-xs font-sans',
                   isActive
-                    ? 'border border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                    : 'border border-transparent text-[#94A3B8] hover:text-[#E6ECF2]'
-                }`}
+                    ? 'border-primary/50 text-foreground font-medium shadow-none'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
               >
                 {t.label}
-              </button>
+              </Button>
             );
           })}
         </nav>
 
         {/* Share & Embed Exporter Dropdown */}
         <div className="relative">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setIsShareOpen(!isShareOpen)}
             aria-expanded={isShareOpen}
-            className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
           >
             Share
-          </button>
+          </Button>
 
           {isShareOpen && (
-            <div className="absolute right-0 top-9 z-50 w-64 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
-              <div className="mb-2 text-xs font-medium text-[#E6ECF2]">
+            <div className="absolute right-0 top-9 z-50 w-64 rounded-sm border border-border bg-popover p-3 shadow-xl">
+              <div className="mb-2 text-xs font-medium text-foreground">
                 Share current view state
               </div>
               <div className="flex flex-col gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleCopyLink}
-                  className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                  className="w-full justify-start text-xs font-normal"
                 >
                   Copy deep link URL
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleCopyIframe}
-                  className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                  className="w-full justify-start text-xs font-normal"
                 >
                   Copy iframe embed (?embed=1)
-                </button>
+                </Button>
               </div>
               {shareFeedback && (
-                <div role="status" aria-live="polite" className="mt-2 text-[11px] text-[#22C55E]">
+                <div role="status" aria-live="polite" className="mt-2 text-[11px] text-emerald-400">
                   {shareFeedback}
                 </div>
               )}
