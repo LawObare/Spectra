@@ -339,6 +339,7 @@ export const CelestialNavigator: React.FC = () => {
   const catalogOverlayRef = useRef<any>(null);
   const deepFieldOverlayRef = useRef<any>(null);
   const archiveMocsRef = useRef<any[]>([]);
+  const cachedMocsRef = useRef<any[]>([]);
   const gaiaCatalogRef = useRef<any>(null);
   const gaiaMotionOverlayRef = useRef<any>(null);
   const skybotCatalogRef = useRef<any>(null);
@@ -368,6 +369,8 @@ export const CelestialNavigator: React.FC = () => {
 
   // Layer & Filter Controls
   const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(false);
+  const [showAvailableCoverage, setShowAvailableCoverage] = useState<boolean>(true);
+  const [showCachedCoverage, setShowCachedCoverage] = useState<boolean>(true);
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(false);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
   const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('allwise-color');
@@ -381,6 +384,7 @@ export const CelestialNavigator: React.FC = () => {
   const [hipsError, setHipsError] = useState<boolean>(false);
   const [aladinReady, setAladinReady] = useState<boolean>(false);
   const [archiveExposures, setArchiveExposures] = useState<IrsaExposure[]>([]);
+  const [cachedRegions, setCachedRegions] = useState<Array<{ ra: number; dec: number; fov_arcsec: number }>>([]);
   const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [gaiaStatus, setGaiaStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
   const [skybotStatus, setSkybotStatus] = useState<'loading' | 'live' | 'cached_only' | 'unavailable'>('loading');
@@ -447,12 +451,12 @@ export const CelestialNavigator: React.FC = () => {
     let active = true;
     const timer = window.setTimeout(async () => {
       setArchiveStatus('loading');
-      const radiusDeg = Math.max(fovArcsec / 7200, 30 / 3600);
+      const radiusDeg = Math.max(displayFovDeg / Math.SQRT2, fovArcsec / 7200, 30 / 3600);
       const params = new URLSearchParams({
         COLLECTION: 'spherex_qr2',
         POS: `CIRCLE ${ra} ${dec} ${radiusDeg}`,
         CALIB: '2',
-        MAXREC: '40',
+        MAXREC: '500',
         RESPONSEFORMAT: 'JSON',
       });
 
@@ -479,7 +483,7 @@ export const CelestialNavigator: React.FC = () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [ra, dec, fovArcsec]);
+  }, [ra, dec, fovArcsec, displayFovDeg]);
 
   const filteredExposures = useMemo(() => {
     if (selectedBandFilter === 'ALL') return allExposures;
@@ -748,14 +752,15 @@ export const CelestialNavigator: React.FC = () => {
 
     archiveMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
     archiveMocsRef.current = [];
+    if (!showAvailableCoverage) return;
 
     archiveExposures.forEach((exposure) => {
       const polygon = parseStcsPolygon(exposure.sRegion);
       if (!polygon || typeof A.MOCFromPolygon !== 'function') return;
       try {
         const moc = A.MOCFromPolygon(polygon, {
-          color: '#38BDF8',
-          opacity: 0.12,
+          color: '#FACC15',
+          opacity: 0.16,
           lineWidth: 1,
         });
         aladin.addMOC(moc);
@@ -769,7 +774,58 @@ export const CelestialNavigator: React.FC = () => {
       archiveMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
       archiveMocsRef.current = [];
     };
-  }, [archiveExposures, aladinReady]);
+  }, [archiveExposures, aladinReady, showAvailableCoverage]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      ra: String(ra),
+      dec: String(dec),
+      radius_deg: String(Math.max(displayFovDeg, 2)),
+    });
+    const timer = window.setTimeout(() => {
+      fetch(`/api/cutout/cache/coverage?${params}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error('Cache coverage unavailable')))
+        .then((payload: { regions?: Array<{ ra: number; dec: number; fov_arcsec: number }> }) => {
+          setCachedRegions(Array.isArray(payload.regions) ? payload.regions : []);
+        })
+        .catch((error) => {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) setCachedRegions([]);
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [ra, dec, displayFovDeg]);
+
+  useEffect(() => {
+    const aladin = aladinInstanceRef.current;
+    if (!aladinReady || !aladin) return;
+    cachedMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
+    cachedMocsRef.current = [];
+    if (!showCachedCoverage) return;
+
+    cachedRegions.forEach((region) => {
+      if (typeof A.MOCFromPolygon !== 'function') return;
+      const corners = getFootprintCorners(region.ra, region.dec, region.fov_arcsec / 3600, region.fov_arcsec / 3600, 0);
+      try {
+        const moc = A.MOCFromPolygon({ ra: corners.map(([cornerRa]) => cornerRa), dec: corners.map(([, cornerDec]) => cornerDec) }, {
+          color: '#FB923C',
+          opacity: 0.24,
+          lineWidth: 2,
+        });
+        aladin.addMOC(moc);
+        cachedMocsRef.current.push(moc);
+      } catch (error) {
+        console.warn('Could not render a cached cutout footprint:', error);
+      }
+    });
+    return () => {
+      cachedMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
+      cachedMocsRef.current = [];
+    };
+  }, [cachedRegions, aladinReady, showCachedCoverage]);
 
   // Query Gaia DR3 near the active field and render five-year proper-motion vectors.
   useEffect(() => {
@@ -1222,6 +1278,28 @@ export const CelestialNavigator: React.FC = () => {
               title="Toggle SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints"
             >
               LVF Footprints ({filteredExposures.length})
+            </Button>
+            <Button
+              variant={showAvailableCoverage ? 'secondary' : 'ghost'}
+              size="xs"
+              onClick={() => setShowAvailableCoverage((visible) => !visible)}
+              className={showAvailableCoverage ? 'border-yellow-400/50 text-yellow-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
+              title="Show archive areas where cutouts can be requested"
+              aria-pressed={showAvailableCoverage}
+            >
+              <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-yellow-400/70" />
+              Available ({archiveExposures.length})
+            </Button>
+            <Button
+              variant={showCachedCoverage ? 'secondary' : 'ghost'}
+              size="xs"
+              onClick={() => setShowCachedCoverage((visible) => !visible)}
+              className={showCachedCoverage ? 'border-orange-400/50 text-orange-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
+              title="Show processed cutouts currently cached on this server"
+              aria-pressed={showCachedCoverage}
+            >
+              <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-orange-400/80" />
+              Cached ({cachedRegions.length})
             </Button>
             <Button
               variant={showWcsGrid ? 'secondary' : 'ghost'}

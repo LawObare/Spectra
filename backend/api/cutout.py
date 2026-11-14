@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 import zstandard as zstd
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -60,6 +60,53 @@ _worker_tasks: set[asyncio.Task[None]] = set()
 _worker_count = 2
 _reprojection_semaphore = asyncio.Semaphore(2)
 _COMPLETED_TENSOR_TTL_SECONDS = 900.0
+_cached_cutout_regions: dict[str, dict[str, Any]] = {}
+
+
+def _remember_cached_region(task_data: dict[str, Any], metadata: dict[str, Any]) -> None:
+    request_key = task_data.get("request_key")
+    if not request_key:
+        return
+    now = time.monotonic()
+    _cached_cutout_regions[str(request_key)] = {
+        "ra": float(task_data["ra"]),
+        "dec": float(task_data["dec"]),
+        "fov_arcsec": min(int(task_data.get("fov_arcsec") or 180), 180),
+        "cached_at": now,
+        "source_badge": metadata.get("source_badge", "[IRSA Live]"),
+    }
+    expired = [
+        key for key, region in _cached_cutout_regions.items()
+        if now - float(region["cached_at"]) >= _COMPLETED_TENSOR_TTL_SECONDS
+    ]
+    for key in expired:
+        _cached_cutout_regions.pop(key, None)
+    while len(_cached_cutout_regions) > 250:
+        oldest = min(_cached_cutout_regions, key=lambda key: _cached_cutout_regions[key]["cached_at"])
+        _cached_cutout_regions.pop(oldest, None)
+
+
+@router.get("/cutout/cache/coverage")
+async def get_cached_cutout_coverage(
+    ra: float = Query(..., ge=0, lt=360),
+    dec: float = Query(..., ge=-90, le=90),
+    radius_deg: float = Query(2.0, gt=0, le=180),
+) -> dict[str, Any]:
+    """Return recently processed cutouts near a navigator position."""
+    now = time.monotonic()
+    regions = []
+    for key, region in list(_cached_cutout_regions.items()):
+        if now - float(region["cached_at"]) >= _COMPLETED_TENSOR_TTL_SECONDS:
+            _cached_cutout_regions.pop(key, None)
+            continue
+        if f"request:{key}" not in tensor_cache:
+            _cached_cutout_regions.pop(key, None)
+            continue
+        dra = ((float(region["ra"]) - ra + 180.0) % 360.0) - 180.0
+        distance_sq = (dra * np.cos(np.deg2rad(dec))) ** 2 + (float(region["dec"]) - dec) ** 2
+        if distance_sq <= radius_deg**2:
+            regions.append({field: value for field, value in region.items() if field != "cached_at"})
+    return {"regions": regions, "ttl_seconds": int(_COMPLETED_TENSOR_TTL_SECONDS)}
 
 
 def _new_task_id() -> str:
@@ -496,6 +543,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                         await tensor_cache.set(f"tensor:{task_id}", payload, metadata)
                         if request_key:
                             await tensor_cache.set(f"request:{request_key}", payload, metadata)
+                            _remember_cached_region(task_data, metadata)
                         loaded_live_irsa = True
             except Exception as exc:
                 live_error = str(exc)
