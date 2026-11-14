@@ -682,11 +682,37 @@ export const SpectrophotometricLab: React.FC = () => {
   return (
     <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-neutral-950 text-neutral-100">
       <div className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800">
-        <div className="border-b border-neutral-800 px-4 py-3">
+        <div className="border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-4 py-2.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-sm font-semibold tracking-wide text-white">Tab 3 — Spectrophotometric Lab</h2>
-            <span className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-300">102 channels · 0.75–5.00 µm · λ vs Fν (MJy/sr)</span>
-            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${spectrumSourceBadge.startsWith('[Installed]') ? 'bg-emerald-950/60 text-emerald-300' : spectrumSourceBadge.startsWith('[IRSA Live') ? 'bg-sky-950/60 text-sky-300' : 'bg-amber-950/60 text-amber-300'}`}>{spectrumSourceBadge}</span>
+            <div className="inline-flex h-7 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-2.5">
+              <svg
+                className="h-3.5 w-3.5 shrink-0 text-sky-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+              </svg>
+              <h2 className="text-xs font-semibold tracking-tight text-white">Spectrophotometric Lab</h2>
+            </div>
+            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[11px] text-neutral-300">
+              102 channels · 0.75–5.00 µm · λ vs Fν (MJy/sr)
+            </span>
+            <span
+              className={`inline-flex h-7 items-center rounded-lg border px-2.5 font-mono text-[11px] ${
+                spectrumSourceBadge.startsWith('[Installed]')
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : spectrumSourceBadge.startsWith('[IRSA Live')
+                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+              }`}
+            >
+              {spectrumSourceBadge}
+            </span>
             {readyInstalledSections.length > 0 && (
               <select
                 aria-label="Installed section for spectrum"
@@ -705,7 +731,7 @@ export const SpectrophotometricLab: React.FC = () => {
                     probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
                   });
                 }}
-                className="max-w-[200px] rounded border border-emerald-700/60 bg-emerald-950/60 px-2 py-0.5 text-[10px] text-emerald-200 focus:outline-none"
+                className="h-7 max-w-[210px] rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
                 title="Use an installed section for 102-channel extraction"
               >
                 {!activeInstalledSection && (
@@ -725,28 +751,34 @@ export const SpectrophotometricLab: React.FC = () => {
                   const position = probeSkyPosition ?? { ra, dec };
                   setForceLiveCoordKey(`${position.ra.toFixed(5)},${position.dec.toFixed(5)}`);
                 }}
-                className="rounded border border-cyan-700/60 bg-cyan-950/50 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-900/60"
+                className="h-7 rounded-lg border border-sky-400/40 bg-sky-500/10 hover:bg-sky-500/20 hover:border-sky-400/60 px-2.5 text-xs font-medium text-sky-200 transition-all cursor-pointer"
                 title="Query IRSA live for this coordinate without installing"
               >
                 Query Live Spectrum
               </button>
             )}
-            <span className="rounded bg-sky-950/60 px-2 py-0.5 font-mono text-[10px] text-sky-300">probe px ({probedPixel?.x ?? 24},{probedPixel?.y ?? 24})</span>
+            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[11px] text-sky-300">
+              probe px ({probedPixel?.x ?? 24},{probedPixel?.y ?? 24})
+            </span>
             <button
               type="button"
               onClick={() => setSpectralBlinkSynced(!isSpectralBlinkSynced)}
-              className={`rounded border px-2 py-0.5 text-[10px] transition ${
+              className={`h-7 rounded-lg border px-2.5 text-xs font-medium transition-all cursor-pointer ${
                 isSpectralBlinkSynced
-                  ? 'border-emerald-700/60 bg-emerald-950/60 text-emerald-300'
-                  : 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-600'
+                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
+                  : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08] hover:text-white'
               }`}
               title="Toggle between full multi-epoch coadd and active comparator epoch"
             >
               {isSpectralBlinkSynced ? `Epoch ${epochIndex} Only` : 'All Epochs (Coadded)'}
             </button>
-            {spectrumStatus && <span className="text-[10px] text-neutral-400">{spectrumStatus}</span>}
+            {spectrumStatus && (
+              <span className="inline-flex h-7 items-center font-mono text-[11px] text-neutral-400">
+                {spectrumStatus}
+              </span>
+            )}
           </div>
-          <p className="mt-1 text-[11px] text-neutral-400">
+          <p className="mt-1.5 text-[11px] text-neutral-400">
             Target: <span className="font-mono text-neutral-200">{activeTargetName || 'Custom RA/Dec'}</span> · RA {ra.toFixed(5)}° Dec {dec.toFixed(5)}° ·
             shaded D1–D6 super-bands · ±1σ VARIANCE bars · amber hollow triangles = FLAGS≠0 (hover for bitmask tooltip).
           </p>
