@@ -8,6 +8,7 @@ import { useTelemetryStore } from './store/useTelemetryStore';
 import { GlobalCommandHeader, MANDATORY_BENCHMARKS } from './components/GlobalCommandHeader';
 import { CommandPalette } from './components/CommandPalette';
 import { CelestialNavigator } from './tabs/CelestialNavigator';
+import { TimeDomainComparator } from './tabs/TimeDomainComparator';
 
 /**
  * Spectra Root Application Component
@@ -118,26 +119,7 @@ export const PublicExplorerPortal: React.FC = () => {
       <main className={`relative flex-1 overflow-hidden ${!isEmbed ? 'pt-[56px]' : ''}`}>
         {tab === 'navigator' && <CelestialNavigator />}
 
-        {tab === 'comparator' && (
-          <div className="flex h-full w-full flex-col items-center justify-center bg-[#080A0F] p-6">
-            <div className="w-full max-w-md rounded-sm border border-[#1E2530] bg-[#0F131A] p-6 text-left">
-              <h2 className="text-sm font-semibold text-[#E6ECF2]">
-                Time-domain comparator
-              </h2>
-              <p className="mt-2 text-xs leading-relaxed text-[#94A3B8]">
-                Target coordinates <span className="font-mono tabular-nums text-[#E6ECF2]">{urlRa.toFixed(5)}°, {urlDec.toFixed(5)}°</span> at <span className="font-mono tabular-nums text-[#E6ECF2]">{urlFov}&quot;</span> cutout field of view are staged in the telemetry store. Multi-epoch WebGL2 Float32 canvas mounts here (Issues #17, #18).
-              </p>
-              <div className="mt-5">
-                <a
-                  href="/explore?tab=navigator"
-                  className="inline-block rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-1.5 text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:bg-[#38BDF8]/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
-                >
-                  Return to sky view
-                </a>
-              </div>
-            </div>
-          </div>
-        )}
+        {tab === 'comparator' && <TimeDomainComparator />}
 
         {tab === 'spectral' && (
           <div className="flex h-full w-full flex-col items-center justify-center bg-[#080A0F] p-6">
