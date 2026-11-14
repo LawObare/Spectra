@@ -1737,206 +1737,290 @@ export const CelestialNavigator: React.FC = () => {
         <div
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
-          className="z-20 flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-1.5"
+          className="z-20 flex items-center justify-between gap-2.5 border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-3 sm:px-4 py-1.5 shadow-[0_4px_20px_rgba(0,0,0,0.4)]"
         >
           <div className="flex flex-nowrap lg:flex-wrap items-center gap-2 min-w-0 overflow-x-auto py-0.5">
-          {/* Layer Toggles */}
-          <div className="flex flex-nowrap lg:flex-wrap items-center gap-1.5 shrink-0" role="group" aria-label="Sky overlay layers">
-            <Button
-              variant={showLvfFootprints ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setShowLvfFootprints((v) => !v)}
-              className={showLvfFootprints ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-              title="Toggle SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints"
+            {/* Layer Toggles Pod */}
+            <div
+              className="inline-flex flex-nowrap items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 shrink-0"
+              role="group"
+              aria-label="Sky overlay layers"
             >
-              LVF Footprints ({filteredArchiveExposures.length + filteredExposures.length})
-            </Button>
-            <Button
-              variant={showAvailableCoverage ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setShowAvailableCoverage((visible) => !visible)}
-              className={showAvailableCoverage ? 'border-yellow-400/50 text-yellow-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
-              title="Database-backed SPHEREx DR1 (cyan) & QR3 (gold) HEALPix coverage MOCs with NEP/SEP Deep Field rings"
-              aria-pressed={showAvailableCoverage}
-            >
-              <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-yellow-400/70" />
-              {showAvailableCoverage ? 'DR1/QR3 Coverage Mesh' : 'Coverage Mesh (Off)'}
-            </Button>
-            <Button
-              variant={showInstalledSections ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setShowInstalledSections((visible) => !visible)}
-              className={showInstalledSections ? 'border-emerald-400/50 text-emerald-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
-              title="Show installed sky cutout sections stored for instant use across Comparator, Spectral Lab, and Ice Studio"
-              aria-pressed={showInstalledSections}
-            >
-              <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-400/80" />
-              Installed ({readyInstalledSections.length})
-            </Button>
-            {activeDownloadingSections.length > 0 && (
-              <span
-                className="inline-flex items-center gap-1 rounded border border-orange-500/50 bg-orange-500/15 px-2 py-0.5 font-mono text-[10px] text-orange-300"
-                title="Active section downloads remain highlighted in orange while you adjust FoV or pan"
+              <button
+                type="button"
+                onClick={() => setShowLvfFootprints((v) => !v)}
+                aria-pressed={showLvfFootprints}
+                className={`h-7 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                  showLvfFootprints
+                    ? 'bg-primary/20 text-white ring-1 ring-primary/50 shadow-sm'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                }`}
+                title="Toggle SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints"
               >
-                <span className="inline-block h-2 w-2 rounded-sm bg-orange-400" />
-                Downloading ({activeDownloadingSections.length})
-              </span>
-            )}
-            <Button
-              variant={showWcsGrid ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setShowWcsGrid((v) => !v)}
-              className={showWcsGrid ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-            >
-              J2000 Grid
-            </Button>
-            <Button
-              variant={showCutoutBox ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setShowCutoutBox((v) => !v)}
-              className={showCutoutBox ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-              title="Show true-scale cutout bounding box at target coordinate"
-            >
-              Cutout Box ({fovArcsec}&quot;)
-            </Button>
+                <svg
+                  className="h-3.5 w-3.5 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                  <polyline points="2 17 12 22 22 17" />
+                  <polyline points="2 12 12 17 22 12" />
+                </svg>
+                <span>LVF Footprints ({filteredArchiveExposures.length + filteredExposures.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAvailableCoverage((visible) => !visible)}
+                className={`h-7 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                  showAvailableCoverage
+                    ? 'bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/40'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                }`}
+                title="Database-backed SPHEREx DR1 (cyan) & QR3 (gold) HEALPix coverage MOCs with NEP/SEP Deep Field rings"
+                aria-pressed={showAvailableCoverage}
+              >
+                <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)] shrink-0" />
+                <span>{showAvailableCoverage ? 'DR1/QR3 Coverage Mesh' : 'Coverage Mesh (Off)'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowInstalledSections((visible) => !visible)}
+                className={`h-7 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                  showInstalledSections
+                    ? 'bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/40'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                }`}
+                title="Show installed sky cutout sections stored for instant use across Comparator, Spectral Lab, and Ice Studio"
+                aria-pressed={showInstalledSections}
+              >
+                <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)] shrink-0" />
+                <span>Installed ({readyInstalledSections.length})</span>
+              </button>
+              {activeDownloadingSections.length > 0 && (
+                <span
+                  className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-orange-500/40 bg-orange-500/15 px-2.5 font-mono text-[11px] text-orange-300 shrink-0 whitespace-nowrap"
+                  title="Active section downloads remain highlighted in orange while you adjust FoV or pan"
+                >
+                  <span className="h-2 w-2 rounded-full bg-orange-400 animate-pulse shrink-0" />
+                  <span>Downloading ({activeDownloadingSections.length})</span>
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowWcsGrid((v) => !v)}
+                aria-pressed={showWcsGrid}
+                className={`h-7 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                  showWcsGrid
+                    ? 'bg-primary/20 text-white ring-1 ring-primary/50'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                }`}
+              >
+                <svg
+                  className="h-3.5 w-3.5 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M2 12h20" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+                <span>J2000 Grid</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCutoutBox((v) => !v)}
+                aria-pressed={showCutoutBox}
+                className={`h-7 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                  showCutoutBox
+                    ? 'bg-primary/20 text-white ring-1 ring-primary/50'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                }`}
+                title="Show true-scale cutout bounding box at target coordinate"
+              >
+                <svg
+                  className="h-3.5 w-3.5 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+                  <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                  <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+                  <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                </svg>
+                <span>Cutout Box ({fovArcsec}&quot;)</span>
+              </button>
 
-            {/* Photographic Sky Survey Layer Selector */}
-            <div className="flex items-center gap-1.5 ml-1 shrink-0" role="group" aria-label="Photographic survey layer">
-              <span className="text-[11px] text-muted-foreground">Survey:</span>
-              <Select
-                sizeVariant="xs"
-                value={activeSurvey}
-                onChange={(e) => setActiveSurvey(e.target.value as PhotographicSurveyId)}
-                title="Select background photographic survey"
-                className="bg-background text-foreground"
+              <span className="mx-0.5 h-4 w-px bg-white/10 shrink-0" aria-hidden="true" />
+
+              {/* Photographic Sky Survey Layer Selector */}
+              <div className="flex items-center gap-1.5 shrink-0 pr-0.5" role="group" aria-label="Photographic survey layer">
+                <span className="pl-1 text-[11px] font-medium text-neutral-400">Survey:</span>
+                <Select
+                  sizeVariant="sm"
+                  value={activeSurvey}
+                  onChange={(e) => setActiveSurvey(e.target.value as PhotographicSurveyId)}
+                  title="Select background photographic survey"
+                  className="h-7 rounded-lg border-white/10 bg-neutral-900/90 text-xs font-sans text-neutral-200 hover:border-white/20 focus:border-sky-400/60"
+                >
+                  {PHOTOGRAPHIC_SURVEYS.map((surv) => (
+                    <option key={surv.id} value={surv.id}>
+                      {surv.label} ({surv.badge})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            {/* SPHEREx Detector Band Filter (D1-D6) */}
+            <div
+              className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 shrink-0"
+              role="group"
+              aria-label="SPHEREx detector filter"
+            >
+              <span className="px-1.5 text-[11px] font-medium text-neutral-400">Detector:</span>
+              <button
+                type="button"
+                onClick={() => setSelectedBandFilter('ALL')}
+                aria-pressed={selectedBandFilter === 'ALL'}
+                className={`h-7 px-2 rounded-lg font-mono text-[11px] inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                  selectedBandFilter === 'ALL'
+                    ? 'bg-primary text-white font-semibold shadow-sm ring-1 ring-white/15'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                }`}
               >
-                {PHOTOGRAPHIC_SURVEYS.map((surv) => (
-                  <option key={surv.id} value={surv.id}>
-                    {surv.label} ({surv.badge})
-                  </option>
-                ))}
-              </Select>
+                All ({archiveExposures.length})
+              </button>
+              {SPHEREX_DETECTORS.map((det) => {
+                const count = detectorCounts[det.id] || 0;
+                const isSelected = selectedBandFilter === det.id;
+                return (
+                  <button
+                    key={det.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedBandFilter(det.id);
+                      setShowLvfFootprints(true);
+                    }}
+                    aria-pressed={isSelected}
+                    title={`${det.label} · R=${det.resolvingPower} · ${count} exposures`}
+                    className={`h-7 px-2 rounded-lg font-mono text-[11px] inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                      isSelected
+                        ? 'bg-primary text-white font-semibold shadow-sm ring-1 ring-white/15'
+                        : count === 0
+                        ? 'text-neutral-400 opacity-50 hover:opacity-100 hover:text-white hover:bg-white/[0.06]'
+                        : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <span
+                      className="h-1.5 w-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: det.colorHex }}
+                      aria-hidden="true"
+                    />
+                    <span>{det.id} ({count})</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Field of View Zoom Controls */}
+            <div className="inline-flex items-center gap-0.5 rounded-xl border border-white/10 bg-white/[0.03] p-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => applyZoom(displayFovDeg * 0.65)}
+                className="h-7 w-7 rounded-lg font-mono text-xs text-neutral-200 hover:bg-white/[0.08] hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                title="Zoom in"
+                aria-label="Zoom in"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                onClick={() => applyZoom(displayFovDeg * 1.5)}
+                className="h-7 w-7 rounded-lg font-mono text-xs text-neutral-200 hover:bg-white/[0.08] hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                title="Zoom out"
+                aria-label="Zoom out"
+              >
+                −
+              </button>
+              <span className="mx-0.5 h-4 w-px bg-white/10" aria-hidden="true" />
+              <button
+                type="button"
+                onClick={() => applyZoom(60.0)}
+                className="h-7 px-2 rounded-lg font-mono text-[11px] text-neutral-400 hover:bg-white/[0.06] hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                title="Maximum wide-field context (60°)"
+              >
+                60°
+              </button>
+              <button
+                type="button"
+                onClick={() => applyZoom(18.0)}
+                className="h-7 px-2 rounded-lg font-mono text-[11px] text-neutral-400 hover:bg-white/[0.06] hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                title="Wide survey context (18°)"
+              >
+                18°
+              </button>
+              <button
+                type="button"
+                onClick={() => applyZoom(6.0)}
+                className="h-7 px-2 rounded-lg font-mono text-[11px] text-neutral-400 hover:bg-white/[0.06] hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                title="SPHEREx detector array scale (6°)"
+              >
+                6°
+              </button>
+              <button
+                type="button"
+                onClick={() => applyZoom(1.2)}
+                className="h-7 px-2 rounded-lg font-mono text-[11px] text-neutral-400 hover:bg-white/[0.06] hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                title="Target field scale (1.2°)"
+              >
+                1.2°
+              </button>
             </div>
           </div>
 
-          {/* SPHEREx Detector Band Filter (D1-D6) */}
-          <div className="flex items-center gap-1 shrink-0" role="group" aria-label="SPHEREx detector filter">
-            <span className="mr-1 text-[11px] text-muted-foreground">Detector:</span>
-            <Button
-              variant={selectedBandFilter === 'ALL' ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setSelectedBandFilter('ALL')}
-              className={
-                selectedBandFilter === 'ALL'
-                  ? 'h-6 px-1.5 font-mono text-[11px] border-primary/50 text-foreground font-medium'
-                  : 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground'
-              }
-            >
-              All ({archiveExposures.length})
-            </Button>
-            {SPHEREX_DETECTORS.map((det) => {
-              const count = detectorCounts[det.id] || 0;
-              return (
-              <Button
-                key={det.id}
-                variant={selectedBandFilter === det.id ? 'secondary' : 'ghost'}
-                size="xs"
-                onClick={() => {
-                  setSelectedBandFilter(det.id);
-                  setShowLvfFootprints(true);
-                }}
-                title={`${det.label} · R=${det.resolvingPower} · ${count} exposures`}
-                className={
-                  selectedBandFilter === det.id
-                    ? 'h-6 px-1.5 font-mono text-[11px] border-primary/50 text-foreground font-medium'
-                    : count === 0
-                    ? 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground/50 hover:text-foreground'
-                    : 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground'
-                }
-              >
-                {det.id} ({count})
-              </Button>
-              );
-            })}
-          </div>
-
-          {/* Field of View Zoom Controls */}
-          <div className="flex items-center rounded-sm border border-border bg-background p-0.5 gap-0.5 shrink-0">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => applyZoom(displayFovDeg * 0.65)}
-              className="font-mono text-xs text-foreground hover:bg-accent"
-              title="Zoom in"
-              aria-label="Zoom in"
-            >
-              +
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => applyZoom(displayFovDeg * 1.5)}
-              className="font-mono text-xs text-foreground hover:bg-accent"
-              title="Zoom out"
-              aria-label="Zoom out"
-            >
-              −
-            </Button>
-            <span className="h-3.5 w-px bg-border" aria-hidden="true" />
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => applyZoom(60.0)}
-              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
-              title="Maximum wide-field context (60°)"
-            >
-              60°
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => applyZoom(18.0)}
-              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
-              title="Wide survey context (18°)"
-            >
-              18°
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => applyZoom(6.0)}
-              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
-              title="SPHEREx detector array scale (6°)"
-            >
-              6°
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => applyZoom(1.2)}
-              className="h-6 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
-              title="Target field scale (1.2°)"
-            >
-              1.2°
-            </Button>
-          </div>
-          </div>
-
-          {/* Hamburger Toggle for Floating SPHEREx Coverage Preview Card (pinned right) */}
+          {/* Toggle for Floating SPHEREx Coverage Preview Card (pinned right) */}
           <div className="flex shrink-0 items-center">
-            <Button
-              variant={showCoverageCard ? 'secondary' : 'outline'}
-              size="icon-sm"
+            <button
+              type="button"
               onClick={() => setShowCoverageCard((open) => !open)}
-              className={showCoverageCard ? 'border-primary/60 text-foreground' : 'text-muted-foreground hover:text-foreground'}
+              className={`h-8 w-8 rounded-lg border inline-flex items-center justify-center transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
+                showCoverageCard
+                  ? 'border-sky-400/50 bg-sky-500/15 text-white shadow-sm'
+                  : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08] hover:border-white/20 hover:text-white'
+              }`}
               title="Toggle SPHEREx Coverage Preview card"
               aria-label="Toggle SPHEREx Coverage Preview"
               aria-expanded={showCoverageCard}
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              <svg
+                className="h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M15 3v18" />
               </svg>
-            </Button>
+            </button>
           </div>
         </div>
 
