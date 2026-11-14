@@ -90,6 +90,27 @@ def section_id_for(ra: float, dec: float, fov_arcsec: float) -> str:
     return f"sec_{digest}"
 
 
+def sections_overlap(
+    ra1: float,
+    dec1: float,
+    fov1_arcsec: float,
+    ra2: float,
+    dec2: float,
+    fov2_arcsec: float,
+) -> bool:
+    """Spherical bounding-box overlap check with a 1-pixel (6.2\") seam tolerance."""
+    mean_dec_rad = math.radians((dec1 + dec2) * 0.5)
+    cos_dec = max(0.05, math.cos(mean_dec_rad))
+    dra_deg = ((ra1 - ra2 + 180.0) % 360.0) - 180.0
+    dx_arcsec = abs(dra_deg * cos_dec) * 3600.0
+    dy_arcsec = abs(dec1 - dec2) * 3600.0
+    limit_arcsec = max(
+        0.5 * min(fov1_arcsec, fov2_arcsec),
+        0.5 * (fov1_arcsec + fov2_arcsec) - 6.2,
+    )
+    return dx_arcsec < limit_arcsec and dy_arcsec < limit_arcsec
+
+
 async def _get_pool(request: Request) -> asyncpg.Pool | None:
     app_pool = getattr(request.app.state, "db_pool", None)
     if app_pool is not None:
@@ -746,19 +767,61 @@ async def install_section(
         }
 
     async with pool.acquire() as conn:
-        existing = await conn.fetchrow(
-            "SELECT section_id, status, tensor_path, epochs, bands, source_badge FROM installed_sections WHERE section_id = $1",
-            section_id,
+        existing_rows = await conn.fetch(
+            """
+            SELECT section_id, label, ra, dec, fov_arcsec, status, tensor_path, epochs, bands, source_badge
+            FROM installed_sections
+            WHERE status IN ('ready', 'installing')
+            """
         )
-        if existing and existing["status"] == "ready" and existing["tensor_path"] and Path(existing["tensor_path"]).exists():
-            return {
-                "section_id": section_id,
-                "status": "ready",
-                "already_installed": True,
-                "epochs": int(existing["epochs"]),
-                "bands": int(existing["bands"]),
-                "source_badge": str(existing["source_badge"]),
-            }
+        ordered_rows = sorted(
+            existing_rows,
+            key=lambda r: 0 if str(r["section_id"]) == section_id else 1,
+        )
+        for existing in ordered_rows:
+            ex_status = str(existing["status"])
+            if ex_status not in ("ready", "installing"):
+                continue
+            ex_id = str(existing["section_id"])
+            is_match = ex_id == section_id or sections_overlap(
+                body.ra,
+                body.dec,
+                body.fov_arcsec,
+                float(existing["ra"]),
+                float(existing["dec"]),
+                float(existing["fov_arcsec"]),
+            )
+            if not is_match:
+                continue
+            if (
+                ex_status == "ready"
+                and existing["tensor_path"]
+                and Path(str(existing["tensor_path"])).exists()
+            ):
+                return {
+                    "section_id": ex_id,
+                    "label": str(existing["label"]),
+                    "status": "ready",
+                    "already_installed": True,
+                    "overlapping_section": ex_id != section_id,
+                    "epochs": int(existing["epochs"]),
+                    "bands": int(existing["bands"]),
+                    "source_badge": str(existing["source_badge"]),
+                }
+            if (
+                ex_status == "installing"
+                and ex_id in _active_installs
+                and not _active_installs[ex_id].done()
+                and ex_id in _active_task_ids
+            ):
+                return {
+                    "section_id": ex_id,
+                    "task_id": _active_task_ids[ex_id],
+                    "status": "installing",
+                    "already_installed": False,
+                    "already_installing": True,
+                    "overlapping_section": ex_id != section_id,
+                }
 
         await conn.execute(
             """
