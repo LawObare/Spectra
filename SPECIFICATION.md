@@ -1,6 +1,6 @@
 # Spectra (SPHEREx Spectral Explorers)
 ## Exhaustive Engineering Architecture, Scientific Pipeline & Systems Specification
-**Document Version:** 2.3.0-PROD  
+**Document Version:** 2.4.0-PROD  
 **Target Mission:** NASA SPHEREx (Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer)  
 **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA) — SPHEREx Quick Release 3 (QR3 / DOI: 10.26131/IRSA662)  
 **System Repository:** `Panoptic-Beta` / `Spectra`
@@ -1830,7 +1830,7 @@ To ensure 100% functionality even during network outages at the hackathon venue:
 - Pre-rendered Float32Array binary cutouts and 102-band spectra are cached locally on disk.
 - All 3D boundary animations, `pgvector` spectral similarity searches, and WebGL2 image arithmetic run locally at 60 FPS without requiring an external internet connection.
 
-### 9.2 Local Development Port Allocation Table
+### 9.3 Local Development Port Allocation Table
 | Service | Local Address / Port | Responsibility |
 |---|---|---|
 | **Vite Frontend Client** | `http://localhost:5173` | React 18 / Tailwind / Aladin Lite v3 / `nuqs` / TanStack Query |
@@ -1840,3 +1840,404 @@ To ensure 100% functionality even during network outages at the hackathon venue:
 | **Supabase Studio UI** | `http://localhost:54323` | Local Database Visual Table Editor & Query Runner |
 | **Supabase Inbucket** | `http://localhost:54324` | Local Email Testing for Auth Sign-Up / Password Reset |
 | **PyTorch Training WS** | `ws://localhost:8080/api/admin/ws/training` | Live streaming telemetry for `/admin` real-time dynamics |
+
+---
+
+## 10. Production Hosting & Deployment Specification ($0 Always-Warm Topology)
+
+### 10.1 Design Goals & Constraints
+| Goal | Requirement |
+|---|---|
+| **Cost** | $0/month on free tiers for the hackathon judging window and beyond. |
+| **Latency** | No cold starts when a judge opens the URL. Benchmark targets load in $<15\,\text{ms}$. |
+| **Memory** | Must fit Astropy + `reproject` + PyTorch (CPU) + Go gateway without Out-of-Memory crashes (rules out 512 MB free hosts such as Render/Koyeb free). |
+| **Topology** | Go gateway and Python worker communicate over loopback (zero network hop), not across two providers. |
+| **Resilience** | The 5 benchmark targets must render even if the backend, Supabase, or IRSA is unreachable. |
+| **Auth** | None (Exchange #28). Route separation `/explore` vs `/admin` only. |
+
+### 10.2 Production Topology
+| Tier | Provider | Free Quota (verify at deploy time) | Role |
+|---|---|---|---|
+| **Frontend Edge CDN** | Cloudflare Pages | Unlimited static bandwidth/requests, 500 builds/month | Serves the React SPA (`/explore`, `/admin`), Aladin Lite v3 assets, and static benchmark fallbacks (`/benchmarks/*.json`, `*.f32`). |
+| **Unified Compute** | Hugging Face Spaces (Docker SDK, `cpu-basic`) | 2 vCPU, 16 GB RAM, ~50 GB ephemeral disk; sleeps after ~48 h without traffic | One container: Go gateway on public port `7860`, Python worker on `127.0.0.1:8001`. |
+| **Database & Vectors** | Supabase Cloud (Free) | 500 MB Postgres, 1 GB Storage, Realtime; project pauses after 7 days of no DB activity | 6 tables, `pgvector` `vector(102)` HNSW index, Realtime for Tab 5. |
+| **Keep-Alive** | cron-job.org (primary) + GitHub Actions (backup) | Free | Hits `/api/health`, which touches Go, Python, and Postgres in one request. |
+| **CI/CD** | GitHub Actions | Free for public repos | Builds/tests; mirrors backend to the HF Space repo; Cloudflare auto-builds the frontend. |
+
+```mermaid
+flowchart LR
+    Judge["Judge Browser"] -->|HTTPS| CF["Cloudflare Pages: React SPA + /benchmarks static fallbacks"]
+    Judge -->|"HTTPS REST + binary Float32"| HF
+    Judge -->|"WSS /api/admin/ws/training"| HF
+    Judge -->|"WSS Realtime (SELECT only, RLS)"| SupaRT["Supabase Realtime"]
+    subgraph HF["Hugging Face Space (Docker, UID 1000, 16 GB RAM)"]
+        Go["Go Gateway :7860 (chi, sqlc, pgx/v5, LRU, WS hub)"]
+        Py["Python Worker 127.0.0.1:8001 (FastAPI, Astropy, PyTorch CPU)"]
+        Go <-->|loopback HTTP| Py
+    end
+    Go -->|"Session Pooler :5432 (IPv4)"| PG[("Supabase Postgres + pgvector")]
+    PG --> SupaRT
+    Py -->|"SIA2 / S3 byte-range"| IRSA["IRSA + s3://nasa-irsa-spherex"]
+    Cron["cron-job.org every 5 min"] -->|GET /api/health| Go
+    GHA["GitHub Actions every 15 min (backup)"] -->|GET /api/health| Go
+```
+
+### 10.3 Supabase Cloud Setup
+1. Create project **`spectra-prod`** (region closest to the HF Space region; HF Spaces generally run in US/EU, so choose `us-east-1` or `eu-central-1`).
+2. In the SQL Editor run `api-gateway/db/schema.sql` (Section 5.1), then `api-gateway/db/seed_benchmarks.sql`, then the heartbeat table:
+   ```sql
+   CREATE TABLE IF NOT EXISTS system_heartbeats (
+       id INT PRIMARY KEY DEFAULT 1,
+       last_ping TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       CONSTRAINT single_row CHECK (id = 1)
+   );
+   INSERT INTO system_heartbeats (id, last_ping) VALUES (1, NOW())
+   ON CONFLICT (id) DO NOTHING;
+   ```
+3. **Row Level Security (mandatory with zero-auth).** The `anon` key ships inside the public frontend bundle, and Supabase exposes every `public` table through PostgREST. Without RLS anyone could write or delete rows directly. All writes go through the Go gateway (which connects as the `postgres` role and bypasses RLS); the browser only needs read access to the discussion tables for Realtime:
+   ```sql
+   ALTER TABLE subjects            ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE observers           ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE classifications     ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE discussion_threads  ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE discussion_replies  ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE ml_training_runs    ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE system_heartbeats   ENABLE ROW LEVEL SECURITY;
+
+   -- Browser (anon) may only READ discussion data, needed for Realtime postgres_changes
+   CREATE POLICY "anon read threads" ON discussion_threads FOR SELECT TO anon USING (true);
+   CREATE POLICY "anon read replies" ON discussion_replies FOR SELECT TO anon USING (true);
+   -- No INSERT/UPDATE/DELETE policies for anon on any table => denied by default.
+
+   -- Enable Realtime broadcasting for the two discussion tables
+   ALTER PUBLICATION supabase_realtime ADD TABLE discussion_threads, discussion_replies;
+   ```
+4. **Connection string.** Copy the **Session Pooler** URI (Project Settings → Database → Connect → Session pooler, host `aws-0-<region>.pooler.supabase.com`, port `5432`, user `postgres.<project-ref>`).
+   - The *direct* connection (`db.<ref>.supabase.co`) is IPv6-only on the free tier; HF containers may not route IPv6. Use the pooler.
+   - Use **session** mode (port 5432), not **transaction** mode (port 6543). `pgx/v5` caches prepared statements by default and `sqlc` emits prepared queries (`emit_prepared_queries: true`); transaction pooling breaks named prepared statements.
+   - Append `?sslmode=require`.
+5. Copy **Project URL** and **anon key** (Project Settings → API) for the frontend only. The `service_role` key is never used or shipped.
+
+### 10.4 Unified Backend Container (Hugging Face Spaces)
+HF Docker Spaces rules: the container runs as a non-root user with **UID 1000**; only one public port is routed (set via `app_port`, here `7860`) and it carries both HTTPS and WSS; disk is **ephemeral** (wiped on restart/rebuild).
+
+#### 10.4.1 Space Repository Layout
+The Space is its own git repo (`huggingface.co/spaces/<user>/spectra-mission-engine`). It receives a mirror of the backend from GitHub (Section 10.7):
+```
+spectra-mission-engine/      (HF Space repo root)
+├── README.md                # HF frontmatter (below)
+├── Dockerfile
+├── start.sh
+├── api-gateway/             # Go module (sqlc output committed in internal/db)
+└── astro-worker/            # pyproject.toml + uv.lock + source + benchmark cache
+```
+
+#### 10.4.2 `README.md` Frontmatter
+```yaml
+---
+title: Spectra Mission Engine
+emoji: 🔭
+colorFrom: indigo
+colorTo: gray
+sdk: docker
+app_port: 7860
+fullWidth: true
+header: mini
+pinned: false
+---
+```
+> `colorFrom` / `colorTo` accept only `red, yellow, green, blue, indigo, purple, pink, gray`. The originally proposed `black` is invalid and fails the Space config check.
+
+#### 10.4.3 Multi-Stage `Dockerfile` (uv-based, CPU PyTorch)
+```dockerfile
+# ---------- Stage 1: Go gateway (sqlc + pgx/v5 + chi) ----------
+FROM golang:1.23-bookworm AS go-builder
+WORKDIR /build
+COPY api-gateway/go.mod api-gateway/go.sum ./
+RUN go mod download
+COPY api-gateway/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /spectra-gateway ./cmd/gateway
+
+# ---------- Stage 2: Python 3.11 science runtime ----------
+FROM python:3.11-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.4 /uv /usr/local/bin/uv
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/app/astro-worker/.venv/bin:/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+WORKDIR /home/user/app
+
+# Dependency layer (cached unless pyproject/uv.lock change)
+COPY --chown=user astro-worker/pyproject.toml astro-worker/uv.lock ./astro-worker/
+RUN cd astro-worker && uv sync --frozen --no-dev --no-install-project
+
+# Source, pre-computed benchmark cache, Go binary, supervisor
+COPY --chown=user astro-worker/ ./astro-worker/
+RUN cd astro-worker && uv sync --frozen --no-dev
+COPY --from=go-builder --chown=user /spectra-gateway ./spectra-gateway
+COPY --chown=user start.sh ./start.sh
+RUN chmod +x ./start.sh ./spectra-gateway && mkdir -p /home/user/app/cache
+
+EXPOSE 7860
+HEALTHCHECK --interval=60s --timeout=5s CMD curl -fsS http://127.0.0.1:7860/api/health/live || exit 1
+CMD ["./start.sh"]
+```
+CPU-only PyTorch is pinned in `astro-worker/pyproject.toml` so `uv.lock` never resolves the ~2.5 GB CUDA wheels:
+```toml
+[project]
+name = "astro-worker"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.8",
+  "astropy>=6.1.3", "pyvo>=1.5.2", "reproject>=0.14.0",
+  "numpy>=2.1.1", "scipy>=1.14.1", "scikit-learn>=1.5.0",
+  "torch>=2.4.0", "fsspec>=2024.6.1", "s3fs>=2024.6.1",
+  "httpx>=0.27", "msgpack>=1.0",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+```
+
+#### 10.4.4 Process Supervisor (`start.sh`)
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[Spectra] Starting Python worker on 127.0.0.1:8001"
+( cd /home/user/app/astro-worker && \
+  uvicorn main:app --host 127.0.0.1 --port 8001 --workers 1 --timeout-keep-alive 30 ) &
+WORKER_PID=$!
+
+# Wait up to 60 s for the worker before exposing the public port
+for i in $(seq 1 60); do
+  curl -fsS http://127.0.0.1:8001/worker/health >/dev/null 2>&1 && break
+  sleep 1
+done
+
+echo "[Spectra] Starting Go gateway on 0.0.0.0:7860"
+export PORT=7860
+export ASTRO_WORKER_URL="http://127.0.0.1:8001"
+/home/user/app/spectra-gateway &
+GATEWAY_PID=$!
+
+trap 'kill -TERM $WORKER_PID $GATEWAY_PID 2>/dev/null' TERM INT
+# If either process dies, exit non-zero so HF restarts the container cleanly
+wait -n $WORKER_PID $GATEWAY_PID
+exit 1
+```
+- **One uvicorn worker only.** PyTorch training and `reproject` are CPU-bound; with 2 vCPUs, parallelism comes from `torch.set_num_threads(2)` and a single `asyncio` training task, not multiple processes (which would duplicate model memory).
+
+#### 10.4.5 Space Secrets & Variables (Settings → Variables and secrets)
+| Name | Type | Value |
+|---|---|---|
+| `DATABASE_URL` | Secret | `postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require` |
+| `ALLOWED_ORIGINS` | Variable | `https://spectra.pages.dev,http://localhost:5173` |
+| `IRSA_COLLECTION` | Variable | `spherex_qr3` |
+| `CACHE_DIR` | Variable | `/home/user/app/cache` |
+| `SPECTRA_DEMO_READONLY_ADMIN` | Variable | `false` (set `true` to disable `/api/admin` mutations if abuse occurs, see 10.9) |
+
+#### 10.4.6 Health Endpoints (Go)
+Two routes so the container healthcheck never hits the database every minute:
+- `GET /api/health/live`: process liveness only, returns `200 {"status":"live"}`.
+- `GET /api/health`: **dual-action keep-alive**, touches all three tiers.
+```go
+func (s *Server) handleHealthKeepAlive(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+    defer cancel()
+
+    // 1. Real write on Supabase: resets the 7-day inactivity pause timer
+    _, dbErr := s.dbPool.Exec(ctx, `UPDATE system_heartbeats SET last_ping = NOW() WHERE id = 1`)
+
+    // 2. Loopback ping to the Python worker
+    pyStatus := "ok"
+    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.workerURL+"/worker/health", nil)
+    resp, pyErr := s.httpClient.Do(req)
+    if pyErr != nil {
+        pyStatus = "down"
+    } else {
+        if resp.StatusCode != http.StatusOK {
+            pyStatus = "degraded"
+        }
+        resp.Body.Close()
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Cache-Control", "no-store")
+    status := http.StatusOK
+    body := map[string]string{
+        "status": "alive", "gateway": "ok", "py_worker": pyStatus,
+        "supabase": "updated", "timestamp": time.Now().UTC().Format(time.RFC3339),
+    }
+    if dbErr != nil {
+        status = http.StatusServiceUnavailable
+        body["status"], body["supabase"] = "db_error", dbErr.Error()
+    } else if pyStatus != "ok" {
+        status = http.StatusServiceUnavailable
+        body["status"] = "worker_error"
+    }
+    w.WriteHeader(status)
+    _ = json.NewEncoder(w).Encode(body)
+}
+```
+
+#### 10.4.7 CORS, WebSockets & Public URLs
+- Frontend (Cloudflare) and backend (HF) are different origins. The gateway uses `github.com/go-chi/cors` with `AllowedOrigins` from `ALLOWED_ORIGINS`, `AllowedHeaders: ["Content-Type","X-Observer-ID","X-Observer-Callsign","X-Spectra-Portal"]`, `ExposedHeaders: ["X-Observer-ID","X-Cache"]`, `MaxAge: 600`.
+- The WebSocket upgrader (`/api/admin/ws/training`) checks `Origin` against the same allowlist.
+- WebSocket hub sends a ping frame every **25 s** so idle proxies do not drop the connection; the client reconnects with exponential backoff (1 s → 30 s cap) and resumes from the 100-frame ring buffer (Section 6.4).
+- Call the **direct container subdomain**, never the `huggingface.co/spaces/...` iframe wrapper:
+  - REST: `https://<hf-user>-spectra-mission-engine.hf.space`
+  - WSS: `wss://<hf-user>-spectra-mission-engine.hf.space/api/admin/ws/training`
+- Binary cutouts (`application/octet-stream`, Float32) are served with `Content-Encoding: gzip` when the client accepts it (Float32 sky data compresses ~2–3×).
+
+#### 10.4.8 Ephemeral Disk Strategy
+- HF disk is wiped on every restart/rebuild, so nothing important may live only on disk.
+- **Baked into the image:** the 5 benchmark targets' Float32 cutouts, spectra, and pre-trained model weights (`astro-worker/cache/benchmarks/`, `astro-worker/models/*.pt`).
+- **Runtime cache:** on-demand IRSA cutouts go to `CACHE_DIR` plus the Go in-memory LRU; losing them only costs a re-fetch.
+- **Durable state:** everything else (classifications, threads, training-run summaries) lives in Supabase. `ml_training_runs.telemetry_frames` stores downsampled frames (≤ 1 per epoch) to respect the 500 MB DB limit.
+
+### 10.5 Frontend Deployment (Cloudflare Pages)
+1. **Project settings:** Connect the GitHub repo → Framework preset *Vite* → Root directory `web-client` → Build command `npm ci && npm run build` → Output directory `dist` → env `NODE_VERSION=20`.
+2. **Environment variables (build-time, inlined by Vite):**
+   | Variable | Value |
+   |---|---|
+   | `VITE_API_BASE_URL` | `https://<hf-user>-spectra-mission-engine.hf.space` |
+   | `VITE_WS_BASE_URL` | `wss://<hf-user>-spectra-mission-engine.hf.space` |
+   | `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+   | `VITE_SUPABASE_ANON_KEY` | `<anon key>` (public by design; protected by RLS, Section 10.3) |
+3. **SPA routing:** `web-client/public/_redirects`
+   ```
+   /*    /index.html   200
+   ```
+4. **Caching headers:** `web-client/public/_headers`
+   ```
+   /assets/*
+     Cache-Control: public, max-age=31536000, immutable
+   /benchmarks/*
+     Cache-Control: public, max-age=86400
+   /index.html
+     Cache-Control: no-cache
+   ```
+5. **Static benchmark fallback (judge-proof):** `web-client/public/benchmarks/` holds `{barnards_star,wise_0855,eps_indi_b,rw_aur,r_dra}.json` (metadata, WCS, 102-band spectrum) plus matching `.f32` binary cutouts. The data hook resolves benchmark IDs from `/benchmarks/` first (served from the CDN edge in $<15\,\text{ms}$), then refreshes from the API in the background via TanStack Query. If the backend is down, the 5 mandatory targets still play in Tabs 1–4.
+6. **Preview deployments:** every PR gets a `*.spectra.pages.dev` preview URL; add `https://*.spectra.pages.dev` handling to the gateway CORS check (suffix match) if previews must call the API.
+
+### 10.6 Redundant Keep-Alive Automation
+HF free Spaces sleep after ~48 h without traffic; Supabase free projects pause after 7 days without DB activity. One `GET /api/health` resets both.
+
+**Primary: cron-job.org (every 5 min, precise timing)**
+- Title `Spectra Production Heartbeat`; URL `https://<hf-user>-spectra-mission-engine.hf.space/api/health`; schedule every 5 minutes; timeout 15 s; enable *notify on failure* (emails you when a bad push breaks the server).
+
+**Backup: GitHub Actions (`.github/workflows/heartbeat.yml`)**
+```yaml
+name: Spectra Keep-Alive Heartbeat
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping gateway, Python worker and Supabase
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
+            https://<hf-user>-spectra-mission-engine.hf.space/api/health)
+          echo "Heartbeat HTTP status: $code"
+          test "$code" -eq 200
+```
+> [!NOTE]
+> GitHub delays scheduled workflows under load (15–30 min is common) and **disables schedules after 60 days without repository activity**, which is why it is only the backup.
+
+### 10.7 CI/CD Pipeline
+| Trigger | Job | Action |
+|---|---|---|
+| PR / push | `ci.yml` | `go vet` + `go test ./...` + `sqlc diff` (fails if generated code is stale); `uv run ruff check` + `uv run pytest`; `npm ci && npm run typecheck && npm run build`. |
+| Push to `main` (backend paths) | `deploy-backend.yml` | Mirrors `api-gateway/`, `astro-worker/`, `Dockerfile`, `start.sh`, `hf/README.md` to the HF Space repo; HF rebuilds the image. |
+| Push to `main` (web-client) | Cloudflare Pages | Native Git integration auto-builds and deploys. |
+| Every 15 min | `heartbeat.yml` | Backup keep-alive (10.6). |
+
+`deploy-backend.yml`:
+```yaml
+name: Deploy backend to Hugging Face Space
+on:
+  push:
+    branches: [main]
+    paths: ['api-gateway/**', 'astro-worker/**', 'Dockerfile', 'start.sh', 'hf/README.md']
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble Space tree
+        run: |
+          mkdir space
+          cp -r api-gateway astro-worker Dockerfile start.sh space/
+          cp hf/README.md space/README.md
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # write token from hf.co/settings/tokens
+          HF_USER: ${{ vars.HF_USER }}
+        run: |
+          pip install -q "huggingface_hub>=0.24"
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+              folder_path="space",
+              repo_id=f'{os.environ["HF_USER"]}/spectra-mission-engine',
+              repo_type="space",
+              commit_message=f'Deploy {os.environ.get("GITHUB_SHA","")[:7]}',
+          )
+          EOF
+```
+Large binaries (benchmark `.f32`, `.pt` weights) over 10 MB must be tracked with Git LFS / Xet in the Space repo; `upload_folder` handles this automatically.
+
+### 10.8 Resource Budget (cpu-basic: 2 vCPU / 16 GB)
+| Component | Est. RAM | Notes |
+|---|---|---|
+| Go gateway + LRU (2,000 cutouts) | 0.3–1.5 GB | Cap LRU by bytes (e.g. 1 GB), not only by count. |
+| Python worker idle (Astropy, FastAPI, torch import) | ~0.8 GB | |
+| `reproject` on one 180″ multi-epoch cutout | < 0.5 GB peak | Byte-range reads avoid loading full 2040×2040 MEFs. |
+| Live training (Dipole ConvNet + 1D-ResNet + SVM), batch 32 | 1–3 GB | Keep models small; 2 vCPU trains ~seconds/epoch on hundreds of samples. |
+| **Total headroom** | **> 8 GB free** | No OOM risk. |
+
+Guardrails: one concurrent training run (HTTP `409` if another is active); max epochs 50; worker request timeout 25 s; gateway rate-limit with `github.com/go-chi/httprate` (e.g. 60 req/min per `X-Observer-ID` or IP on write endpoints, 10 req/min on `/api/admin/retrain`).
+
+### 10.9 Zero-Auth Exposure Risks & Mitigations
+| Risk | Mitigation |
+|---|---|
+| Anyone discovering `/admin` can trigger retraining, promote candidates, or post "verified" replies. | Rate limits (10.8); single training run lock; `SPECTRA_DEMO_READONLY_ADMIN=true` kill-switch makes `/api/admin/*` mutations return `403` without a redeploy (Space restart only); all admin mutations logged with `X-Observer-ID`. |
+| Direct table writes via the public anon key. | RLS on all tables, SELECT-only for discussion tables (10.3). |
+| Spam in Tab 5. | Body length caps (title ≤ 120, body ≤ 4,000 chars), per-observer rate limit, server-side HTML escaping (Markdown rendered with sanitization on the client). |
+| DB growth past 500 MB. | Downsampled telemetry frames; nightly `DELETE` of `user_explored` subjects older than 30 days with no classifications. |
+| Keep-alive pinging policy. | Light 5-minute health checks are within normal monitoring use; if HF changes its policy, upgrade to a paid always-on CPU Space or move the same container to Fly.io / Google Cloud Run (`min-instances=1`) with no code changes (it only needs `PORT`). |
+
+### 10.10 Deployment Runbook & Verification
+1. Create Supabase project → run schema, seeds, heartbeat table, RLS policies, Realtime publication.
+2. Create HF Space (Docker, blank, `cpu-basic`) → add secrets/variables (10.4.5) → add `HF_TOKEN` + `HF_USER` to GitHub → run `deploy-backend.yml`.
+3. Wait for build → verify:
+   - `curl https://<hf-user>-spectra-mission-engine.hf.space/api/health` returns `200` with `"supabase":"updated"` and `"py_worker":"ok"`.
+   - `SELECT last_ping FROM system_heartbeats;` shows the new timestamp.
+4. Create Cloudflare Pages project with env vars → deploy → open `https://spectra.pages.dev/explore`.
+5. Smoke tests:
+   - The 5 benchmark pills load instantly (CDN fallback) and then refresh from the API.
+   - Type an arbitrary RA/Dec → cutout plays in Tab 2 (live IRSA path).
+   - Post in Tab 5 from two browsers → the second sees it live (Realtime + RLS SELECT).
+   - Open `/admin/dynamics` → start a training run → loss curve streams over WSS.
+   - Run `curl -X POST https://<project-ref>.supabase.co/rest/v1/subjects -H "apikey: <anon>"` and confirm it is rejected (RLS works).
+6. Configure cron-job.org (5 min) and confirm `heartbeat.yml` is enabled.
+7. **Day before judging:** trigger a manual rebuild, re-run the smoke tests, and confirm cron-job.org history is green.
+
