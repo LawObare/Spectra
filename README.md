@@ -222,6 +222,7 @@ Each phase ends with a self-contained, demonstrable milestone before the next on
 
 - **[`SPECIFICATION.md`](SPECIFICATION.md):** Authoritative technical specification (v3.0.0-PROD): formulas, WCS reprojection pipelines, database DDL, component wireframes, and deployment runbooks.
 - **[`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md):** Systems architecture and design document (v3.0.0-PROD): 4+1 view model, 10 SDD sections, ADRs, and verification matrices.
+- **[`docs/README.md`](docs/README.md):** Index of supporting documentation, including audits, planning notes, reference material, and design assets.
 - **[`docs/PLAIN_LANGUAGE_GUIDE.md`](docs/PLAIN_LANGUAGE_GUIDE.md):** A plain-but-technical explanation of how Spectra works, what the terms mean, and where the code lives.
 - **[`prerequisites.md`](prerequisites.md):** Build essentials, runtimes, and developer acceleration tools (`uv`, Taskfile, `nuqs`, and others).
 - **[`.agents/CONTEXT.md`](.agents/CONTEXT.md):** Chronological architectural log covering Exchanges #1 through #42 of the project ideation.

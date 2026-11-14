@@ -4,7 +4,7 @@
 > This document catalogs all foundational archives, software toolkits, data access APIs, and community tools that govern the engineering of **Spectra** (NASA SPHEREx Quick Release 2 Explorer & Time-Domain Workbench).  
 > Every reference is analyzed for its **critical role in Spectra**, the **exact architectural section modeled after it**, and the **flawed assumptions it directly debunks**.
 
-> Companion review of current ingestion behavior and proposed corrections: [SPHEREx Data-Handling Audit](DATA_HANDLING_AUDIT.md).
+> Companion review of current ingestion behavior and proposed corrections: [SPHEREx Data-Handling Audit](../audits/DATA_HANDLING_AUDIT.md).
 
 ---
 
@@ -317,7 +317,7 @@ Contains executable reference code for working with the **empirical Point Spread
 #### Assumptions Debunked:
 > [!CAUTION]
 > **Debunked Assumption:** *A 3D celestial sphere should be rendered as an external rotating 3D globe floating inside a window.*  
-> **Reality:** Viewing space from the outside of a spherical ball is physically inverted (celestial coordinates are viewed from Earth looking *outward*, not from space looking inward at a sphere). As codified in [`DESIGN.md`](DESIGN.md), Tab 1 is an **immersed, edge-to-edge flat tangent sky plane**, utilizing Aladin Lite v3’s WebGL2 WCS projector to deliver authentic observatory console behavior.
+> **Reality:** Viewing space from the outside of a spherical ball is physically inverted (celestial coordinates are viewed from Earth looking *outward*, not from space looking inward at a sphere). As codified in [`DESIGN.md`](../../DESIGN.md), Tab 1 is an **immersed, edge-to-edge flat tangent sky plane**, utilizing Aladin Lite v3’s WebGL2 WCS projector to deliver authentic observatory console behavior.
 
 ---
 

@@ -161,7 +161,7 @@ All SPHEREx science data is received, calibrated, and curated by the **NASA / IP
 
 ## 7. Role in the Spectra Platform
 
-The **Spectra** web application ([`SPECIFICATION.md`](SPECIFICATION.md)) is purpose-built to solve the primary user experience and data analysis challenges associated with the SPHEREx mission:
+The **Spectra** web application ([`SPECIFICATION.md`](../../SPECIFICATION.md)) is purpose-built to solve the primary user experience and data analysis challenges associated with the SPHEREx mission:
 
 1. **Immersed Sky Exploration:** Eliminates complex raw FITS command-line hurdles, letting researchers and citizen scientists pan and zoom through SPHEREx multi-order coverage maps (MOC) and Aladin Lite v3 WebGL2 celestial dome projections.
 2. **Time-Domain Comparison:** Directly compares discrete 6-month survey epochs in hardware-accelerated WebGL2 shaders, enabling discovery of fast-moving nearby brown dwarfs (e.g., WISE 0855-0714, Barnard's Star) and photometric variable stars (e.g., RW Aurigae, R Draconis).
@@ -175,4 +175,4 @@ The **Spectra** web application ([`SPECIFICATION.md`](SPECIFICATION.md)) is purp
 - **Caltech SPHEREx Science Center:** [https://spherex.caltech.edu/](https://spherex.caltech.edu/)
 - **NASA / IPAC Infrared Science Archive (IRSA):** [https://irsa.ipac.caltech.edu/Missions/spherex.html](https://irsa.ipac.caltech.edu/Missions/spherex.html)
 - **NASA Science Mission Directorate (Astrophysics):** [https://science.nasa.gov/mission/spherex/](https://science.nasa.gov/mission/spherex/)
-- **Spectra Specification & Design:** [`SPECIFICATION.md`](SPECIFICATION.md) and [`DESIGN.md`](DESIGN.md)
+- **Spectra Specification & Design:** [`SPECIFICATION.md`](../../SPECIFICATION.md) and [`DESIGN.md`](../../DESIGN.md)
