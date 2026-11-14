@@ -38,8 +38,12 @@ To prevent two developers (or their AI agents) from accidentally claiming and wo
 
 1. **Strict Single-Owner Lock:** Each GitHub Issue (`#1`–`#30`) belongs exclusively to the developer role (`E1`–`E6`) assigned in this document. **No developer (or their AI agent) may claim, implement, or open a PR for another developer's assigned issue.**
 2. **Agent Role Self-Check:** Before executing any code change on Issue `#<N>`, the AI agent must verify that Issue `#<N>` is listed under its operator's locked role (`E1`–`E6`) in `tasks.md`. If a human prompts an agent with an issue ID belonging to another role, the agent must **refuse and halt**.
-3. **File Write-Fence Enforcement:** Modifying any file in another developer's exclusive write territory (`git diff --name-only main`) is a blocking PR violation.
-4. **What If You Finish Your Phase Queue Early?**
+3. **File Write-Fence Enforcement:** Modifying any file in another developer's exclusive write territory (`git diff --name-only origin/develop...HEAD`) is a blocking PR violation.
+4. **Mandatory Pre-Merge Code Review, 5-Block Handover & `develop` Integration ([`AGENTS.md` §7](AGENTS.md#L152-L202)):**
+   - All agents branch from and merge into `develop` (`feat/issue-<N>-<slug>` $\rightarrow$ `develop`).
+   - Before merging into `develop`, every agent must run the dual-axis [`code-review`](.agents/skills/code-review/SKILL.md) skill against `origin/develop`, post the **5-Block Technical Handover Summary** to the PR and Issue `#<N>` (`gh issue comment <N>`), squash-merge into `develop`, and close Issue `#<N>` (`gh issue close <N>`).
+   - Verified batches are promoted from `develop` $\rightarrow$ `main` at each Phase Milestone Gate.
+5. **What If You Finish Your Phase Queue Early?**
    - Do **not** poach a teammate's open issue in the current phase or jump ahead to implement another developer's next-phase UI.
    - Instead: (a) write unit/integration tests within your own territory, (b) review open PRs, or (c) prepare local `.plan` drafts for **your own** next-phase issues without merging them until the current Milestone Gate passes.
 

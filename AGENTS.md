@@ -111,13 +111,16 @@ You are 1 of 6 concurrent AI coding agents operating on `LawObare/Spectra`. Unco
      - **`E6` (`role:E6-devops`):** `#1, #2, #4, #6, #13, #29, #30` (7 issues)
    - **Mandatory Agent Refusal:** Before writing any code, verify your human operator's role (`E1`–`E6`) against [`tasks.md`](tasks.md). If prompted to implement an issue or modify files owned by another developer's role, **refuse and halt immediately**:
      > *"STOP: Issue `#<N>` (`<path>`) is locked to Role `<Owner>` in `tasks.md`. Under the Zero Cross-Role Poaching Rule (`AGENTS.md` §6.1), I cannot execute another developer's assigned job."*
-3. **Bind to Exactly One GitHub Issue (`#1`–`#30`):** Before reading or writing code, run `gh issue view <N>` to load your assigned issue's Specification Anchors, Target Files, and Acceptance Criteria.
+3. **Bind to Exactly One GitHub Issue (`#1`–`#30`):** Before reading or writing code, run `gh issue view <N> --comments` to load your assigned issue's Specification Anchors, Target Files, Acceptance Criteria, and any upstream agent handover notes.
 4. **Never Cross Issue Boundaries:** Do not implement features belonging to another issue or phase.
-5. **Never Commit to `main`:** Always create and work on an isolated branch:
-   ```bash
-   git checkout main && git pull --ff-only
-   git checkout -b feat/issue-<N>-<short-slug>
-   ```
+5. **Two-Tier Branching Model (`feat/*` $\rightarrow$ `develop` $\rightarrow$ `main`):**
+   - **`develop` is the High-Frequency Integration Trunk:** All agents branch off `develop`, rebase onto `develop`, and open PRs targeting `develop` (`--base develop`) as soon as an issue is verified.
+   - **`main` is the Milestone Release Trunk:** Individual feature branches **never** target or commit to `main`. Only verified Milestone Gate batches (`Phase 0`, `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`) are promoted from `develop` $\rightarrow$ `main`.
+   - Always start your issue branch from the latest `develop`:
+     ```bash
+     git checkout develop && git pull --ff-only origin develop
+     git checkout -b feat/issue-<N>-<short-slug>
+     ```
 
 ### 6.2 Strict File Write-Fences (Blast-Radius Control)
 Each agent role has an **Exclusive Write Territory** matching [`tasks.md`](tasks.md). You are **forbidden** from modifying files outside your role's territory:
@@ -144,12 +147,56 @@ Each agent role has an **Exclusive Write Territory** matching [`tasks.md`](tasks
 
 ---
 
-## 7. Pre-Commit & Pre-PR Verification Checklist
+## 7. Pre-Merge Code Review, Technical Handover Summary & Merge Protocol
 
-Before claiming any issue is complete or opening a PR (`gh pr create`), the agent must verify:
-- [ ] Code strictly matches the interfaces in [`SPECIFICATION.md`](SPECIFICATION.md) and all acceptance criteria in `gh issue view <N>`.
-- [ ] Backend checks pass: `cd backend && uv run ruff check . && uv run pytest`.
-- [ ] Frontend build passes: `cd web-client && npm run build`.
-- [ ] Blast-radius check passes (`git status --short` and `git diff --stat main`): zero untracked scratch files, zero lockfile churn, and zero edits outside the issue's target files.
-- [ ] No hardcoded passwords, tokens, or JWT walls blocking access.
-- [ ] Changes are committed with conventional commit messages (`feat(phase-1): ... (#<N>)`) and PR body includes `Closes #<N>`.
+Every agent must execute this exact 4-step sequence before merging an issue branch into `develop`:
+
+### 7.1 Step 1: Rebase & Local Verification Gate
+1. Rebase onto the latest `origin/develop` so integration conflicts are resolved on your feature branch, never on `develop`:
+   ```bash
+   git fetch origin develop && git rebase origin/develop
+   ```
+2. Run all applicable verification checks:
+   - Backend checks: `cd backend && uv run ruff check . && uv run pytest`
+   - Frontend build: `cd web-client && npm run build`
+   - Blast-radius check: `git status --short && git diff --stat origin/develop...HEAD` (confirm zero untracked scratch files, zero lockfile churn, and zero edits outside your role's territory in §6.2).
+
+### 7.2 Step 2: Mandatory Dual-Axis Pre-Merge Code Review (`code-review` Skill)
+Before opening or merging a PR into `develop`, load and execute [`.agents/skills/code-review/SKILL.md`](.agents/skills/code-review/SKILL.md) against `origin/develop`:
+- **Axis 1 — Standards Review:** Verify compliance with `AGENTS.md` (write-fences, zero-auth headers, frozen lockfiles, no hardcoded secrets).
+- **Axis 2 — Spec Review:** Verify compliance with [`SPECIFICATION.md`](SPECIFICATION.md) equations, wire contracts, and all acceptance criteria in `gh issue view <N>`.
+- **Zero Unresolved Blockers:** Fix every Standards or Spec violation uncovered by the review before proceeding to Step 3.
+
+### 7.3 Step 3: Mandatory 5-Block Technical Handover Summary (For Sibling Bots)
+Because 6 agents work concurrently off `develop`, you must leave a dense, zero-fluff technical record of what you built so sibling agents can consume your interfaces via `gh issue view <N> --comments` without reading your entire source tree. Post this exact **5-Block Technical Handover Summary** in the PR body **and** as a comment on Issue `#<N>` (`gh issue comment <N>`):
+
+```markdown
+## Agent Handover Summary — Issue #<N> (Role <E1–E6>)
+1. **Spec Anchors Implemented:** `SPECIFICATION.md §X.Y` (exact formulas, headers, or UI states implemented).
+2. **Files Touched (`git diff --stat origin/develop...HEAD`):**
+   - `path/to/file` (+A/-B): Concise description of changes.
+3. **Exported Contracts & Signatures (For Sibling Bots):**
+   - Exact Python functions/classes, FastAPI routes, or TypeScript props/hooks exposed on `develop`.
+4. **Verification & Code Review Verdict:**
+   - Exact `pytest` / `ruff` / `npm run build` output + `code-review` (Standards: PASS, Spec: PASS).
+5. **Downstream Integration Notes:**
+   - Any assumptions, environment variables, or edge cases sibling roles (`E1`–`E6`) need when pulling `develop`.
+```
+
+### 7.4 Step 4: Fast Merge to `develop`, Issue Closure & Batch Promotion to `main`
+1. **Open PR to `develop` & Merge Immediately Once Green:**
+   ```bash
+   gh pr create --base develop --title "feat(phase-X): <summary> (#<N>)" --body-file <handover.md>
+   gh pr merge --squash --delete-branch
+   ```
+2. **Explicitly Close Issue `#<N>` on `develop` Merge** *(since GitHub only auto-closes issues on the default branch `main`)*:
+   ```bash
+   gh issue comment <N> --body-file <handover.md>
+   gh issue close <N> --comment "✅ Verified, dual-axis code-reviewed, and squash-merged into \`develop\`. Queued for Phase Milestone batch promotion to \`main\`."
+   ```
+3. **Milestone Batch Promotion (`develop` $\rightarrow$ `main`):**
+   - Only when all issues in a Phase Milestone (`Phase 0`, `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`) are closed on `develop` and verified end-to-end does the team promote the batch to `main`:
+     ```bash
+     gh pr create --base main --head develop --title "release(phase-X): promote verified Phase X milestone batch to main"
+     gh pr merge --merge
+     ```
