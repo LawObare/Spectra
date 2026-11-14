@@ -679,14 +679,14 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-black/90 backdrop-blur-md px-4 font-sans text-xs text-foreground select-none">
+    <header className="relative z-50 shrink-0 flex min-h-[56px] xl:h-[56px] flex-wrap xl:flex-nowrap items-center justify-between gap-x-2.5 gap-y-1.5 border-b border-border bg-black/90 backdrop-blur-md px-2.5 sm:px-4 py-1.5 xl:py-0 font-sans text-xs text-foreground select-none">
       {/* 1. Spectra Branding & Mission Status */}
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="order-1 flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 shrink-0 min-w-0">
         <Link
           to="/"
           aria-label="SPHEREx — return to mission home"
           title="Return to the SPHEREx mission home page"
-          className="group flex items-center gap-2.5 rounded-md px-1 py-1 -mx-1 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          className="group flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
         >
           <SpectraLogoSvg className="h-7 w-7 drop-shadow-sm transition-transform group-hover:scale-105" />
           <div className="flex flex-col">
@@ -699,7 +699,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           </div>
         </Link>
 
-        <span className="h-4 w-px bg-neutral-800" aria-hidden="true" />
+        <span className="hidden sm:inline-block h-4 w-px bg-neutral-800" aria-hidden="true" />
 
         {/* Option A: Mission Briefing Toggle Button */}
         {onToggleMissionBriefing && (
@@ -707,7 +707,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
             type="button"
             onClick={onToggleMissionBriefing}
             className={cn(
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all',
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all whitespace-nowrap',
               isMissionBriefingActive
                 ? 'bg-primary text-white shadow-sm ring-1 ring-primary/50'
                 : 'border border-neutral-700 bg-neutral-900/80 text-neutral-300 hover:border-neutral-500 hover:text-white'
@@ -720,7 +720,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
 
         {/* Active Mission Operational Status Badge */}
         <div
-          className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 cursor-default"
+          className="hidden sm:flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 cursor-default whitespace-nowrap"
           title="SPHEREx Operational Status: All 6 Near-IR Detectors Active (0.75 - 5.0 μm)"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -742,7 +742,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           <button
             type="button"
             onClick={onOpenCatalog}
-            className="hidden md:flex items-center gap-1.5 rounded-full border border-neutral-800 bg-neutral-900/80 hover:bg-neutral-800 hover:border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300 hover:text-white transition-all shadow-sm"
+            className="flex items-center gap-1.5 rounded-full border border-neutral-800 bg-neutral-900/80 hover:bg-neutral-800 hover:border-neutral-700 px-2.5 sm:px-3 py-1 text-xs font-medium text-neutral-300 hover:text-white transition-all shadow-sm whitespace-nowrap"
             title="Browse all 24 calibrated astronomical targets across the survey"
           >
             <svg className="h-3.5 w-3.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -756,7 +756,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
       </div>
 
       {/* 2. Universal Coordinate & Object Name Resolver (SIMBAD / NED / ICRS / Catalog) */}
-      <div ref={searchContainerRef} className="relative flex-1 max-w-md">
+      <div ref={searchContainerRef} className="order-2 relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px] sm:max-w-md">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -899,11 +899,11 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
       </div>
 
       {/* 3. Workspace Tab Switcher & Share */}
-      <div className="flex items-center gap-2.5 shrink-0">
+      <div className="order-3 flex w-full xl:w-auto items-center justify-between xl:justify-end gap-2 min-w-0 border-t border-neutral-800/70 pt-1.5 xl:border-t-0 xl:pt-0 xl:shrink-0">
         {/* Compact Tensor Memory Readout */}
         <div
           className={cn(
-            'hidden xl:flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums',
+            'hidden 2xl:flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums shrink-0',
             payloadMb >= 2.0
               ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
               : 'border-border bg-background text-muted-foreground'
@@ -919,7 +919,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
 
         <nav
           aria-label="Workspaces"
-          className="flex items-center gap-1 rounded-full border border-neutral-800 bg-neutral-950/90 p-0.5"
+          className="flex items-center gap-1 rounded-full border border-neutral-800 bg-neutral-950/90 p-0.5 overflow-x-auto max-w-full min-w-0"
         >
           {TABS.map((t) => {
             const isActive = tab === t.id && !isMissionBriefingActive;
@@ -936,7 +936,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                 }}
                 aria-current={isActive ? 'page' : undefined}
                 className={cn(
-                  'h-7 px-2.5 sm:px-3 text-xs font-sans rounded-full transition-all',
+                  'shrink-0 whitespace-nowrap h-7 px-2.5 sm:px-3 text-xs font-sans rounded-full transition-all',
                   isActive
                     ? 'bg-primary text-white font-medium shadow-sm'
                     : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
@@ -950,7 +950,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         </nav>
 
         {/* Share & Embed Exporter Dropdown */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <Button
             variant="secondary"
             size="sm"
