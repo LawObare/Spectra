@@ -27,8 +27,40 @@ _checkpoint_lock = threading.Lock()
 # In-memory live PyTorch Base vs Trained model registry + active-learning SFT feedback store
 _BASE_MODELS: dict[str, Any] = {}
 _TRAINED_CHECKPOINTS: dict[str, dict[str, Any]] = {}
+_TRAINED_RUNS_HISTORY: list[dict[str, Any]] = []
 _SFT_FEEDBACK_EXAMPLES: list[dict[str, Any]] = []
 _MAX_FEEDBACK_EXAMPLES = 200
+_MAX_RUN_HISTORY = 25
+
+_BASE_MODEL_CARDS = [
+    {
+        "model_name": "SpectralResNet102",
+        "title": "SpectralResNet-102 + Multi-Head Attention",
+        "family": "1D Spectral Transformer-ResNet",
+        "input_shape": "[B, 2, 102] (Flux + Ivar)",
+        "layers_summary": "Conv1d Stem → 2× ResBlock1D → 2-Head Self-Attention → LoRA Head",
+        "total_params": 6850,
+        "recommended_for": "102-channel NIR SEDs, CH4/H2O/CO2 absorption & SFT <think> attribution",
+    },
+    {
+        "model_name": "DipoleConvNet3D",
+        "title": "DipoleConvNet-3D Spatio-Temporal",
+        "family": "3D Spatio-Temporal ConvNet",
+        "input_shape": "[B, 6, 4, 32, 32] (6 Bands × Epochs)",
+        "layers_summary": "Conv3d(6→8) → Pool3d → Conv3d(8→16) → act2 (Grad-CAM) → LoRA Head",
+        "total_params": 4858,
+        "recommended_for": "Multi-epoch moving dipoles (WISE 0855, Barnard's Star) & 32×32 Grad-CAM",
+    },
+    {
+        "model_name": "AstroFeatureSVM",
+        "title": "AstroFeature RBF Kernel Network",
+        "family": "Learnable Gaussian RBF Machine",
+        "input_shape": "[B, 3] (Color, Motion SNR, Ice/CH4)",
+        "layers_summary": "RBFLayer(32 Landmarks, γ) → LoRA Linear Readout",
+        "total_params": 226,
+        "recommended_for": "Low-parameter interpretable tabular boundaries across physical axes",
+    },
+]
 
 _SPECTRAL_FEATURES = [
     {"id": "feat_ch4_332", "label": "3.32 µm CH4 Methane", "wave_um": 3.32, "kind": "feature"},
@@ -66,6 +98,31 @@ def get_checkpoint_summary() -> dict[str, Any]:
             entry = _TRAINED_CHECKPOINTS.get(name)
             out[name] = dict(entry["meta"]) if entry else None
         return out
+
+
+def list_models_registry() -> dict[str, Any]:
+    """Return visible Base Models + Trained SFT/LoRA Model runs for Tab 1 Model Registry."""
+    with _checkpoint_lock:
+        has_any_trained = bool(_TRAINED_RUNS_HISTORY)
+
+    if not has_any_trained:
+        _ensure_model_pair("SpectralResNet102")
+
+    with _checkpoint_lock:
+        base_cards = []
+        for card in _BASE_MODEL_CARDS:
+            active_ckpt = _TRAINED_CHECKPOINTS.get(card["model_name"])
+            base_cards.append({
+                **card,
+                "has_trained_checkpoint": active_ckpt is not None,
+                "active_checkpoint": dict(active_ckpt["meta"]) if active_ckpt else None,
+            })
+        trained_cards = [dict(r) for r in _TRAINED_RUNS_HISTORY]
+
+    return {
+        "base_models": base_cards,
+        "trained_models": trained_cards,
+    }
 
 
 def add_feedback_example(
@@ -133,6 +190,7 @@ def run_training(
     completion_only_loss: bool = True,
     packing: bool = True,
     quantization_bits: int = 16,
+    custom_name: str | None = None,
 ):
     """Train on CPU, emitting one telemetry + TRL frame per epoch. Returns all frames."""
     import torch
@@ -267,25 +325,37 @@ def run_training(
         instr.close()
 
     if frames and mode != "replay":
+        resolved_name = (custom_name or "").strip() or (
+            f"{model_name}-LoRA-r{int(lora_r)}-{run_id[:4]}"
+            if lora_r > 0
+            else f"{model_name}-FullSFT-{run_id[:4]}"
+        )
+        run_meta = {
+            "model_id": f"{model_name}:{run_id}",
+            "custom_name": resolved_name,
+            "model_name": model_name,
+            "base_model": model_name,
+            "run_id": run_id,
+            "source": "studio_train" if mode != "auto_warmstart" else "auto_warmstart",
+            "trained_at": datetime.now(UTC).isoformat(),
+            "epochs_completed": len(frames),
+            "val_acc": frames[-1]["trl"]["mean_token_accuracy"],
+            "val_loss": frames[-1]["trl"]["val_loss"],
+            "entropy": frames[-1]["trl"]["entropy"],
+            "lora_r": int(lora_r),
+            "lora_alpha": int(lora_alpha),
+            "loss_type": loss_type,
+            "param_summary": param_info,
+        }
         with _checkpoint_lock:
             _BASE_MODELS[model_name] = base_snapshot
             _TRAINED_CHECKPOINTS[model_name] = {
                 "model": model.eval(),
-                "meta": {
-                    "model_name": model_name,
-                    "run_id": run_id,
-                    "source": "studio_train" if mode != "auto_warmstart" else "auto_warmstart",
-                    "trained_at": datetime.now(UTC).isoformat(),
-                    "epochs_completed": len(frames),
-                    "val_acc": frames[-1]["trl"]["mean_token_accuracy"],
-                    "val_loss": frames[-1]["trl"]["val_loss"],
-                    "entropy": frames[-1]["trl"]["entropy"],
-                    "lora_r": int(lora_r),
-                    "lora_alpha": int(lora_alpha),
-                    "loss_type": loss_type,
-                    "param_summary": param_info,
-                },
+                "meta": run_meta,
             }
+            _TRAINED_RUNS_HISTORY.insert(0, dict(run_meta))
+            if len(_TRAINED_RUNS_HISTORY) > _MAX_RUN_HISTORY:
+                del _TRAINED_RUNS_HISTORY[_MAX_RUN_HISTORY:]
     return frames
 
 
@@ -779,24 +849,26 @@ def build_relationship_graph(
             return t_rec["_astro_vec"]
         return t_rec["_spec_tensor"]
 
-    # 1. Extract real PyTorch penultimate embeddings for targets -> SVD 2D layout projection
+    # 1. Extract real PyTorch penultimate embeddings for targets -> SVD 3D layout projection
     target_vecs: list[np.ndarray] = []
     for t in raw_targets:
         vec = extract_latent_vector(active_model, _x_for(t))[0].cpu().numpy()
         target_vecs.append(vec)
 
-    coords_2d = np.zeros((max(1, len(target_vecs)), 2), dtype=np.float32)
+    coords_3d = np.zeros((max(1, len(target_vecs)), 3), dtype=np.float32)
     if len(target_vecs) >= 2:
         mat = np.stack(target_vecs, axis=0)
         mat_centered = mat - mat.mean(axis=0, keepdims=True)
         u, s, _vt = np.linalg.svd(mat_centered, full_matrices=False)
-        coords_2d[:, 0] = u[:, 0] * s[0]
+        coords_3d[:, 0] = u[:, 0] * s[0]
         if u.shape[1] > 1:
-            coords_2d[:, 1] = u[:, 1] * s[1]
-        cmax = max(float(np.max(np.abs(coords_2d))), 1e-6)
-        coords_2d = coords_2d / cmax * 0.72
+            coords_3d[:, 1] = u[:, 1] * s[1]
+        if u.shape[1] > 2:
+            coords_3d[:, 2] = u[:, 2] * s[2]
+        cmax = max(float(np.max(np.abs(coords_3d))), 1e-6)
+        coords_3d = coords_3d / cmax * 0.72
 
-    # Fixed well-separated ring positions for AI Class Hubs, Features, and Templates
+    # Fixed well-separated 3D orbital rings for AI Class Hubs, Features, and Templates
     for i, hub in enumerate(_CLASS_HUBS):
         ang = (2.0 * math.pi * i / len(_CLASS_HUBS)) - math.pi / 2.0
         nodes.append({
@@ -805,6 +877,7 @@ def build_relationship_graph(
             "kind": "class",
             "x": round(math.cos(ang) * 0.75, 4),
             "y": round(math.sin(ang) * 0.75, 4),
+            "z": round(0.28 * math.sin(ang * 2.0), 4),
             "meta": {"role": "AI Classification Hub"},
         })
 
@@ -816,10 +889,11 @@ def build_relationship_graph(
             "kind": "feature",
             "x": round(math.cos(ang) * 0.42, 4),
             "y": round(math.sin(ang) * 0.42, 4),
+            "z": round(-0.34 * math.cos(ang * 1.5), 4),
             "meta": {"wavelength_um": feat["wave_um"]},
         })
 
-    # Reference templates positioned around outer perimeter
+    # Reference templates positioned around outer 3D perimeter
     tpl_vectors: dict[str, np.ndarray] = {}
     for i, tpl_id in enumerate(_GRAPH_TEMPLATE_IDS):
         if tpl_id not in template_lookup:
@@ -834,6 +908,7 @@ def build_relationship_graph(
             "kind": "template",
             "x": round(math.cos(ang) * 0.92, 4),
             "y": round(math.sin(ang) * 0.92, 4),
+            "z": round(0.42 * math.sin(ang * 3.0), 4),
             "meta": meta,
         })
 
@@ -844,8 +919,9 @@ def build_relationship_graph(
             "id": nid,
             "label": t["label"],
             "kind": "target",
-            "x": round(float(coords_2d[i, 0]), 4),
-            "y": round(float(coords_2d[i, 1]), 4),
+            "x": round(float(coords_3d[i, 0]), 4),
+            "y": round(float(coords_3d[i, 1]), 4),
+            "z": round(float(coords_3d[i, 2]), 4),
             "meta": {
                 "target_id": t["target_id"],
                 "ra": t["ra"],
