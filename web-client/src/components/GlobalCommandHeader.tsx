@@ -301,45 +301,86 @@ const TABS = [
 ];
 
 /**
- * Official NASA Insignia (Meatball) Vector
+ * Original Spectra Emblem: Celestial Survey Sphere + 6-Band Infrared Spectral Prism (D1-D6)
  */
-export const NasaMeatballSvg: React.FC<{ className?: string }> = ({ className = 'h-6 w-7' }) => (
-  <svg
-    viewBox="0 0 110 92"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={className}
-    aria-label="NASA Logo"
-  >
-    <circle cx="55" cy="46" r="42" fill="#0B3D91" />
-    <path
-      d="M14 62L62 18L56 42L96 34L54 48L60 68L14 62Z"
-      fill="#F64137"
-    />
-    <ellipse
-      cx="55"
-      cy="46"
-      rx="46"
-      ry="19"
-      transform="rotate(-28 55 46)"
-      stroke="#FFFFFF"
-      strokeWidth="2.5"
+export const SpectraLogoSvg: React.FC<{ className?: string }> = ({ className = 'h-7 w-7' }) => {
+  const uid = React.useId().replace(/:/g, '');
+  const bgId = `spx-bg-${uid}`;
+  const ringId = `spx-ring-${uid}`;
+  const prismId = `spx-prism-${uid}`;
+
+  return (
+    <svg
+      viewBox="0 0 96 96"
       fill="none"
-    />
-    <text
-      x="55"
-      y="54"
-      textAnchor="middle"
-      fill="#FFFFFF"
-      fontFamily="Impact, Arial Black, sans-serif"
-      fontWeight="900"
-      fontSize="26"
-      letterSpacing="1.5"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-label="Spectra All-Sky Spectral Explorer Logo"
     >
-      NASA
-    </text>
-  </svg>
-);
+      <defs>
+        <radialGradient id={bgId} cx="35%" cy="30%" r="75%">
+          <stop offset="0%" stopColor="#16233B" />
+          <stop offset="65%" stopColor="#080D1A" />
+          <stop offset="100%" stopColor="#03050B" />
+        </radialGradient>
+        <linearGradient id={ringId} x1="8" y1="12" x2="88" y2="84" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#38BDF8" />
+          <stop offset="50%" stopColor="#818CF8" />
+          <stop offset="100%" stopColor="#F59E0B" />
+        </linearGradient>
+        <linearGradient id={prismId} x1="28" y1="24" x2="62" y2="66" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#E0F2FE" stopOpacity="0.42" />
+          <stop offset="100%" stopColor="#38BDF8" stopOpacity="0.12" />
+        </linearGradient>
+      </defs>
+
+      {/* Outer celestial sphere & gradient aperture ring */}
+      <circle cx="48" cy="48" r="41" fill={`url(#${bgId})`} stroke={`url(#${ringId})`} strokeWidth="2.4" />
+      <circle cx="48" cy="48" r="35" stroke="#38BDF8" strokeOpacity="0.14" strokeWidth="1" />
+
+      {/* Subtle survey meridian orbit */}
+      <ellipse
+        cx="48"
+        cy="48"
+        rx="44"
+        ry="15"
+        transform="rotate(-24 48 48)"
+        stroke="#7DD3FC"
+        strokeOpacity="0.45"
+        strokeWidth="1.4"
+      />
+      <circle cx="84" cy="31" r="2.2" fill="#38BDF8" />
+
+      {/* 6-band infrared spectral dispersion rays (D1-D6) */}
+      <path d="M51 39 L82 28" stroke="#38BDF8" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M53 42.5 L84 36.5" stroke="#34D399" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M54.5 46 L85 45" stroke="#FACC15" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M56 49.5 L84 53.5" stroke="#FB923C" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M57.5 53 L82 61.5" stroke="#F472B6" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M59 56.5 L78 69" stroke="#A78BFA" strokeWidth="2.4" strokeLinecap="round" />
+
+      {/* Incoming white starlight beam */}
+      <path d="M12 40 L37 45" stroke="#F8FAFC" strokeWidth="2.3" strokeLinecap="round" />
+
+      {/* Central crystalline dispersion prism */}
+      <polygon
+        points="45,23 26,64 62,64"
+        fill={`url(#${prismId})`}
+        stroke="#E2E8F0"
+        strokeWidth="2.1"
+        strokeLinejoin="round"
+      />
+      <path d="M45 25 L50 63" stroke="#FFFFFF" strokeOpacity="0.25" strokeWidth="1.2" />
+
+      {/* Source diffraction star & field stars */}
+      <path d="M13 33 L14.1 38.4 L19.5 39.5 L14.1 40.6 L13 46 L11.9 40.6 L6.5 39.5 L11.9 38.4 Z" fill="#F8FAFC" />
+      <circle cx="70" cy="19" r="1.4" fill="#BAE6FD" fillOpacity="0.85" />
+      <circle cx="24" cy="73" r="1.2" fill="#FDE68A" fillOpacity="0.8" />
+    </svg>
+  );
+};
+
+export const NasaMeatballSvg = SpectraLogoSvg;
 
 /**
  * Client-Side Coordinate & Sexagesimal Parser
@@ -639,7 +680,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-black/90 backdrop-blur-md px-4 font-sans text-xs text-foreground select-none">
-      {/* 1. Official NASA Branding & Mission Status */}
+      {/* 1. Spectra Branding & Mission Status */}
       <div className="flex items-center gap-3 shrink-0">
         <Link
           to="/"
@@ -647,7 +688,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           title="Return to the SPHEREx mission home page"
           className="group flex items-center gap-2.5 rounded-md px-1 py-1 -mx-1 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
         >
-          <NasaMeatballSvg className="h-6 w-7 drop-shadow-sm transition-transform group-hover:scale-105" />
+          <SpectraLogoSvg className="h-7 w-7 drop-shadow-sm transition-transform group-hover:scale-105" />
           <div className="flex flex-col">
             <span className="text-sm font-extrabold tracking-tight text-white leading-none transition-colors group-hover:text-primary">
               SPHEREx
