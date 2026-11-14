@@ -684,13 +684,7 @@ export const PublicExplorerPortal: React.FC = () => {
 };
 
 // Lazy-loaded administrative route chunk (SPECIFICATION.md §6.1.1: Physical chunk isolation)
-const AdminMissionControl = lazy(async () => ({
-  default: () => (
-    <div className="flex min-h-dvh items-center justify-center bg-[#080A0F] font-sans text-xs text-[#94A3B8]">
-      Loading administrative mission control...
-    </div>
-  ),
-}));
+const AdminMissionControl = lazy(() => import('./admin/AdminLayout'));
 
 export default function App() {
   return (
