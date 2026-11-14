@@ -3,6 +3,26 @@ import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { WebGLComparatorCanvas, HoverPixelInfo } from '../components/WebGLComparatorCanvas';
 import { MANDATORY_BENCHMARKS } from '../components/GlobalCommandHeader';
+import type { TensorHeader, TensorWorkerResponse } from '../workers/tensorWorker';
+
+function pixelToSky(
+  x: number,
+  y: number,
+  wcs: { crval: [number, number]; cdelt: [number, number]; crpix: [number, number] }
+): { ra: number; dec: number } {
+  const toRad = Math.PI / 180;
+  const ra0 = wcs.crval[0] * toRad;
+  const dec0 = wcs.crval[1] * toRad;
+  const xi = (x + 1 - wcs.crpix[0]) * wcs.cdelt[0] * toRad;
+  const eta = (y + 1 - wcs.crpix[1]) * wcs.cdelt[1] * toRad;
+  const denominator = Math.cos(dec0) - eta * Math.sin(dec0);
+  const ra = ((ra0 + Math.atan2(xi, denominator)) / toRad + 360) % 360;
+  const dec = Math.atan2(
+    Math.sin(dec0) + eta * Math.cos(dec0),
+    Math.hypot(denominator, xi)
+  ) / toRad;
+  return { ra, dec };
+}
 
 /**
  * Spectra Tab 2: Time-Domain Comparator (<TimeDomainComparator />)
@@ -105,6 +125,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     activeRgbPreset,
     setRgbPreset,
     setProbedPixel,
+    setProbeSkyPosition,
   } = store;
 
   const [activeBandIndex, setActiveBandIndex] = useState<number>(4); // Default to Band D5 (index 4)
@@ -133,6 +154,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     epochs: number;
     isSimulated: boolean;
     sourceBadge: string;
+    wcs?: { crval: [number, number]; cdelt: [number, number]; crpix: [number, number] };
     mjdRanges?: number[][][];
     exposureIds?: string[][] | string[];
   } | null>(null);
@@ -400,35 +422,37 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   // Load binary tensor from pre-cached .f32 bundle OR live backend /api/cutout pipeline
   useEffect(() => {
     let cancelled = false;
+    let decoderWorker: Worker | null = null;
+    const requestController = new AbortController();
+    let requestTimedOut = false;
+    const requestTimeout = window.setTimeout(() => {
+      requestTimedOut = true;
+      requestController.abort();
+    }, 180_000);
 
-    const parseBinaryTensorBuffer = (buf: ArrayBuffer) => {
-      if (buf.byteLength < 4) return null;
-      const dv = new DataView(buf);
-      const hdrLen = dv.getUint32(0, true);
-      if (buf.byteLength < 4 + hdrLen) return null;
+    const decodeBinaryTensorBuffer = (buf: ArrayBuffer, worker: Worker): Promise<TensorWorkerResponse> =>
+      new Promise((resolve, reject) => {
+        worker.onmessage = (event: MessageEvent<TensorWorkerResponse>) => {
+          if (event.data.success) resolve(event.data);
+          else reject(new Error(event.data.error || 'Unable to decode the archive tensor.'));
+        };
+        worker.onerror = (event) => reject(new Error(event.message || 'Tensor worker failed.'));
+        worker.postMessage({ buffer: buf }, [buf]);
+      });
 
-      const hdrStr = new TextDecoder().decode(new Uint8Array(buf, 4, hdrLen));
-      const hdr = JSON.parse(hdrStr);
-      if (hdr.compression && hdr.compression !== 'none') return null;
-
+    const mapDecodedTensor = (decoded: TensorWorkerResponse) => {
+      const hdr: TensorHeader = decoded.header;
       const [epochs, bands, h, w] = hdr.shape;
       const planePixels = h * w;
-      const totalPixels = epochs * bands * planePixels;
-
-      const fluxOffset = 4 + hdrLen;
-      const varOffset = fluxOffset + totalPixels * 4;
-      const flagsOffset = varOffset + totalPixels * 4;
-      const nExpOffset = flagsOffset + totalPixels * 4;
-
-      if (buf.byteLength < flagsOffset + totalPixels * 4) return null;
-
-      const allFlux = new Float32Array(buf.slice(fluxOffset, fluxOffset + totalPixels * 4));
-      const allVar = new Float32Array(buf.slice(varOffset, varOffset + totalPixels * 4));
-      const allFlags = new Uint32Array(buf.slice(flagsOffset, flagsOffset + totalPixels * 4));
-      const hasNExp = buf.byteLength >= nExpOffset + totalPixels * 2;
-      const allNExp = hasNExp
-        ? new Uint16Array(buf.slice(nExpOffset, nExpOffset + totalPixels * 2))
-        : new Uint16Array(totalPixels).fill(1);
+      const totalPixels = decoded.totalPixels;
+      const payload = decoded.payloadBuffer;
+      const allFlux = new Float32Array(payload, 0, totalPixels);
+      const varianceOffset = totalPixels * 4;
+      const flagsOffset = totalPixels * 8;
+      const nExpOffset = totalPixels * 12;
+      const allVar = new Float32Array(payload, varianceOffset, totalPixels);
+      const allFlags = new Uint32Array(payload, flagsOffset, totalPixels);
+      const allNExp = new Uint16Array(payload, nExpOffset, totalPixels);
 
       const fluxData: Float32Array[][] = [];
       const varData: Float32Array[][] = [];
@@ -466,6 +490,9 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         epochs,
         isSimulated: isSim,
         sourceBadge: badge,
+        wcs: Array.isArray(hdr.crval) && Array.isArray(hdr.cdelt) && Array.isArray(hdr.crpix)
+          ? { crval: hdr.crval, cdelt: hdr.cdelt, crpix: hdr.crpix }
+          : undefined,
         mjdRanges: hdr.mjd_ranges,
         exposureIds: hdr.exposure_ids,
       };
@@ -480,6 +507,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         const postRes = await fetch('/api/cutout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: requestController.signal,
           body: JSON.stringify({
             ra: urlRa,
             dec: urlDec,
@@ -492,43 +520,75 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           throw new Error(body.detail || `IRSA request failed (${postRes.status})`);
         }
         const { task_id } = await postRes.json();
-        const deadline = Date.now() + 180_000;
-        while (!cancelled && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 750));
-          const progressRes = await fetch(`/api/cutout/progress/${task_id}`);
-          if (!progressRes.ok) throw new Error(`IRSA task status failed (${progressRes.status})`);
-          const progress = await progressRes.json();
-          if (progress.status === 'error') throw new Error(progress.message || 'IRSA could not return usable exposures.');
-          if (progress.status !== 'complete') {
+        const progressRes = await fetch(`/api/cutout/progress/${task_id}?stream=1`, {
+          headers: { Accept: 'text/event-stream' },
+          signal: requestController.signal,
+        });
+        if (!progressRes.ok) throw new Error(`IRSA task status failed (${progressRes.status})`);
+        if (!progressRes.body) throw new Error('IRSA progress stream is unavailable in this browser.');
+        const progressReader = progressRes.body.getReader();
+        const progressDecoder = new TextDecoder();
+        let pendingEvents = '';
+        let taskComplete = false;
+        while (!cancelled && !taskComplete) {
+          const { value, done } = await progressReader.read();
+          if (done) break;
+          pendingEvents += progressDecoder.decode(value, { stream: true });
+          const events = pendingEvents.split(/\r?\n\r?\n/);
+          pendingEvents = events.pop() || '';
+          for (const eventText of events) {
+            const dataLine = eventText.split(/\r?\n/).find((line) => line.startsWith('data:'));
+            if (!dataLine) continue;
+            const progress = JSON.parse(dataLine.slice(5).trim());
+            if (progress.status === 'error') {
+              throw new Error(progress.message || 'IRSA could not return usable exposures.');
+            }
+            if (progress.status === 'complete') {
+              taskComplete = true;
+              break;
+            }
             setDataMessage(progress.message || 'Waiting for IRSA cutouts…');
-            continue;
           }
-          const tensorRes = await fetch(`/api/cutout/${task_id}/tensor`);
-          if (!tensorRes.ok) throw new Error(`IRSA tensor request failed (${tensorRes.status})`);
-          const parsed = parseBinaryTensorBuffer(await tensorRes.arrayBuffer());
-          if (!parsed || parsed.isSimulated) {
-            throw new Error('The archive returned no verified real-data tensor. No synthetic preview is shown.');
-          }
-          if (!cancelled) {
-            setLoadedTensor(parsed);
-            setDataStatus('ready');
-            useTelemetryStore.setState({ sourceBadge: parsed.sourceBadge });
-          }
-          return;
         }
-        if (!cancelled) throw new Error('IRSA request timed out before returning exposure data.');
-      } catch (error) {
+        if (taskComplete) await progressReader.cancel();
+        if (cancelled) return;
+        if (!taskComplete) throw new Error('IRSA progress stream ended before the task completed.');
+        const tensorRes = await fetch(`/api/cutout/${task_id}/tensor`, { signal: requestController.signal });
+        if (!tensorRes.ok) throw new Error(`IRSA tensor request failed (${tensorRes.status})`);
+        decoderWorker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), { type: 'module' });
+        const decoded = await decodeBinaryTensorBuffer(await tensorRes.arrayBuffer(), decoderWorker);
+        decoderWorker.terminate();
+        decoderWorker = null;
+        const parsed = mapDecodedTensor(decoded);
+        if (parsed.isSimulated) {
+          throw new Error('The archive returned no verified real-data tensor. No synthetic preview is shown.');
+        }
         if (!cancelled) {
-          setDataMessage(error instanceof Error ? error.message : 'IRSA data request failed.');
+          setLoadedTensor(parsed);
+          setDataStatus('ready');
+          useTelemetryStore.setState({ sourceBadge: parsed.sourceBadge });
+        }
+      } catch (error) {
+        decoderWorker?.terminate();
+        decoderWorker = null;
+        if (!cancelled) {
+          setDataMessage(requestTimedOut
+            ? 'IRSA request timed out before returning exposure data.'
+            : error instanceof Error ? error.message : 'IRSA data request failed.');
           setDataStatus('error');
           useTelemetryStore.setState({ sourceBadge: '[IRSA data unavailable]' });
         }
+      } finally {
+        window.clearTimeout(requestTimeout);
       }
     };
 
     loadCutoutTensor();
     return () => {
       cancelled = true;
+      requestController.abort();
+      window.clearTimeout(requestTimeout);
+      decoderWorker?.terminate();
     };
   }, [activeBenchmark, urlRa, urlDec, urlFov, loadAttempt, setEpochIndex]);
 
@@ -621,6 +681,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       }
 
       setProbedPixel({ x: clickX, y: clickY });
+      setProbeSkyPosition(
+        loadedTensor && !loadedTensor.isSimulated && loadedTensor.wcs
+          ? pixelToSky(clickX, clickY, loadedTensor.wcs)
+          : null
+      );
       setUrlProbeX(clickX);
       setUrlProbeY(clickY);
 
