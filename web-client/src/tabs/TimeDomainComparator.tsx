@@ -1171,14 +1171,14 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   }
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-black font-sans text-white">
+    <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-black font-sans text-white">
       {/* ========================================================================= */}
       {/* LEFT PANEL (65%): Multi-Epoch Playback Canvas & Transport Deck            */}
       {/* ========================================================================= */}
-      <div className="flex w-[65%] flex-col border-r border-neutral-800 bg-black">
+      <div className="flex w-full lg:w-[62%] xl:w-[65%] shrink-0 lg:shrink lg:min-h-0 flex-col border-b lg:border-b-0 lg:border-r border-neutral-800 bg-black">
         {/* Top Control Header */}
-        <div className="flex h-10 items-center justify-between border-b border-neutral-800 bg-neutral-950 px-4">
-          <div className="flex items-center space-x-3 text-xs">
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-neutral-800 bg-neutral-950 px-3 sm:px-4 py-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-bold text-white">
               {activeBenchmark ? activeBenchmark.name : `Field at RA ${urlRa.toFixed(4)}°, Dec ${urlDec.toFixed(4)}°`}
             </span>
@@ -1232,8 +1232,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           </div>
 
           {/* Controls: Canvas Zoom/Smoothing + Raw vs. Rectified Toggle */}
-          <div className="flex items-center space-x-3 text-xs">
-            <div className="flex items-center space-x-1 border-r border-neutral-800 pr-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="flex items-center space-x-1 sm:border-r sm:border-neutral-800 sm:pr-3">
               <span className="text-neutral-400 text-[11px] mr-1">Scale:</span>
               {(['fit', '1x', '2x', '4x'] as const).map((z) => (
                 <button
@@ -1322,11 +1322,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         )}
 
         {/* Central WebGL2 Canvas Viewport (Expansive & Fluid) */}
-        <div className="relative flex flex-1 items-center justify-center overflow-auto bg-black p-4">
+        <div className="relative flex flex-1 min-h-[300px] sm:min-h-[380px] lg:min-h-0 items-center justify-center overflow-auto bg-black p-3 sm:p-4">
           <div
             className={`relative rounded-xl border border-neutral-800 bg-black shadow-2xl overflow-hidden flex items-center justify-center transition-all ${
               canvasZoom === 'fit'
-                ? 'h-full w-full max-h-[calc(100vh-220px)] max-w-[calc(100vh-220px)] aspect-square'
+                ? 'h-full w-full max-h-[55vh] sm:max-h-[65vh] lg:max-h-[calc(100vh-220px)] max-w-[min(100%,55vh)] sm:max-w-[min(100%,65vh)] lg:max-w-[calc(100vh-220px)] aspect-square'
                 : canvasZoom === '1x'
                 ? 'w-[240px] h-[240px]'
                 : canvasZoom === '2x'
@@ -1571,7 +1571,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           </div>
 
           {/* Live Hover HUD Strip */}
-          <div className="mt-3 flex items-center justify-between border-t border-neutral-800/80 pt-2 font-mono tabular-nums text-xs text-neutral-400">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-800/80 pt-2 font-mono tabular-nums text-xs text-neutral-400">
             <ComparatorHoverHud setterRef={hoverHudSetterRef} />
 
             <div className="text-[11px] text-neutral-500">
@@ -1584,7 +1584,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       {/* ========================================================================= */}
       {/* RIGHT PANEL (35%): Analysis Deck & Wavelength-Matched Matrix              */}
       {/* ========================================================================= */}
-      <div className="flex w-[35%] flex-col overflow-y-auto border-l border-neutral-800 bg-neutral-950 p-4 text-xs space-y-4">
+      <div className="flex w-full lg:w-[38%] xl:w-[35%] shrink-0 lg:shrink lg:min-h-0 flex-col lg:overflow-y-auto border-t lg:border-t-0 lg:border-l border-neutral-800 bg-neutral-950 p-3 sm:p-4 text-xs space-y-4">
         {/* Render Mode Switcher */}
         <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
           <div className="mb-2.5 flex items-center justify-between">
@@ -1646,9 +1646,9 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           </div>
 
           {/* Colormap Selector */}
-          <div className="mt-3 flex items-center justify-between text-xs text-neutral-400">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-400">
             <span className="text-neutral-300">Colormap:</span>
-            <div className="flex space-x-1">
+            <div className="flex flex-wrap gap-1">
               {[
                 { id: 'standard_rgb', label: 'Grayscale' },
                 { id: 'viridis', label: 'Viridis' },
