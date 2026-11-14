@@ -16,6 +16,7 @@ import { MajorDiscovery } from './components/MajorDiscoveriesData';
 import { CandidateCatalogDrawer, CatalogTarget } from './components/CandidateCatalogDrawer';
 import { CelestialNavigator } from './tabs/CelestialNavigator';
 import { TimeDomainComparator } from './tabs/TimeDomainComparator';
+import { SpectrophotometricLab } from './tabs/SpectrophotometricLab';
 import { ObservationDiscussions } from './tabs/ObservationDiscussions';
 import { Button, Badge, Select } from './components/ui';
 
@@ -740,7 +741,7 @@ export const PublicExplorerPortal: React.FC = () => {
             {tab === 'comparator' && (
               <TimeDomainComparator onOpenCatalog={() => setIsCatalogOpen(true)} />
             )}
-            {tab === 'spectral' && <LiveSpectrophotometricWorkbench />}
+            {tab === 'spectral' && <SpectrophotometricLab />}
             {tab === 'ice' && <LiveMolecularIceWorkbench />}
             {tab === 'discussions' && <ObservationDiscussions />}
           </>
