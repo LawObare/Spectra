@@ -1428,37 +1428,106 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 type="button"
                 onClick={() => setEpochIndex(0)}
                 title="First Pass (Frame 0)"
-                className="rounded-full border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
+                aria-label="First Pass (Start)"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
               >
-                Start
+                <svg
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="19 20 9 12 19 4 19 20" />
+                  <line x1="5" x2="5" y1="19" y2="5" />
+                </svg>
+                <span className="sr-only">Start</span>
               </button>
               <button
                 type="button"
                 onClick={() => setEpochIndex((activeEpochIndex + surveyPasses.length - 1) % surveyPasses.length)}
                 title="Previous Pass (ArrowLeft)"
-                className="rounded-full border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
+                aria-label="Previous Pass"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
               >
-                Prev
+                <svg
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+                <span className="sr-only">Prev</span>
               </button>
               <button
                 type="button"
                 onClick={togglePlayback}
                 title="Play/Pause (Space)"
-                className={`rounded-full border px-4 py-1 text-xs font-semibold transition-all ${
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+                className={`inline-flex h-7 w-9 items-center justify-center rounded-full border text-xs font-semibold transition-all ${
                   isPlaying
                     ? 'border-primary bg-primary text-white shadow-sm'
                     : 'border-neutral-700 bg-neutral-900 text-white hover:border-primary'
                 }`}
               >
-                {isPlaying ? 'Pause' : 'Play'}
+                {isPlaying ? (
+                  <svg
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                ) : (
+                  <svg
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polygon points="6 3 20 12 6 21 6 3" />
+                  </svg>
+                )}
+                <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
               </button>
               <button
                 type="button"
                 onClick={() => setEpochIndex((activeEpochIndex + 1) % surveyPasses.length)}
                 title="Next Pass (ArrowRight)"
-                className="rounded-full border border-neutral-800 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
+                aria-label="Next Pass"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
               >
-                Next
+                <svg
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+                <span className="sr-only">Next</span>
               </button>
             </div>
 
