@@ -3,6 +3,11 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useTelemetryStore, type SpectralChannel } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
+import {
+  fetchInstalledSections,
+  findMatchingSection,
+  type InstalledSection,
+} from '../lib/installedSections';
 
 /**
  * Spectra Tab 3: Spectrophotometric Lab
@@ -220,35 +225,89 @@ export const SpectrophotometricLab: React.FC = () => {
     isSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
     setActiveSpectrum, setSpectrumLoading,
   } = useTelemetryStore();
-  const { setZ } = useSpectraUrlState();
+  const { setZ, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
   const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Synthetic Injection Mode]');
   const [spectrumStatus, setSpectrumStatus] = useState('');
+  const [installedSections, setInstalledSections] = useState<InstalledSection[]>([]);
+  const [activeInstalledSection, setActiveInstalledSection] = useState<InstalledSection | null>(null);
+  const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
 
-  // Live 102-Channel WCS-WAVE Hyperspectral Fetch (SPECIFICATION.md §4.1 Pipeline 2, §5.3.1)
+  const readyInstalledSections = useMemo(
+    () => installedSections.filter((s) => s.status === 'ready'),
+    [installedSections]
+  );
+
+  // Live / Installed 102-Channel WCS-WAVE Hyperspectral Fetch (SPECIFICATION.md §4.1 Pipeline 2, §5.3.1)
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const fetchLiveSpectrum = async () => {
       setSpectrumLoading(true);
       setActiveSpectrum([]);
       setSpectrumSourceBadge('[Synthetic Injection Mode]');
       try {
         const position = probeSkyPosition ?? { ra, dec };
-        const queued = await fetch('/api/spectrum/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...position, normalize: false }) });
-        if (!queued.ok) throw new Error(`HTTP ${queued.status}`);
-        const { task_id: taskId } = await queued.json();
+        const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
+
+        // 1. Prefer locally installed sky section spectrum so Tab 3 never re-queries IRSA needlessly
+        let sections: InstalledSection[] = [];
+        try {
+          sections = await fetchInstalledSections(controller.signal);
+          if (!cancelled) setInstalledSections(sections);
+        } catch {
+          // Ignore list error and check live fallback policy
+        }
+        if (cancelled) return;
+
+        const matched = findMatchingSection(sections, position.ra, position.dec);
         let data: any;
-        while (!cancelled) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1500));
-          const poll = await fetch(`/api/spectrum/tasks/${taskId}`);
-          if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
-          const task = await poll.json();
-          setSpectrumStatus(task.message || 'Extracting archive spectrum');
-          if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
-          if (task.status === 'complete') { data = task.result; break; }
+        if (matched) {
+          setActiveInstalledSection(matched);
+          setSpectrumStatus(`Extracting 102-ch spectrum from installed "${matched.label}"…`);
+          const qs = new URLSearchParams({ normalize: 'false' });
+          if (probedPixel) {
+            qs.set('px', String(probedPixel.x));
+            qs.set('py', String(probedPixel.y));
+          }
+          if (isSpectralBlinkSynced) {
+            qs.set('epoch', String(activeEpochIndex));
+          }
+          const secRes = await fetch(`/api/sections/${matched.section_id}/spectrum?${qs.toString()}`, {
+            signal: controller.signal,
+          });
+          if (!secRes.ok) throw new Error(`HTTP ${secRes.status}`);
+          data = await secRes.json();
+        } else {
+          setActiveInstalledSection(null);
+          if (forceLiveCoordKey !== coordKey) {
+            setSpectrumStatus('No installed section at this coordinate — pick an installed section or click Query Live');
+            return;
+          }
+          const queued = await fetch('/api/spectrum/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ ...position, normalize: false }),
+          });
+          if (!queued.ok) throw new Error(`HTTP ${queued.status}`);
+          const { task_id: taskId } = await queued.json();
+          while (!cancelled) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1500));
+            const poll = await fetch(`/api/spectrum/tasks/${taskId}`, { signal: controller.signal });
+            if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
+            const task = await poll.json();
+            setSpectrumStatus(task.message || 'Extracting archive spectrum');
+            if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
+            if (task.status === 'complete') { data = task.result; break; }
+          }
         }
         if (cancelled || !data) return;
         const sourceBadge = data.provenance?.source_badge;
-        const hasHonestSource = typeof sourceBadge === 'string' && /^\[IRSA Live \(.+\)\]$/.test(sourceBadge);
+        const hasHonestSource =
+          typeof sourceBadge === 'string' &&
+          (/^\[Installed\]/.test(sourceBadge) ||
+            /^\[IRSA Live \(.+\)\]$/.test(sourceBadge) ||
+            /^\[NASA Benchmark/.test(sourceBadge));
         if (!cancelled && hasHonestSource && Array.isArray(data.wavelengths_um) && data.wavelengths_um.length >= 102 && Array.isArray(data.flux_jy) && data.flux_jy.length >= 102) {
           const convFactor = 9.0229788e-4; // Jy per (MJy/sr) for 6.2" pixel
           const channels: SpectralChannel[] = data.wavelengths_um.map((lam: number, i: number) => ({
@@ -273,8 +332,21 @@ export const SpectrophotometricLab: React.FC = () => {
     fetchLiveSpectrum();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [ra, dec, probeSkyPosition?.ra, probeSkyPosition?.dec, setActiveSpectrum, setSpectrumLoading]);
+  }, [
+    ra,
+    dec,
+    probeSkyPosition?.ra,
+    probeSkyPosition?.dec,
+    probedPixel?.x,
+    probedPixel?.y,
+    isSpectralBlinkSynced,
+    activeEpochIndex,
+    forceLiveCoordKey,
+    setActiveSpectrum,
+    setSpectrumLoading,
+  ]);
 
   const [colorByMjd, setColorByMjd] = useState(false);
   const [flagTip, setFlagTip] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -536,7 +608,51 @@ export const SpectrophotometricLab: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold tracking-wide text-white">Tab 3 — Spectrophotometric Lab</h2>
             <span className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-300">102 channels · 0.75–5.00 µm · λ vs Fν (MJy/sr)</span>
-            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${spectrumSourceBadge.includes('Synthetic') ? 'bg-amber-950/60 text-amber-300' : 'bg-sky-950/60 text-sky-300'}`}>{spectrumSourceBadge}</span>
+            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${spectrumSourceBadge.includes('Synthetic') ? 'bg-amber-950/60 text-amber-300' : spectrumSourceBadge.startsWith('[Installed]') ? 'bg-emerald-950/60 text-emerald-300' : 'bg-sky-950/60 text-sky-300'}`}>{spectrumSourceBadge}</span>
+            {readyInstalledSections.length > 0 && (
+              <select
+                aria-label="Installed section for spectrum"
+                value={activeInstalledSection?.section_id || ''}
+                onChange={(e) => {
+                  const chosen = readyInstalledSections.find((s) => s.section_id === e.target.value);
+                  if (!chosen) return;
+                  setForceLiveCoordKey(null);
+                  setUrlRa(Number(chosen.ra.toFixed(5)));
+                  setUrlDec(Number(chosen.dec.toFixed(5)));
+                  setUrlFov(Math.round(chosen.fov_arcsec || 180));
+                  useTelemetryStore.setState({
+                    ra: chosen.ra,
+                    dec: chosen.dec,
+                    activeTargetName: chosen.label,
+                    probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
+                  });
+                }}
+                className="max-w-[200px] rounded border border-emerald-700/60 bg-emerald-950/60 px-2 py-0.5 text-[10px] text-emerald-200 focus:outline-none"
+                title="Use an installed section for 102-channel extraction"
+              >
+                {!activeInstalledSection && (
+                  <option value="">Installed ({readyInstalledSections.length})</option>
+                )}
+                {readyInstalledSections.map((sec) => (
+                  <option key={sec.section_id} value={sec.section_id}>
+                    {sec.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {!activeInstalledSection && (
+              <button
+                type="button"
+                onClick={() => {
+                  const position = probeSkyPosition ?? { ra, dec };
+                  setForceLiveCoordKey(`${position.ra.toFixed(5)},${position.dec.toFixed(5)}`);
+                }}
+                className="rounded border border-cyan-700/60 bg-cyan-950/50 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-900/60"
+                title="Query IRSA live for this coordinate without installing"
+              >
+                Query Live Spectrum
+              </button>
+            )}
             <span className="rounded bg-sky-950/60 px-2 py-0.5 font-mono text-[10px] text-sky-300">probe px ({probedPixel?.x ?? 16},{probedPixel?.y ?? 16})</span>
             {isSpectralBlinkSynced && <span className="rounded bg-emerald-950/60 px-2 py-0.5 text-[10px] text-emerald-300">Spectral blink synced (epoch {epochIndex})</span>}
             {spectrumStatus && <span className="text-[10px] text-neutral-400">{spectrumStatus}</span>}
