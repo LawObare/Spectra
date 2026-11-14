@@ -129,10 +129,10 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
     <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground">
       {/* Left 70%: 102-Channel WCS-WAVE Spectrum Canvas */}
       <div className="flex flex-1 flex-col overflow-hidden p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-2.5 rounded-t-xl">
           <div>
-            <h2 className="text-xs font-semibold text-foreground">
-              102-Channel SPHEREx Spectrophotometric Extraction (HDU 6 WCS-WAVE)
+            <h2 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+              102-Channel Infrared Spectrum (HDU 6 WCS-WAVE)
             </h2>
             <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
               Target: <strong className="text-foreground">{activeTargetName || 'Field Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · 0.75–5.00 µm
@@ -147,14 +147,15 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
               variant="outline"
               size="xs"
               onClick={() => setTab('navigator')}
+              className="rounded-lg border-neutral-700 hover:border-neutral-500"
             >
-              ← Sky Search
+              Back to Sky Search
             </Button>
           </div>
         </div>
 
         {/* SVG High-Precision Spectral Plot */}
-        <div className="relative mt-3 flex-1 rounded-sm border border-border bg-background p-4">
+        <div className="relative mt-3 flex-1 rounded-b-xl border border-border bg-black/60 p-4">
           <svg className="h-full w-full" viewBox="0 0 920 400" preserveAspectRatio="none">
             {/* Horizontal Flux Gridlines */}
             {[0.2, 0.4, 0.6, 0.8].map((frac) => {
@@ -162,12 +163,12 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
               const val = (frac * maxFlux).toFixed(1);
               return (
                 <g key={frac}>
-                  <line x1="55" y1={y} x2="895" y2={y} stroke="#1E2530" strokeWidth="1" />
+                  <line x1="55" y1={y} x2="895" y2={y} stroke="#262626" strokeWidth="1" />
                   <text
                     x="48"
                     y={y + 3}
                     textAnchor="end"
-                    fill="#94A3B8"
+                    fill="#A3A3A3"
                     fontSize="10"
                     fontFamily="monospace"
                   >
@@ -194,13 +195,13 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
                     y1="25"
                     x2={x}
                     y2="350"
-                    stroke="#1E2530"
+                    stroke="#404040"
                     strokeDasharray="3,3"
                   />
                   <text
                     x={x + 6}
                     y="38"
-                    fill="#94A3B8"
+                    fill="#A3A3A3"
                     fontSize="10"
                     fontFamily="monospace"
                   >
@@ -211,8 +212,8 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
             })}
 
             {/* Axes */}
-            <line x1="55" y1="350" x2="895" y2="350" stroke="#94A3B8" strokeWidth="1" />
-            <line x1="55" y1="25" x2="55" y2="350" stroke="#94A3B8" strokeWidth="1" />
+            <line x1="55" y1="350" x2="895" y2="350" stroke="#737373" strokeWidth="1" />
+            <line x1="55" y1="25" x2="55" y2="350" stroke="#737373" strokeWidth="1" />
 
             {/* Template Continuum Curve */}
             <polyline
@@ -232,7 +233,7 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
             {/* Extracted 102-Channel Spectrum Curve + Error Bars */}
             <polyline
               fill="none"
-              stroke="#38BDF8"
+              stroke="#288BFF"
               strokeWidth="1.75"
               points={channels
                 .map((c) => {
@@ -254,11 +255,11 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
                     y1={Math.max(25, y - errPx)}
                     x2={x}
                     y2={Math.min(350, y + errPx)}
-                    stroke="#38BDF8"
+                    stroke="#288BFF"
                     strokeOpacity="0.45"
                     strokeWidth="1"
                   />
-                  <circle cx={x} cy={y} r="2.2" fill="#E6ECF2" />
+                  <circle cx={x} cy={y} r="2.2" fill="#FFFFFF" />
                 </g>
               );
             })}
@@ -267,7 +268,7 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
               x="475"
               y="385"
               textAnchor="middle"
-              fill="#E6ECF2"
+              fill="#E5E5E5"
               fontSize="11"
               fontFamily="monospace"
             >
@@ -280,8 +281,8 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
       {/* Right 30%: Spectral Template Matcher & Redshift Controls */}
       <aside className="flex w-[360px] shrink-0 flex-col border-l border-border bg-card p-4 gap-4 overflow-y-auto">
         <div>
-          <h3 className="text-xs font-semibold text-foreground">
-            Template Cross-Correlation & Redshift
+          <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+            Template Match &amp; Redshift
           </h3>
           <div className="mt-2">
             <label htmlFor="spec-template-select" className="block text-[11px] text-muted-foreground">
@@ -292,7 +293,7 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
               sizeVariant="sm"
               value={selectedTemplate}
               onChange={(e) => setSelectedTemplate(e.target.value)}
-              className="mt-1 w-full bg-background"
+              className="mt-1 w-full bg-background rounded-lg border-neutral-800"
             >
               <option value="M4V_DWARF">IRTF SpeX: M4V–M8V Red Dwarf Continuum</option>
               <option value="T_Y_DWARF">Sonora Bobcat: T/Y Ultracool Brown Dwarf (CH4/NH3)</option>
@@ -306,7 +307,7 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
               <label htmlFor="spec-z-slider" className="text-muted-foreground">
                 Redshift z (λ_obs = λ_rest · (1 + z))
               </label>
-              <span className="font-mono tabular-nums text-primary">
+              <span className="font-mono tabular-nums text-primary font-semibold">
                 z = {manualRedshiftZ.toFixed(3)}
               </span>
             </div>
@@ -328,7 +329,7 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
         </div>
 
         {/* Channel Table Sample */}
-        <div className="flex-1 overflow-y-auto rounded-sm border border-border bg-background">
+        <div className="flex-1 overflow-y-auto rounded-lg border border-border bg-background">
           <table className="w-full border-collapse text-left font-mono text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-secondary text-[10px] text-muted-foreground">
               <tr>
@@ -356,9 +357,9 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
         <button
           type="button"
           onClick={() => setTab('ice')}
-          className="w-full rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-2 text-center text-xs font-medium text-[#E6ECF2] hover:bg-[#38BDF8]/20"
+          className="w-full rounded-lg border border-primary bg-primary/15 py-2 text-center text-xs font-semibold text-white transition-all hover:bg-primary/25 shadow-sm"
         >
-          Analyze Ice Optical Depth in Tab 4 →
+          Analyze Ice Optical Depth in Tab 4
         </button>
       </aside>
     </div>
@@ -415,43 +416,44 @@ const LiveMolecularIceWorkbench: React.FC = () => {
   return (
     <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground">
       <div className="flex flex-1 flex-col p-4 overflow-y-auto gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-2.5 rounded-t-xl">
           <div>
-            <h2 className="text-xs font-semibold text-foreground">
-              SPHEREx SPLICES Molecular & Interstellar Ice Column Density Integrator
+            <h2 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+              Molecular &amp; Interstellar Ice Column Density (SPLICES)
             </h2>
             <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-              Sightline: <strong className="text-foreground">{activeTargetName || 'Point Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · τ(λ) = −ln(F_obs / F_cont)
+              Sightline: <strong className="text-foreground">{activeTargetName || 'Point Source'}</strong> · J2000 {ra.toFixed(5)}°, {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · Optical Depth τ(λ) = −ln(F_obs / F_cont)
             </p>
           </div>
           <Button
             variant="outline"
             size="xs"
             onClick={() => setTab('navigator')}
+            className="rounded-lg border-neutral-700 hover:border-neutral-500"
           >
-            ← Sky Search
+            Back to Sky Search
           </Button>
         </div>
 
         {/* Optical Depth tau(lambda) Profile */}
-        <div className="h-72 rounded-sm border border-border bg-background p-4">
+        <div className="h-72 rounded-xl border border-border bg-black/60 p-4">
           <svg className="h-full w-full" viewBox="0 0 860 240" preserveAspectRatio="none">
-            <line x1="50" y1="30" x2="830" y2="30" stroke="#94A3B8" strokeWidth="1" />
-            <line x1="50" y1="30" x2="50" y2="210" stroke="#94A3B8" strokeWidth="1" />
-            <text x="42" y="34" textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace">
+            <line x1="50" y1="30" x2="830" y2="30" stroke="#737373" strokeWidth="1" />
+            <line x1="50" y1="30" x2="50" y2="210" stroke="#737373" strokeWidth="1" />
+            <text x="42" y="34" textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
               τ=0.0
             </text>
-            <text x="42" y="120" textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace">
+            <text x="42" y="120" textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
               τ=0.5
             </text>
-            <text x="42" y="205" textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="monospace">
+            <text x="42" y="205" textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
               τ=1.0
             </text>
 
             {/* Optical depth curve across 2.5 to 5.0 µm */}
             <polyline
               fill="none"
-              stroke="#38BDF8"
+              stroke="#288BFF"
               strokeWidth="2"
               points={Array.from({ length: 120 }, (_, idx) => {
                 const lam = 2.5 + (idx / 119) * 2.5;
@@ -465,7 +467,7 @@ const LiveMolecularIceWorkbench: React.FC = () => {
               }).join(' ')}
             />
 
-            <text x="221" y="225" textAnchor="middle" fill="#38BDF8" fontSize="10" fontFamily="monospace">
+            <text x="221" y="225" textAnchor="middle" fill="#288BFF" fontSize="10" fontFamily="monospace">
               3.05 µm H2O (D4)
             </text>
             <text x="602" y="225" textAnchor="middle" fill="#F97316" fontSize="10" fontFamily="monospace">
@@ -478,11 +480,11 @@ const LiveMolecularIceWorkbench: React.FC = () => {
         </div>
 
         {/* Laboratory A-Value Column Density Table */}
-        <div className="rounded-sm border border-border bg-card">
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
           <table className="w-full border-collapse text-left font-mono text-xs tabular-nums">
             <thead className="border-b border-border bg-secondary font-sans text-[11px] text-muted-foreground">
               <tr>
-                <th className="py-2 pl-3">Ice Species & Matrix</th>
+                <th className="py-2 pl-3">Ice Species &amp; Matrix</th>
                 <th className="py-2">Center λ</th>
                 <th className="py-2">SPHEREx Band</th>
                 <th className="py-2 text-right">Lab A (cm/molec)</th>
@@ -512,14 +514,14 @@ const LiveMolecularIceWorkbench: React.FC = () => {
 
       {/* Right Controls */}
       <aside className="flex w-[340px] shrink-0 flex-col border-l border-border bg-card p-4 gap-4">
-        <h3 className="text-xs font-semibold text-foreground">
-          Continuum-Divided Optical Depth Fitters
+        <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+          Optical Depth Fitters
         </h3>
 
         <div>
           <div className="flex justify-between text-[11px]">
-            <label htmlFor="ice-h2o" className="text-muted-foreground">H2O 3.05 µm Peak Optical Depth (τ)</label>
-            <span className="font-mono text-primary">{h2oDepth.toFixed(2)}</span>
+            <label htmlFor="ice-h2o" className="text-muted-foreground">H2O 3.05 µm Peak Depth (τ)</label>
+            <span className="font-mono text-primary font-semibold">{h2oDepth.toFixed(2)}</span>
           </div>
           <input
             id="ice-h2o"
@@ -529,14 +531,14 @@ const LiveMolecularIceWorkbench: React.FC = () => {
             step={0.01}
             value={h2oDepth}
             onChange={(e) => setH2oDepth(Number(e.target.value))}
-            className="mt-1 w-full accent-primary"
+            className="mt-1.5 w-full accent-primary"
           />
         </div>
 
         <div>
           <div className="flex justify-between text-[11px]">
-            <label htmlFor="ice-co2">CO2 4.27 µm Peak Optical Depth (τ)</label>
-            <span className="font-mono text-[#38BDF8]">{co2Depth.toFixed(2)}</span>
+            <label htmlFor="ice-co2" className="text-muted-foreground">CO2 4.27 µm Peak Depth (τ)</label>
+            <span className="font-mono text-sky-400 font-semibold">{co2Depth.toFixed(2)}</span>
           </div>
           <input
             id="ice-co2"
@@ -546,14 +548,14 @@ const LiveMolecularIceWorkbench: React.FC = () => {
             step={0.01}
             value={co2Depth}
             onChange={(e) => setCo2Depth(Number(e.target.value))}
-            className="mt-1 w-full accent-[#38BDF8]"
+            className="mt-1.5 w-full accent-primary"
           />
         </div>
 
         <div>
           <div className="flex justify-between text-[11px]">
-            <label htmlFor="ice-co">CO 4.67 µm Peak Optical Depth (τ)</label>
-            <span className="font-mono text-[#38BDF8]">{coDepth.toFixed(2)}</span>
+            <label htmlFor="ice-co" className="text-muted-foreground">CO 4.67 µm Peak Depth (τ)</label>
+            <span className="font-mono text-sky-400 font-semibold">{coDepth.toFixed(2)}</span>
           </div>
           <input
             id="ice-co"
@@ -563,16 +565,16 @@ const LiveMolecularIceWorkbench: React.FC = () => {
             step={0.01}
             value={coDepth}
             onChange={(e) => setCoDepth(Number(e.target.value))}
-            className="mt-1 w-full accent-[#38BDF8]"
+            className="mt-1.5 w-full accent-primary"
           />
         </div>
 
         <button
           type="button"
           onClick={() => setTab('discussions')}
-          className="mt-auto w-full rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-2 text-center text-xs font-medium text-[#E6ECF2] hover:bg-[#38BDF8]/20"
+          className="mt-auto w-full rounded-lg border border-primary bg-primary/15 py-2 text-center text-xs font-semibold text-white transition-all hover:bg-primary/25 shadow-sm"
         >
-          Log Ice Sightline in Discussions →
+          Log Ice Sightline in Discussions
         </button>
       </aside>
     </div>
