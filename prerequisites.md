@@ -11,9 +11,8 @@ The following baseline runtimes are mandatory for the multi-service architecture
 | Runtime / Engine | Minimum Version | Installation / Verification | Primary Role in Spectra |
 |---|---|---|---|
 | **Linux / macOS / WSL2** | Ubuntu 22.04+ / macOS 13+ | `uname -srm` | Native host operating system with POSIX shell and Docker support. |
-| **Docker & Docker Compose** | Docker 24.0+ / Compose v2 | `docker --version && docker compose version` | Hosts local Supabase PostgreSQL 16 container with `pgvector` and Studio UI. |
-| **Python** | Python 3.11+ | `python3 --version` | Powers the primary single-service FastAPI backend (`backend/`), Astropy, PyVO, SciPy, and Reproject pipeline. |
-| **Go (Optional)** | Go 1.22+ (1.23 recommended) | `go version` | Optional gateway passthrough and concurrent proxy (`api-gateway/`). |
+| **Docker & Docker Compose** | Docker 24.0+ / Compose v2 | `docker --version && docker compose version` | Hosts local Supabase PostgreSQL 16 container and Studio UI. |
+| **Python** | Python 3.11+ | `python3 --version` | Powers the unified single-service FastAPI backend (`backend/`), Astropy, PyVO, SciPy, and Reproject pipeline. |
 | **Node.js & npm** | Node.js 20+ (LTS) / npm 10+ | `node -v && npm -v` | Powers the React 18, Vite 5, Tailwind CSS frontend client (`web-client/`). |
 
 ---
@@ -94,36 +93,35 @@ In a 48-hour hackathon, victory is determined by **developer velocity, zero runt
   2. **Cross-Platform Determinism (`uv.lock`):** Locks exact cryptographic hashes for all packages and C-extensions, completely eliminating "it works on my machine" compiler errors across different developer operating systems.
   3. **Zero-Friction Execution (`uv run`):** Runs scripts and servers directly inside the project's managed environment without needing manual `source .venv/bin/activate`:
      ```bash
-     uv run uvicorn main:app --port 8001 --reload
+     uv run uvicorn main:app --port 7860 --reload
      ```
   4. **CPU-Only PyTorch Pinning:** Easily configured to pull CPU-only wheels from `https://download.pytorch.org/whl/cpu`, keeping Docker images compact (~1.2 GB instead of ~4.5 GB with CUDA bloat).
 
 ---
 
-### 4. `sqlc` (Compile-Time SQL Compiler for Go)
+### 4. `asyncpg` + Automated SQL `EXPLAIN` Verifier (`test_sql.py`)
 
-- **What it is:** A compiler that parses raw PostgreSQL DDL schemas and `.sql` query files to generate 100% type-safe, idiomatic Go structs, interfaces, and methods.
+- **What it is:** A high-performance asynchronous PostgreSQL driver for Python paired with an automated CI test (`backend/tests/test_sql.py`) that validates every parameterized SQL query against `schema.sql` using PostgreSQL `EXPLAIN`.
 - **Installation:**
   ```bash
-  go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+  cd backend && uv add asyncpg pytest pytest-asyncio
   ```
 - **Why it gives the Hackathon edge:**
-  1. **Zero ORM Overhead, Zero Runtime Scan Bugs:** ORMs (like GORM or Hibernate) add runtime reflection overhead and obscure raw SQL performance. Manual database access (`database/sql`) is plagued by tedious, error-prone `rows.Scan(&a, &b, &c)` code where a misplaced column index causes a runtime panic. `sqlc` guarantees that if your Go code compiles, your SQL types are 100% correct.
-  2. **Instant Compile-Time Refactoring:** If you rename a database column or change an integer to a float, running `sqlc generate` immediately flags every affected Go function in red before you ever run the backend.
-  3. **Native `pgx/v5` Integration:** Emits code designed for `github.com/jackc/pgx/v5/pgxpool`, utilizing PostgreSQL prepared queries and connection pooling at native speed.
+  1. **Zero ORM Overhead, Compile-Time SQL Safety:** Replaces heavy ORMs and external multi-language codegen with direct binary-protocol `asyncpg` connection pooling ($<2\,\text{ms}$ query latency) verified at test time via `EXPLAIN`.
+  2. **Instant Schema Drift Detection:** If a column is renamed in `schema.sql` or a query parameter type mismatches in `queries.py`, `uv run pytest backend/tests/test_sql.py` flags the exact query before deployment.
 
 ---
 
-### 5. Air (`github.com/air-verse/air`)
+### 5. Ruff + Uvicorn Live Reload (`uvicorn --reload`)
 
-- **What it is:** A live-reloading command-line utility for Go applications, watching files and recompiling binaries on save.
+- **What it is:** Astral's ultra-fast Rust-based Python linter/formatter (`ruff`) paired with Uvicorn's file-watching ASGI server.
 - **Installation:**
   ```bash
-  go install github.com/air-verse/air@latest
+  cd backend && uv add --dev ruff
   ```
 - **Why it gives the Hackathon edge:**
-  1. **Sub-300ms Backend Hot-Reload:** Every time a Go route handler, middleware, or `sqlc` query is saved, `air` recompiles and restarts the gateway binary in $<300\,\text{ms}$.
-  2. **Matches Frontend Velocity:** Gives the Go API Gateway the same instant feedback loop that Vite gives React, drastically accelerating API development.
+  1. **Sub-Second Linting & Backend Hot-Reload:** `ruff check` lints the entire Python codebase in $<20\,\text{ms}$, and `uvicorn --reload` restarts the FastAPI mission engine on `:7860` on save.
+  2. **Single-Stack Simplicity:** Matches Vite's frontend feedback loop while keeping the entire backend in a single Python 3.11 process.
 
 ---
 
@@ -141,21 +139,21 @@ In a 48-hour hackathon, victory is determined by **developer velocity, zero runt
      ```bash
      task dev
      ```
-     and Task automatically checks dependencies, boots local Supabase Docker containers, runs `sqlc generate`, and launches the Python science microservice, Go gateway, and React frontend concurrently with color-coded terminal prefixes (`[WORKER]`, `[GATEWAY]`, `[CLIENT]`).
-  2. **Built-in Task Dependencies:** Automatically runs migrations and code generation before launching servers (`deps: [db:up]`), preventing out-of-order startup bugs.
+     and Task automatically boots local Supabase Docker containers, applies `schema.sql` and `seed_benchmarks.sql`, and launches the Unified FastAPI backend (`:7860`) and React frontend (`:3000`) concurrently with color-coded terminal prefixes (`[BACKEND]`, `[WEB]`).
+  2. **Built-in Task Dependencies:** Automatically runs migrations before launching servers (`deps: [db:up]`), preventing out-of-order startup bugs.
 
 ---
 
 ### 7. Supabase CLI (`supabase`) & Docker
 
-- **What it is:** The official local development suite for Supabase, running managed PostgreSQL 16, `pgvector`, and the Supabase Studio dashboard locally in Docker.
+- **What it is:** The official local development suite for Supabase, running managed PostgreSQL 16 and the Supabase Studio dashboard locally in Docker.
 - **Installation:**
   ```bash
   npm install -g supabase
   ```
 - **Why it gives the Hackathon edge:**
-  1. **100% Offline Resilience:** Hackathon venue Wi-Fi is notoriously unreliable. `supabase start` provisions a complete local PostgreSQL 16 instance with `pgvector` pre-configured right on your machine.
-  2. **Visual Studio Dashboard (`localhost:54323`):** Team members can view, edit, and query database tables, test cosine similarity queries, and inspect discussion threads using an intuitive web UI without needing external tools like pgAdmin or DBeaver.
+  1. **100% Offline Resilience:** Hackathon venue Wi-Fi is notoriously unreliable. `supabase start` provisions a complete local PostgreSQL 16 instance right on your machine.
+  2. **Visual Studio Dashboard (`localhost:54323`):** Team members can view, edit, and query database tables and inspect discussion threads using an intuitive web UI without needing external tools like pgAdmin or DBeaver.
   3. **1-Second Database Resets:** Run `supabase db reset` to re-apply `schema.sql` and `seed_benchmarks.sql` in one second if test data becomes corrupted.
 
 ---
@@ -168,9 +166,9 @@ In a 48-hour hackathon, victory is determined by **developer velocity, zero runt
   npm install -D openapi-typescript
   ```
 - **Why it gives the Hackathon edge:**
-  1. **Cross-Stack Type Contracts:** FastAPI (`astro-worker`) natively generates OpenAPI 3.1 schemas from Pydantic models. Running:
+  1. **Cross-Stack Type Contracts:** FastAPI natively generates OpenAPI 3.1 schemas from Pydantic models. Running:
      ```bash
-     npx openapi-typescript http://127.0.0.1:8001/openapi.json -o ./web-client/src/types/api.d.ts
+     npx openapi-typescript http://127.0.0.1:7860/openapi.json -o ./web-client/src/types/api.d.ts
      ```
      instantly produces strict TypeScript interfaces for React.
   2. **Eliminates Manual Fetch Typing:** If a field name changes in Python (e.g. `flux_mjy_sr` $\rightarrow$ `fluxMjySr`), TypeScript immediately flags every React component using the old name at compile time.
@@ -228,9 +226,9 @@ In a 48-hour hackathon, victory is determined by **developer velocity, zero runt
   sudo apt-get install -y jq curl httpie
   ```
 - **Why it gives the Hackathon edge:**
-  1. **Rapid Terminal Prototyping:** Inspecting IRSA SIA2 VOTable responses, checking FITS header values, or triggering gateway health pings without opening a browser:
+  1. **Rapid Terminal Prototyping:** Inspecting IRSA SIA2 VOTable responses, checking FITS header values, or triggering backend health pings without opening a browser:
      ```bash
-     curl -s http://127.0.0.1:8080/api/health | jq .
+     curl -s http://127.0.0.1:7860/api/health | jq .
      ```
   2. **Zero-Overhead Health Checks:** Allows automated bash scripts (`start.sh`) to verify process liveness and database connections in Docker containers reliably.
 
@@ -260,15 +258,10 @@ sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 sudo apt update && sudo apt install -y gh
 
-# 4. Go build tools (sqlc and air)
-go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-go install github.com/air-verse/air@latest
-export PATH="$HOME/go/bin:$PATH"
-
-# 5. Task runner
+# 4. Task runner
 sh -c "$(curl --location https://taskfile.dev/install.sh) -- -d -b $HOME/.local/bin"
 
-# 6. Supabase CLI
+# 5. Supabase CLI
 npm install -g supabase
 
 echo "=== All Spectra Hackathon Prerequisites Installed Successfully! ==="

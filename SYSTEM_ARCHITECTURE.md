@@ -415,7 +415,7 @@ flowchart LR
     User -->|"HTTPS / WSS :443\n(Direct Container Host)"| HF["Hugging Face Spaces\n(:7860 Docker Container)"]
     
     subgraph HF_Container["HF Space Container (2 vCPU / 16 GB RAM)"]
-        FastAPI_App["FastAPI Mission Engine (:7860)\n(uvicorn / 2 workers)"]
+        FastAPI_App["FastAPI Mission Engine (:7860)\n(uvicorn / 1 async worker + 2 CPU pool workers)"]
         DiskCache["/home/user/app/backend/cache\n(Benchmarks & In-Memory LRU)"]
         FastAPI_App <--> DiskCache
     end
@@ -502,10 +502,10 @@ flowchart TD
     end
 
     subgraph ScienceSubsystem["Scientific Reprojection Subsystem"]
-        Fetch --> Reproject["reproject_exact (Flux-Conserving)"]
-        Reproject --> Match["Adaptive Wavelength Matching [lambda_0(1-w), lambda_0(1+w)]"]
+        Fetch --> Match["Adaptive Wavelength Matching [lambda_0(1-w), lambda_0(1+w)]"]
         Match --> Centroid["Native Detector PSF Centroiding"]
-        Centroid --> TensorBuild["Build Binary Float32Array Tensor"]
+        Centroid --> Reproject["reproject_exact (Flux-Conserving)"]
+        Reproject --> TensorBuild["Build Binary Float32Array Tensor"]
     end
 
     subgraph LedgerSubsystem["Ledger & Consensus Subsystem"]
@@ -782,7 +782,7 @@ erDiagram
 
 #### 3. Citizen Science & Ledger Endpoints
 - `POST /api/classify`: Submits citizen classifications. Validates `X-Observer-ID` and `X-Observer-Key` headers; updates Bayesian reliability weight $w_u$ and Shannon entropy $H(s)$.
-- `GET /api/subjects/queue`: Returns active-learning queue candidates prioritized by $(0.6 \cdot H(s) + 0.4 \cdot \text{anomaly\_score})$.
+- `GET /api/queue/next`: Returns active-learning queue candidates prioritized by $(0.6 \cdot H(s) + 0.4 \cdot \text{anomaly\_score})$.
 
 #### 4. Discussion & Real-Time Forum Endpoints
 - `GET /api/forum/stream`: Persistent Server-Sent Events stream delivering live community thread creation, comment replies, and moderator badges.
@@ -799,7 +799,7 @@ To eliminate 33% Base64 bandwidth overhead and avoid 8-bit posterization, cutout
 - **Custom HTTP Headers:**
   - `X-Tensor-Dimensions: 4`
   - `X-Tensor-Shape: [N_epochs, 6_bands, Height, Width]`
-  - `X-Tensor-Planes: FLUX,VARIANCE,FLAGS,WAVELENGTH`
+  - `X-Tensor-Planes: FLUX,VARIANCE,FLAGS,N_EXPOSURES`
   - `X-Target-Badge: NASA Benchmark | IRSA Live | Synthetic Injection`
 - **Memory Consumption:** A $300''$ cutout ($48 \times 48\,\text{px}$) across 3 epochs and 6 bands consumes strictly $0.58\,\text{MB}$, loading in $<10\,\text{ms}$.
 - **Lossless Byte-Shuffled Zstandard Stream Compression:**
@@ -945,7 +945,7 @@ CMD ["./start.sh"]
 set -euo pipefail
 
 echo "[Spectra] Launching Unified FastAPI Mission Engine on 0.0.0.0:7860"
-exec uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 2 --timeout-keep-alive 30
+exec uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 1 --timeout-keep-alive 30
 ```
 
 ### 9.3 Disaster Recovery & Venue Demo Offline Mirror
@@ -962,7 +962,7 @@ exec uvicorn backend.main:app --host 0.0.0.0 --port 7860 --workers 2 --timeout-k
 - **Decision:** Eliminate the Go gateway. Standardize on a single FastAPI service on port `7860` orchestrated with Astral `uv`.
 - **Consequences:** Hugging Face Spaces exposes strictly one port (`7860`). Running two separate processes duplicated memory overhead, introduced loopback socket failure points, and required maintaining two language ecosystems. A single FastAPI process with `asyncpg` delivers $<2\,\text{ms}$ query latency and easily handles SSE streaming and tensor delivery.
 - **Mitigation of Runtime Trade-Offs:** The 4 inherent trade-offs of not using Go are resolved completely:
-  1. *GIL & CPU Blocking:* Bypassed via `ProcessPoolExecutor(max_workers=2)` for heavy FITS reprojections + running 2 Uvicorn workers.
+  1. *GIL & CPU Blocking:* Bypassed via `ProcessPoolExecutor(max_workers=2)` for heavy FITS reprojections paired with a single `uvloop` Uvicorn process (`--workers 1`), utilizing both vCPUs while keeping in-memory queues, SSE streams, and LRU caches unified.
   2. *Compile-Time SQL Safety:* Replaced via pre-commit CI query validation (`backend/tests/test_sql.py`) executing `EXPLAIN` against `schema.sql`.
   3. *Cold Boot Speed:* Resolved via lazy dynamic imports and bytecode pre-compilation (`UV_COMPILE_BYTECODE=1`), achieving `<600 ms` startup.
   4. *Memory Fragmentation:* Shielded via memory-mapped FITS (`memmap=True`), contiguous pre-allocated array allocations, and a 1.0 GB byte-capped LRU eviction policy.
