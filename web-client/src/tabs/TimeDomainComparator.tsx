@@ -831,10 +831,30 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           setDataMessage(`Loading installed section "${matchedSection.label}"…`);
           setDataProgress(0.4);
           const versionParam = encodeURIComponent(String(matchedSection.updated_at || matchedSection.size_bytes));
-          const secRes = await fetch(`/api/sections/${matchedSection.section_id}/tensor?v=${versionParam}`, {
-            signal: requestController.signal,
-          });
-          if (secRes.ok) {
+          let secRes: Response | null = null;
+          try {
+            const candidate = await fetch(
+              `/api/sections/${matchedSection.section_id}/tensor?v=${versionParam}`,
+              { signal: requestController.signal }
+            );
+            const contentType = (candidate.headers.get('content-type') || '').toLowerCase();
+            if (candidate.ok && !contentType.includes('text/html')) {
+              secRes = candidate;
+            }
+          } catch (err) {
+            if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          }
+          if (!secRes) {
+            const staticCandidate = await fetch(
+              `/benchmarks/${matchedSection.section_id}.f32?v=${versionParam}`,
+              { signal: requestController.signal }
+            );
+            const staticType = (staticCandidate.headers.get('content-type') || '').toLowerCase();
+            if (staticCandidate.ok && !staticType.includes('text/html')) {
+              secRes = staticCandidate;
+            }
+          }
+          if (secRes) {
             const decoded = await decodeBinaryTensorBuffer(await secRes.arrayBuffer(), getDecoderWorker());
             decoderWorker?.terminate();
             decoderWorker = null;
