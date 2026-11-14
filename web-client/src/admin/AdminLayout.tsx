@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { TrainingDynamics } from './TrainingDynamics';
 import { ActivationInspector } from './ActivationInspector';
 import { DecisionBoundaries } from './DecisionBoundaries';
+import { Button, Badge } from '../components/ui';
+import { cn } from '../lib/utils';
 
 /**
  * Spectra Administrative Mission Control Shell (/admin/*)
@@ -42,48 +44,48 @@ export const AdminLayout: React.FC = () => {
   ];
 
   return (
-    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-[#080A0F] font-sans text-[#E6ECF2]">
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background font-sans text-foreground">
       {/* MISSION CONTROL TOP BAR (SPECIFICATION.md §6.4) */}
-      <header className="flex h-14 items-center justify-between border-b border-[#1E2530] bg-[#0B0F17] px-4 shrink-0 shadow-sm">
+      <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-cyan-400" />
-            <h1 className="text-xs font-bold tracking-wider uppercase text-[#E6ECF2]">
-              SPECTRA MISSION CONTROL // Admin Operations Console
+            <span className="h-2 w-2 rounded-full bg-primary" />
+            <h1 className="text-xs font-semibold tracking-wide text-foreground">
+              Spectra mission control · Operations console
             </h1>
           </div>
-          <span className="rounded bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-[#38BDF8] border border-cyan-500/20">
-            [Clearance: SEC]
-          </span>
-          <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono text-amber-400 border border-amber-500/20">
-            [Read-Only Demo Mode]
-          </span>
+          <Badge variant="sky" className="font-mono text-[10px]">
+            Clearance: SEC
+          </Badge>
+          <Badge variant="amber" className="font-mono text-[10px]">
+            Read-Only Demo Mode
+          </Badge>
         </div>
 
         <div className="flex items-center gap-3">
-          <Link
-            to="/explore?tab=navigator"
-            className="flex items-center gap-1.5 rounded border border-[#1E2530] bg-[#151B24] px-3 py-1.5 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:border-[#38BDF8] transition"
-          >
-            <span>←</span>
-            <span>Return to Sky View</span>
+          <Link to="/explore?tab=navigator">
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <span>←</span>
+              <span>Return to sky view</span>
+            </Button>
           </Link>
         </div>
       </header>
 
       {/* SUB-NAVIGATION TABS BAR */}
-      <nav className="flex items-center border-b border-[#1E2530] bg-[#0D121B] px-4 gap-1 shrink-0 overflow-x-auto">
+      <nav className="flex items-center border-b border-border bg-secondary/40 px-4 gap-1 shrink-0 overflow-x-auto">
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
           return (
             <Link
               key={item.id}
               to={item.path}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${
+              className={cn(
+                'px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap',
                 isActive
-                  ? 'border-[#38BDF8] text-[#38BDF8] bg-[#38BDF8]/5'
-                  : 'border-transparent text-[#94A3B8] hover:text-[#E6ECF2] hover:border-[#64748B]'
-              }`}
+                  ? 'border-primary text-foreground bg-primary/10'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+              )}
             >
               {item.label}
             </Link>
@@ -102,19 +104,18 @@ export const AdminLayout: React.FC = () => {
             path="/triage"
             element={
               <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md rounded border border-[#1E2530] bg-[#0F131A] p-6">
-                  <h3 className="text-sm font-semibold text-[#E6ECF2]">
+                <div className="max-w-md rounded-sm border border-border bg-card p-6 shadow-md">
+                  <h3 className="text-sm font-semibold text-foreground">
                     Tab 4: Disagreement & Escalation Queue (/admin/triage)
                   </h3>
-                  <p className="mt-2 text-xs text-[#94A3B8] leading-relaxed">
+                  <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
                     Hard-negative triage and raw FITS HDU 1–6 verification queue mounts here (Assigned to Role E6 / Issue #28).
                   </p>
                   <div className="mt-4">
-                    <Link
-                      to="/admin/dynamics"
-                      className="rounded bg-[#38BDF8] px-3 py-1 text-xs font-medium text-[#080A0F]"
-                    >
-                      Return to Training Dynamics
+                    <Link to="/admin/dynamics">
+                      <Button variant="default" size="sm">
+                        Return to Training Dynamics
+                      </Button>
                     </Link>
                   </div>
                 </div>
@@ -125,19 +126,18 @@ export const AdminLayout: React.FC = () => {
             path="/exports"
             element={
               <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md rounded border border-[#1E2530] bg-[#0F131A] p-6">
-                  <h3 className="text-sm font-semibold text-[#E6ECF2]">
+                <div className="max-w-md rounded-sm border border-border bg-card p-6 shadow-md">
+                  <h3 className="text-sm font-semibold text-foreground">
                     Tab 5: Mission Data Product Hub (/admin/exports)
                   </h3>
-                  <p className="mt-2 text-xs text-[#94A3B8] leading-relaxed">
+                  <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
                     Calibration pool manager and the 4 SPHEREx community data product exports mount here (Assigned to Role E6 / Issue #28).
                   </p>
                   <div className="mt-4">
-                    <Link
-                      to="/admin/dynamics"
-                      className="rounded bg-[#38BDF8] px-3 py-1 text-xs font-medium text-[#080A0F]"
-                    >
-                      Return to Training Dynamics
+                    <Link to="/admin/dynamics">
+                      <Button variant="default" size="sm">
+                        Return to Training Dynamics
+                      </Button>
                     </Link>
                   </div>
                 </div>
