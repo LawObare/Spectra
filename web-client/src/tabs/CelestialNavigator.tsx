@@ -1969,7 +1969,7 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           {/* Bottom-Right Calibrated Angular Scale Bar */}
-          <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1 rounded-lg border border-neutral-800 bg-neutral-950/92 px-2.5 py-1.5 shadow-sm">
+          <div className="pointer-events-none absolute bottom-10 right-3 z-20 flex flex-col items-end gap-1 rounded-lg border border-neutral-800 bg-neutral-950/92 px-2.5 py-1.5 shadow-sm">
             <span className="font-mono text-[10px] tabular-nums text-white">
               Scale: {scaleBar.label} (FoV {formatFieldFov(displayFovDeg)})
             </span>
