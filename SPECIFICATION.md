@@ -1446,16 +1446,28 @@ The core motion detection and visual blinking engine, combining *WiseView* image
    - Frame 0 Loop Reset Indicator: When `activeEpochIndex === 0`, draws an inner dashed cyan border ($1\,\text{px}$, `#00f0ff`) inside the canvas boundary so the human eye immediately recognizes loop reset vs continuous linear motion.
 2. **Client-Side Pixel Arithmetic Engine:**
    - **Blink Mode:** Renders via WebGL2 `Float32Array` texture shader with GPU Asinh stretch (fallback to `ImageBitmap` created from pre-stretched preview if WebGL2 float textures are unavailable on client device).
-   - **Pairwise Difference Mode ($t_N - t_0$):**
+   - **Multi-Algorithm Difference Imaging:**
      Executes in floating-point space using the raw matrices (`rawMatrixD4` or `rawMatrixD5`):
-     $$\Delta I(x, y) = I_{t_N}(x, y) - I_{t_0}(x, y)$$
+     - **Mode 1A: Fixed Baseline Difference ($t_N - t_0$):**
+       $$\Delta I(x, y) = I_{t_N}(x, y) - I_{t_0}(x, y)$$
+     - **Mode 1B: Pairwise Step Difference ($t_N - t_{N-1}$):**
+       $$\Delta I_{\text{step}}(x, y) = I_{t_N}(x, y) - I_{t_{N-1}}(x, y)$$
+       Isolates rapid short-term episodic flares and sudden obscuration events (e.g. *RW Aurigae*).
+     - **Mode 1C: Median-Subtracted Difference ($t_N - \text{median}(t)$):**
+       $$\Delta I_{\text{med}}(x, y) = I_{t_N}(x, y) - \text{median}_{k}(I_{t_k}(x, y))$$
+       Cancels non-variable static background stars across all epochs to leave strictly dynamic or moving sources.
      Pixel values are mapped to an 8-bit grayscale `ImageData` buffer centered at mid-gray ($128$):
      $$\text{pixelVal} = \text{clamp}\left(128 + \frac{\Delta I(x, y)}{\text{scaleFactor}} \times 127, \, 0, \, 255\right)$$
      - Static background stars cancel to neutral gray ($128$).
      - Moving objects (e.g. WISE 0855) produce a classic **dipole**: a black cavity at $(x_0, y_0)$ and a bright white peak at $(x_N, y_N)$.
      - Variable stars (RW Aurigae, R Draconis) are stationary sources with dynamic multi-epoch flux variations; report measured light curves with photometric uncertainties.
+     - **Zodiacal Light Subtraction Toggle:** When `zodiSubtracted: true`, $I_{\text{clean}} = I_{\text{IMAGE}} - I_{\text{ZODI}}$ is applied prior to differencing, eliminating seasonal solar elongation gradients.
    - **Co-Add Stack Mode:**
      Computes average pixel value $\bar{I}(x, y) = \frac{1}{N} \sum_{k=0}^{N-1} I_{t_k}(x, y)$. Boosts SNR by $\sqrt{N}$ to reveal faint static background galaxies.
+   - **6-Band Mini-SED Quick-Look (D1–D6):**
+     Clicking any probed pixel in Tab 2 instantly extracts and displays a 6-point broadband Spectral Energy Distribution sparkline ($F_{\text{D1}}$ through $F_{\text{D6}}$) from the cutout tensor in $<2\,\text{ms}$, allowing observers to identify brown dwarf spectral slopes (steep rise into D4/D5) prior to navigating to Tab 3.
+   - **Embedded Pan-STARRS PS1 Optical Comparison Thumbnail:**
+     Embeds a side-by-side sub-arcsecond ($0.25''/\text{px}$) $g/r/i$ optical false-color composite from the STScI Pan-STARRS cutout API. Instantly debunks whether a $6.2''$ SPHEREx infrared blob is a true optical dropout (brown dwarf) or an optical background star blend.
 3. **Raw vs. Rectified Inspector Toggle:**
    - Switching to `[Raw Sensor]` replaces the rectified North-Up canvas with the raw un-interpolated $2040 \times 2040$ detector frame.
    - Renders the spacecraft roll angle ($\theta$) and draws curved yellow isolines showing the physical curvature of the Linear Variable Filter ("LVF Smile").
@@ -1620,6 +1632,10 @@ The citizen-science collaboration hub modeled on Zooniverse Talk, connecting raw
      - VizieR Gaia DR3: `https://vizier.cds.unistra.fr/viz-bin/VizieR-3?-source=I/355/gaiadr3&-c={ra}+{dec}&-c.rs=15`
      - Legacy Survey: `https://www.legacysurvey.org/viewer?ra={ra}&dec={dec}&zoom=14`
      - WiseView: `http://byw.tools/wiseview#ra={ra}&dec={dec}&size=176&band=2`
+     - Pan-STARRS PS1: `https://ps1images.stsci.edu/cgi-bin/ps1cutouts?pos={ra}+{dec}&filter=color&filter=g&filter=r&filter=i&filter=z&filter=y&filetypes=stack`
+4. **1-Click Structured Classification Taxonomy:**
+   - Volunteers can classify candidates with structured 1-click taxonomy buttons (`[+ Dipole / Mover]`, `[+ Flashing Variable]`, `[+ Interstellar Ice]`, `[+ Optical Blend / Artifact]`) alongside free-form discussion text.
+   - Submissions auto-attach `#hashtags` and increment class votes ($V_{\text{mover}}, V_{\text{var}}, V_{\text{artifact}}$) in the `subjects` table, updating Bayesian observer reliability weights $w_u$ and Shannon entropy consensus $H(S)$ without requiring long textual debates.
 
 ---
 
