@@ -185,7 +185,7 @@ export const TrainingDynamics: React.FC = () => {
       ctx.stroke();
 
       ctx.fillStyle = '#64748b';
-      ctx.font = '10px ui-monospace, monospace';
+      ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
       ctx.textAlign = 'right';
       ctx.fillText(((1 - i / 4) * maxLoss).toFixed(2), padL - 6, y + 3);
       ctx.textAlign = 'left';
@@ -266,7 +266,7 @@ export const TrainingDynamics: React.FC = () => {
     });
 
     ctx.fillStyle = '#64748b';
-    ctx.font = '9px ui-monospace, monospace';
+    ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
     ctx.textAlign = 'left';
     ctx.fillText('-1.0', padL, height - 4);
     ctx.textAlign = 'center';
@@ -590,19 +590,19 @@ export const TrainingDynamics: React.FC = () => {
 
           const topPt = proj(box.x, box.y - hy - 0.14, box.z);
           ctx.fillStyle = '#e2e8f0';
-          ctx.font = '600 10px ui-sans-serif, system-ui, sans-serif';
+          ctx.font = '600 10px "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText(box.label, topPt.sx, Math.max(14, topPt.sy));
 
           const botPt = proj(box.x, box.y + hy + 0.15, box.z);
           ctx.fillStyle = '#94a3b8';
-          ctx.font = '9px ui-monospace, monospace';
+          ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
           ctx.fillText(box.sub, botPt.sx, Math.min(height - 18, botPt.sy));
         }
 
         // Bottom HUD overlay
         ctx.fillStyle = '#94a3b8';
-        ctx.font = '10px ui-monospace, monospace';
+        ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
         ctx.textAlign = 'left';
         ctx.fillText(
           `Drag to rotate 3D stack · Arch: ${hyperparams.model} · LoRA r=${hyperparams.loraR} · GradNorm ${(currentFrame?.metrics.global_grad_norm ?? 0).toFixed(3)}`,
