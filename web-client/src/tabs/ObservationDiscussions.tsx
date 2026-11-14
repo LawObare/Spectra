@@ -6,6 +6,10 @@ import {
   MANDATORY_BENCHMARKS,
   SEARCHABLE_SKY_CATALOG,
 } from '../components/GlobalCommandHeader';
+import {
+  MAJOR_DISCOVERIES,
+  type MajorDiscovery,
+} from '../components/MajorDiscoveriesData';
 import { Badge, Button, Input } from '../components/ui';
 
 /**
@@ -128,6 +132,109 @@ function ensureZeroAuthIdentity(): { observerId: string; observerKey: string; ha
     observerId: obsId,
     observerKey: obsKey,
     handle: `Obs-${shortSuffix}`,
+  };
+}
+
+interface ThreadVisual {
+  imageSrc: string;
+  fallbackSrc: string;
+  imageCredit: string;
+  targetLabel: string;
+  badgeLabel: string;
+}
+
+const CATEGORY_FALLBACK_VISUALS: Record<string, { src: string; credit: string; label: string }> = {
+  interstellar_ice: {
+    src: '/images/discoveries/elias29.jpg',
+    credit: 'NASA/ESA/CSA/STScI — JWST (CC BY 4.0)',
+    label: 'Interstellar Ice Cloud',
+  },
+  moving_brown_dwarf: {
+    src: '/images/discoveries/wise0855.jpg',
+    credit: 'NASA/ESA/STScI — Hubble WFC3 (CC BY-SA 4.0)',
+    label: 'Substellar Mover Field',
+  },
+  circumstellar_disk: {
+    src: '/images/discoveries/rw_aur.jpg',
+    credit: 'ESO — protoplanetary disc impression (CC BY 4.0)',
+    label: 'Circumstellar Disk Field',
+  },
+  mira_agb_pulsator: {
+    src: '/images/discoveries/r_dra.jpg',
+    credit: 'DSS2/ESO — Mira-type AGB (CC BY 4.0)',
+    label: 'Mira AGB Pulsator Field',
+  },
+  variable_star: {
+    src: '/images/discoveries/betelgeuse.jpg',
+    credit: 'ALMA (ESO/NAOJ/NRAO) (CC BY 4.0)',
+    label: 'Variable Source Field',
+  },
+  high_z_emission: {
+    src: '/images/discoveries/cdfs.jpg',
+    credit: 'NASA/CXC/Penn State/B. Luo et al. (Public domain)',
+    label: 'Extragalactic Line Field',
+  },
+};
+
+const DEFAULT_FALLBACK_VISUAL = {
+  src: '/images/discoveries/nep_tdf.jpg',
+  credit: 'NASA/STScI — JWST NEP TDF (Public domain)',
+  label: 'SPHEREx Sky Cutout',
+};
+
+function resolveThreadVisual(t: DiscussionThread): ThreadVisual {
+  const rawTarget = (t.targetName ?? '').trim();
+  const hasExplicitTarget = rawTarget.length > 0 && rawTarget !== 'Selected Field';
+  const haystack = `${rawTarget} ${t.title} ${(t.hashtags ?? []).join(' ')}`.toLowerCase();
+  const cosDec = Math.cos((t.dec * Math.PI) / 180);
+
+  const matchedDiscovery: MajorDiscovery | undefined = MAJOR_DISCOVERIES.find((d) => {
+    const dRa = ((d.ra - t.ra + 540) % 360) - 180;
+    const sepDeg = Math.hypot(dRa * cosDec, d.dec - t.dec);
+    if (sepDeg <= 0.35) return true;
+    const nameMatch = haystack.includes(d.name.toLowerCase());
+    const codenameMatch = d.codename ? haystack.includes(d.codename.toLowerCase()) : false;
+    const idMatch = haystack.includes(d.id.toLowerCase());
+    const wiseMatch = d.id === 'wise0855' && haystack.includes('wise 0855');
+    return nameMatch || codenameMatch || idMatch || wiseMatch;
+  });
+
+  if (matchedDiscovery) {
+    return {
+      imageSrc: matchedDiscovery.imageSrc,
+      fallbackSrc: matchedDiscovery.imageSrc,
+      imageCredit: matchedDiscovery.imageCredit,
+      targetLabel: hasExplicitTarget ? rawTarget : matchedDiscovery.name,
+      badgeLabel: matchedDiscovery.spectralType || matchedDiscovery.categoryLabel,
+    };
+  }
+
+  const isSplicesThread =
+    Math.hypot(t.ra - 272.5, t.dec - -18.0333) <= 0.35 || haystack.includes('splices');
+  if (isSplicesThread) {
+    return {
+      imageSrc: '/images/discoveries/elias29.jpg',
+      fallbackSrc: '/images/discoveries/elias29.jpg',
+      imageCredit: 'NASA/ESA/CSA/STScI — JWST Interstellar Ice Core (CC BY 4.0)',
+      targetLabel: hasExplicitTarget ? rawTarget : 'SPLICES J1810-1802',
+      badgeLabel: 'Dense Cloud Ice Field',
+    };
+  }
+
+  const fallback = CATEGORY_FALLBACK_VISUALS[t.classification] ?? DEFAULT_FALLBACK_VISUAL;
+  const fovDeg = Math.max(0.04, (t.fovArcsec || 180) / 3600).toFixed(4);
+  const cutoutUrl = `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=CDS%2FP%2F2MASS%2Fcolor&width=640&height=280&fov=${fovDeg}&ra=${encodeURIComponent(
+    String(t.ra)
+  )}&dec=${encodeURIComponent(String(t.dec))}&projection=TAN&format=jpg`;
+
+  return {
+    imageSrc: cutoutUrl,
+    fallbackSrc: fallback.src,
+    imageCredit: '2MASS Infrared Cutout (CDS HiPS2FITS)',
+    targetLabel: hasExplicitTarget
+      ? rawTarget
+      : `J2000 ${t.ra.toFixed(4)}°, ${t.dec >= 0 ? '+' : ''}${t.dec.toFixed(4)}°`,
+    badgeLabel: fallback.label,
   };
 }
 
@@ -852,6 +959,7 @@ export const ObservationDiscussions: React.FC = () => {
                       t.classification;
                 const repliesOpen =
                   expandedReplies[t.id] ?? t.replies.length > 0;
+                const visual = resolveThreadVisual(t);
 
                 return (
                   <article
@@ -905,9 +1013,39 @@ export const ObservationDiscussions: React.FC = () => {
 
                     {/* Embedded Telemetry State Card (modeled on code preview + Read All ->) */}
                     <div className="rounded-lg border border-border bg-background/90 overflow-hidden">
+                      <div className="relative h-40 sm:h-44 w-full overflow-hidden border-b border-border/70 bg-neutral-950 group">
+                        <img
+                          src={visual.imageSrc}
+                          alt={`${visual.targetLabel} — ${t.title}`}
+                          loading="lazy"
+                          decoding="async"
+                          onError={(e) => {
+                            if (
+                              !e.currentTarget.dataset.fallbackApplied &&
+                              e.currentTarget.src !== `${window.location.origin}${visual.fallbackSrc}`
+                            ) {
+                              e.currentTarget.dataset.fallbackApplied = '1';
+                              e.currentTarget.src = visual.fallbackSrc;
+                            }
+                          }}
+                          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                        />
+                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
+                        <div className="pointer-events-none absolute top-2 left-2.5 right-2.5 flex items-center justify-between gap-2">
+                          <span className="rounded-md border border-white/15 bg-black/65 px-2 py-0.5 font-mono text-[10px] tabular-nums text-white/90 backdrop-blur-sm">
+                            {t.ra.toFixed(2)}°, {t.dec >= 0 ? '+' : ''}{t.dec.toFixed(2)}° · {t.fovArcsec}&quot;
+                          </span>
+                          <span className="max-w-[55%] truncate rounded-md border border-primary/35 bg-black/65 px-2 py-0.5 font-mono text-[10px] text-primary backdrop-blur-sm">
+                            {visual.badgeLabel}
+                          </span>
+                        </div>
+                        <span className="pointer-events-none absolute bottom-1.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 font-mono text-[9px] text-white/75 backdrop-blur-sm">
+                          {visual.imageCredit}
+                        </span>
+                      </div>
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-secondary/30 px-3 py-1.5 font-mono text-[10px]">
                         <span className="text-foreground/90 font-medium">
-                          {t.targetName}
+                          {visual.targetLabel}
                         </span>
                         <span className="text-primary">
                           {t.confidencePct > 0 ? `${catLabel} · ${t.confidencePct}%` : catLabel}
