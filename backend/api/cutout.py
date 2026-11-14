@@ -292,6 +292,7 @@ async def create_cutout(
             "progress": 0.0,
             "stage": "queued",
             "message": "Task enqueued, waiting for processing",
+            "queued_at": time.monotonic(),
         }
     return {
         "task_id": task_id,
@@ -302,6 +303,16 @@ async def create_cutout(
 
 def _sse_event(data: dict[str, Any]) -> str:
     return f"data: {json.dumps(data)}\n\n"
+
+
+def _progress_payload(task_id: str) -> dict[str, Any]:
+    state = task_states[task_id]
+    payload = {"task_id": task_id, **state}
+    payload.pop("queued_at", None)
+    if state.get("status") == "queued":
+        queued_at = float(state.get("queued_at", time.monotonic()))
+        payload["queue_wait_seconds"] = int(time.monotonic() - queued_at)
+    return payload
 
 
 @router.get("/cutout/progress/{task_id}")
@@ -318,10 +329,10 @@ async def get_cutout_progress(task_id: str, request: Request, stream: bool = Fal
         while True:
             if await request.is_disconnected():
                 break
-            state = task_states.get(task_id)
-            if state is None:
+            if task_id not in task_states:
                 break
-            payload = {"task_id": task_id, **state}
+            payload = _progress_payload(task_id)
+            state = task_states[task_id]
             if payload != last:
                 yield _sse_event(payload)
                 last = payload
@@ -331,7 +342,7 @@ async def get_cutout_progress(task_id: str, request: Request, stream: bool = Fal
 
     if wants_sse:
         return StreamingResponse(event_stream(), media_type="text/event-stream")
-    return {"task_id": task_id, **task_states[task_id]}
+    return _progress_payload(task_id)
 
 
 @router.get("/cutout/{task_id}/tensor")
