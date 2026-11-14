@@ -96,7 +96,14 @@ function getCutoutTileUrl(
   const normRa = (((raDeg % 360) + 360) % 360).toFixed(5);
   const clampDec = Math.max(-89.0, Math.min(89.0, decDeg)).toFixed(5);
   const clampScale = Math.max(0.262, Math.min(30.0, pixscale)).toFixed(3);
-  return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${survey}&pixscale=${clampScale}&size=${size}`;
+  
+  // DR10 only covers Dec -60 deg to +30 deg. If outside or if unwise requested, use unwise-neo7 (100% all-sky)
+  let effectiveSurvey = survey;
+  if (survey === 'ls-dr10' && (decDeg < -60.0 || decDeg > 32.0)) {
+    effectiveSurvey = 'unwise-neo7';
+  }
+
+  return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${effectiveSurvey}&pixscale=${clampScale}&size=${size}`;
 }
 
 // Fixed Zoom Octaves for stable tile keys during zoom & pan
@@ -500,85 +507,89 @@ export const CelestialNavigator: React.FC = () => {
       // Dynamically tiles photographic survey plates covering the active viewport
       const octave = getZoomOctave(fovDeg);
       const { plateSizeDeg, pixscale, level } = octave;
-      const stepDeg = plateSizeDeg * 0.75;
-      const minDec = Math.max(-88.5, Math.floor((centerDec - halfFovY * 1.1) / stepDeg) * stepDeg);
-      const maxDec = Math.min(88.5, Math.ceil((centerDec + halfFovY * 1.1) / stepDeg) * stepDeg);
-      const minRa = Math.floor((centerRa - raSpan * 1.1) / stepDeg) * stepDeg;
-      const maxRa = Math.ceil((centerRa + raSpan * 1.1) / stepDeg) * stepDeg;
+      const stepDeg = plateSizeDeg * 0.85;
+      const minDec = Math.max(-88.5, Math.floor((centerDec - halfFovY * 1.05) / stepDeg) * stepDeg);
+      const maxDec = Math.min(88.5, Math.ceil((centerDec + halfFovY * 1.05) / stepDeg) * stepDeg);
+      const minRa = Math.floor((centerRa - raSpan * 1.05) / stepDeg) * stepDeg;
+      const maxRa = Math.ceil((centerRa + raSpan * 1.05) / stepDeg) * stepDeg;
 
       const now = Date.now();
 
-      // Request and update visible plates in cache
-      for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
-        for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
-          const normRa = ((pRa % 360) + 360) % 360;
-          const plateKey = `${state.activeSurvey}_L${level}_${normRa.toFixed(3)}_${pDec.toFixed(3)}`;
-          const plate = plateCacheRef.current.get(plateKey);
+      // Only query new tiles if user is not actively dragging or panning
+      if (!dragRef.current.active) {
+        let tilesRequestedThisFrame = 0;
+        const maxTilesPerFrame = 6;
 
-          if (!plate) {
-            const img = new Image();
-            // Note: Public survey cutouts lack CORS headers; do not set crossOrigin
-            const newPlate: PhotographicPlate = {
-              key: plateKey,
-              img,
-              loaded: false,
-              error: false,
-              ra: normRa,
-              dec: pDec,
-              sizeDeg: plateSizeDeg,
-              pixscale,
-              lastUsed: now,
-            };
-            plateCacheRef.current.set(plateKey, newPlate);
-            img.onload = () => {
-              newPlate.loaded = true;
-            };
-            img.onerror = () => {
-              newPlate.error = true;
-            };
-            img.src = getCutoutTileUrl(state.activeSurvey, normRa, pDec, pixscale, 512);
-          } else {
-            plate.lastUsed = now;
+        for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
+          for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
+            const normRa = ((pRa % 360) + 360) % 360;
+            const plateKey = `${state.activeSurvey}_L${level}_${normRa.toFixed(3)}_${pDec.toFixed(3)}`;
+            const plate = plateCacheRef.current.get(plateKey);
+
+            if (!plate) {
+              if (tilesRequestedThisFrame < maxTilesPerFrame) {
+                tilesRequestedThisFrame++;
+                const img = new Image();
+                const newPlate: PhotographicPlate = {
+                  key: plateKey,
+                  img,
+                  loaded: false,
+                  error: false,
+                  ra: normRa,
+                  dec: pDec,
+                  sizeDeg: plateSizeDeg,
+                  pixscale,
+                  lastUsed: now,
+                };
+                plateCacheRef.current.set(plateKey, newPlate);
+                img.onload = () => {
+                  newPlate.loaded = true;
+                };
+                img.onerror = () => {
+                  newPlate.error = true;
+                };
+                img.src = getCutoutTileUrl(state.activeSurvey, normRa, pDec, pixscale, 512);
+              }
+            } else {
+              plate.lastUsed = now;
+            }
           }
         }
       }
 
-      // LRU cache eviction if cache exceeds 50 plates
-      if (plateCacheRef.current.size > 50) {
+      // LRU cache eviction with 150-plate ceiling and 20s retention grace period
+      if (plateCacheRef.current.size > 150) {
         const entries = Array.from(plateCacheRef.current.entries());
         entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-        for (let i = 0; i < entries.length - 35; i++) {
-          plateCacheRef.current.delete(entries[i][0]);
+        for (let i = 0; i < entries.length - 120; i++) {
+          // Never evict plates touched within last 20 seconds
+          if (now - entries[i][1].lastUsed > 20000) {
+            plateCacheRef.current.delete(entries[i][0]);
+          }
         }
       }
 
       // Render all loaded photographic plates for active survey intersecting viewport
       // Sort plates by size descending so wider base plates render before high-res overlays
       const loadedPlates = Array.from(plateCacheRef.current.values()).filter(
-        (p) => p.loaded && !p.error && p.key.startsWith(state.activeSurvey)
+        (p) => p.loaded && !p.error && (p.key.startsWith(state.activeSurvey) || state.activeSurvey === 'ls-dr10')
       );
       loadedPlates.sort((a, b) => b.sizeDeg - a.sizeDeg);
 
       loadedPlates.forEach((plate) => {
-        const cosPDec = Math.max(0.08, Math.cos((plate.dec * Math.PI) / 180));
-        const halfWidthRa = (plate.sizeDeg / 2) / cosPDec;
-        const halfHeightDec = plate.sizeDeg / 2;
-
-        const pTopLeft = worldToScreen(plate.ra + halfWidthRa, plate.dec + halfHeightDec);
-        const pBotRight = worldToScreen(plate.ra - halfWidthRa, plate.dec - halfHeightDec);
-
-        const dx = pBotRight.x - pTopLeft.x;
-        const dy = pBotRight.y - pTopLeft.y;
+        const pos = worldToScreen(plate.ra, plate.dec);
+        const tilePx = plate.sizeDeg * scalePxPerDeg;
+        const left = pos.x - tilePx / 2;
+        const top = pos.y - tilePx / 2;
 
         if (
-          dx > 2 &&
-          dy > 2 &&
-          pTopLeft.x < width &&
-          pTopLeft.x + dx > 0 &&
-          pTopLeft.y < height &&
-          pTopLeft.y + dy > 0
+          tilePx > 2 &&
+          left < width &&
+          left + tilePx > 0 &&
+          top < height &&
+          top + tilePx > 0
         ) {
-          ctx.drawImage(plate.img, pTopLeft.x, pTopLeft.y, dx, dy);
+          ctx.drawImage(plate.img, left, top, tilePx, tilePx);
         }
       });
 
