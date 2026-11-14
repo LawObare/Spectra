@@ -63,6 +63,41 @@ interface SurveyPass {
   rollAngleDeg: number;
 }
 
+interface MarkedObject {
+  id: number;
+  x: number;
+  y: number;
+  radiusPx: number;
+  ra: number;
+  dec: number;
+  epochIndex: number;
+  passLabel: string;
+  mjd: number;
+  bandId: string;
+  flux: number;
+  snr: number;
+  classification: string;
+  confidence: number;
+}
+
+const PIXEL_SCALE_ARCSEC = 6.2;
+
+function fallbackPixelToSky(
+  px: number,
+  py: number,
+  width: number,
+  height: number,
+  centerRa: number,
+  centerDec: number
+): { ra: number; dec: number } {
+  const cosDec = Math.max(0.1, Math.cos((centerDec * Math.PI) / 180));
+  const dxArcsec = (px - (width - 1) / 2) * PIXEL_SCALE_ARCSEC;
+  const dyArcsec = -(py - (height - 1) / 2) * PIXEL_SCALE_ARCSEC;
+  const ra = (centerRa + dxArcsec / (3600 * cosDec) + 360) % 360;
+  const dec = Math.max(-90, Math.min(90, centerDec + dyArcsec / 3600));
+  return { ra, dec };
+}
+
 const DISCRETE_SURVEY_PASSES: SurveyPass[] = [
   { passIndex: 0, label: 'Pass 1', mjd: 60810.4, mjdRange: [60789.9, 61053.4], dateStr: '2025-05-15', rollAngleDeg: 12.4 },
   { passIndex: 1, label: 'Pass 2', mjd: 60995.2, mjdRange: [61091.7, 61237.9], dateStr: '2025-11-16', rollAngleDeg: 34.8 },
@@ -295,6 +330,19 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     totalMotionArcsecYr: number;
     positionAngleDeg: number;
   } | null>(null);
+  const [lastMotionVector, setLastMotionVector] = useState<{
+    p0: { x: number; y: number; epoch: number };
+    p1: { x: number; y: number; epoch: number };
+  } | null>(null);
+  const [markedObjects, setMarkedObjects] = useState<MarkedObject[]>([]);
+  const [selectedMarkId, setSelectedMarkId] = useState<number | null>(null);
+  const nextMarkIdRef = useRef<number>(1);
+  const [snapToPeak, setSnapToPeak] = useState<boolean>(true);
+
+  const selectedMark = useMemo(
+    () => markedObjects.find((m) => m.id === selectedMarkId) ?? null,
+    [markedObjects, selectedMarkId]
+  );
 
   // Triage state
   const [triageClass, setTriageClass] = useState<string>('moving_brown_dwarf');
@@ -318,6 +366,77 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [isSmoothRendering, setIsSmoothRendering] = useState(true);
 
   const currentCoordKey = `${urlRa.toFixed(5)},${urlDec.toFixed(5)},${Math.round(urlFov || 300)}`;
+
+  useEffect(() => {
+    setMarkedObjects([]);
+    setSelectedMarkId(null);
+    nextMarkIdRef.current = 1;
+    setMotionPoints([]);
+    setMotionResult(null);
+    setLastMotionVector(null);
+    setTriageSubmitted(false);
+  }, [currentCoordKey]);
+
+  const handleSelectMark = useCallback(
+    (mark: MarkedObject) => {
+      setSelectedMarkId(mark.id);
+      setTriageClass(mark.classification);
+      setTriageConfidence(mark.confidence);
+      setTriageSubmitted(false);
+      setProbedPixel({ x: mark.x, y: mark.y });
+      setProbeSkyPosition({ ra: mark.ra, dec: mark.dec });
+      setUrlProbeX(mark.x);
+      setUrlProbeY(mark.y);
+    },
+    [setProbedPixel, setProbeSkyPosition, setUrlProbeX, setUrlProbeY]
+  );
+
+  const handleRemoveMark = useCallback(
+    (markId: number) => {
+      setMarkedObjects((prev) => {
+        const next = prev.filter((m) => m.id !== markId);
+        if (selectedMarkId === markId) {
+          const fallback = next[next.length - 1] ?? null;
+          setSelectedMarkId(fallback ? fallback.id : null);
+          if (fallback) {
+            setTriageClass(fallback.classification);
+            setTriageConfidence(fallback.confidence);
+            setProbedPixel({ x: fallback.x, y: fallback.y });
+            setProbeSkyPosition({ ra: fallback.ra, dec: fallback.dec });
+            setUrlProbeX(fallback.x);
+            setUrlProbeY(fallback.y);
+          } else {
+            setProbedPixel(null);
+            setProbeSkyPosition(null);
+          }
+        }
+        return next;
+      });
+    },
+    [selectedMarkId, setProbedPixel, setProbeSkyPosition, setUrlProbeX, setUrlProbeY]
+  );
+
+  const handleClearMarks = useCallback(() => {
+    setMarkedObjects([]);
+    setSelectedMarkId(null);
+    nextMarkIdRef.current = 1;
+    setProbedPixel(null);
+    setProbeSkyPosition(null);
+  }, [setProbedPixel, setProbeSkyPosition]);
+
+  const syncSelectedMarkTriage = useCallback(
+    (nextClass: string, nextConfidence: number) => {
+      if (selectedMarkId === null) return;
+      setMarkedObjects((prev) =>
+        prev.map((m) =>
+          m.id === selectedMarkId
+            ? { ...m, classification: nextClass, confidence: nextConfidence }
+            : m
+        )
+      );
+    },
+    [selectedMarkId]
+  );
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
     [installedSections]
@@ -393,6 +512,14 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         localStorage.setItem('spx_observer_key', key);
       }
 
+      const updatedMarks = markedObjects.map((m) =>
+        m.id === selectedMarkId
+          ? { ...m, classification: triageClass, confidence: triageConfidence }
+          : m
+      );
+      const activeMarkPayload =
+        updatedMarks.find((m) => m.id === selectedMarkId) ?? null;
+
       const subjectId = activeBenchmark?.id || `subj-${urlRa.toFixed(4)}-${urlDec.toFixed(4)}`;
       await fetch('/api/classify', {
         method: 'POST',
@@ -407,11 +534,13 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           primary_class: triageClass,
           confidence: triageConfidence / 100,
           motion_telemetry: {
-            ra: urlRa,
-            dec: urlDec,
+            ra: activeMarkPayload?.ra ?? urlRa,
+            dec: activeMarkPayload?.dec ?? urlDec,
             renderMode,
-            epochIndex: activeEpochIndex,
+            epochIndex: activeMarkPayload?.epochIndex ?? activeEpochIndex,
             targetName: activeBenchmark?.name || store.activeTargetName,
+            selected_mark: activeMarkPayload,
+            marked_objects: updatedMarks,
           },
         }),
       });
@@ -953,21 +1082,39 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
   const benchmarkReticle = gaiaReticle;
 
-  // Handle pixel clicks with Sub-Pixel Auto-Centroid Snapping (SPECIFICATION.md §4.2, docs/audits/QA_AUDIT.md §9.4)
+  // Handle pixel clicks & dragged circle marks (SPECIFICATION.md §4.2, docs/audits/QA_AUDIT.md §9.4)
   const handlePixelClick = useCallback(
     (info: HoverPixelInfo) => {
-      // Sub-pixel centroid peak snapping (5x5 neighborhood) to eliminate human clicking jitter
       let clickX = info.x;
       let clickY = info.y;
+      const isDragCircle = typeof info.radiusPx === 'number' && info.radiusPx >= 1.0;
+
       if (measuringMotion && currentFluxPlane) {
+        // 5x5 centroid peak snapping for precise 2-click proper motion vectors
         let maxFlux = -Infinity;
         const radius = 2;
         for (let dy = -radius; dy <= radius; dy++) {
           for (let dx = -radius; dx <= radius; dx++) {
             const px = Math.max(0, Math.min(currentWidth - 1, info.x + dx));
             const py = Math.max(0, Math.min(currentHeight - 1, info.y + dy));
-            const f = currentFluxPlane[py * currentWidth + px] || 0;
-            if (f > maxFlux) {
+            const f = currentFluxPlane[py * currentWidth + px];
+            if (Number.isFinite(f) && f > maxFlux) {
+              maxFlux = f;
+              clickX = px;
+              clickY = py;
+            }
+          }
+        }
+      } else if (snapToPeak && !isDragCircle && currentFluxPlane) {
+        // 3x3 flux-peak snap for single-click object circling
+        let maxFlux = -Infinity;
+        const radius = 1;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const px = Math.max(0, Math.min(currentWidth - 1, info.x + dx));
+            const py = Math.max(0, Math.min(currentHeight - 1, info.y + dy));
+            const f = currentFluxPlane[py * currentWidth + px];
+            if (Number.isFinite(f) && f > maxFlux) {
               maxFlux = f;
               clickX = px;
               clickY = py;
@@ -976,35 +1123,36 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         }
       }
 
-      setProbedPixel({ x: clickX, y: clickY });
-      setProbeSkyPosition(
+      const skyPos =
         loadedTensor && !loadedTensor.isSimulated && loadedTensor.wcs
           ? pixelToSky(clickX, clickY, loadedTensor.wcs)
-          : null
-      );
+          : fallbackPixelToSky(clickX, clickY, currentWidth, currentHeight, urlRa, urlDec);
+
+      setProbedPixel({ x: clickX, y: clickY });
+      setProbeSkyPosition(skyPos);
       setUrlProbeX(clickX);
       setUrlProbeY(clickY);
 
-      // If measuring motion vector, record click point
       if (measuringMotion) {
         setMotionPoints((prev) => {
-          const next = [...prev, { x: clickX, y: clickY, epoch: activeEpochIndex }];
+          const next = [...prev, { x: clickX, y: clickY, epoch: safeEpochIndex }];
           if (next.length === 2) {
             const p0 = next[0];
             const p1 = next[1];
             const dxPx = p1.x - p0.x;
             const dyPx = p1.y - p0.y;
-            const dtYears = Math.abs(
-              (surveyPasses[p1.epoch].mjd - surveyPasses[p0.epoch].mjd) / 365.25
-            ) || 0.5;
+            const dtYears =
+              Math.abs((surveyPasses[p1.epoch]?.mjd ?? 0) - (surveyPasses[p0.epoch]?.mjd ?? 0)) /
+                365.25 || 0.5;
 
-            const deltaAlphaArcsec = dxPx * 6.2;
-            const deltaDeltaArcsec = -dyPx * 6.2;
+            const deltaAlphaArcsec = dxPx * PIXEL_SCALE_ARCSEC;
+            const deltaDeltaArcsec = -dyPx * PIXEL_SCALE_ARCSEC;
             const totalMotionArcsec = Math.sqrt(deltaAlphaArcsec ** 2 + deltaDeltaArcsec ** 2);
             const totalMotionArcsecYr = totalMotionArcsec / dtYears;
             const paRad = Math.atan2(deltaAlphaArcsec, deltaDeltaArcsec);
             const positionAngleDeg = ((paRad * 180) / Math.PI + 360) % 360;
 
+            setLastMotionVector({ p0, p1 });
             setMotionResult({
               deltaAlphaArcsec,
               deltaDeltaArcsec,
@@ -1016,22 +1164,79 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           }
           return next;
         });
+        return;
       }
+
+      const pxIdx = clickY * currentWidth + clickX;
+      const fluxVal =
+        currentFluxPlane && pxIdx < currentFluxPlane.length ? currentFluxPlane[pxIdx] : info.flux;
+      const varVal =
+        currentVarPlane && pxIdx < currentVarPlane.length ? currentVarPlane[pxIdx] : info.variance;
+      const snrVal =
+        varVal > 0 && Number.isFinite(fluxVal) ? fluxVal / Math.sqrt(varVal) : info.snr;
+      const passMeta = surveyPasses[safeEpochIndex] || surveyPasses[0];
+      const bandMeta = BANDS[activeBandIndex] || BANDS[0];
+
+      const newMark: MarkedObject = {
+        id: nextMarkIdRef.current++,
+        x: clickX,
+        y: clickY,
+        radiusPx: info.radiusPx ?? 1.8,
+        ra: skyPos.ra,
+        dec: skyPos.dec,
+        epochIndex: safeEpochIndex,
+        passLabel: passMeta?.label || `Pass ${safeEpochIndex + 1}`,
+        mjd: passMeta?.mjd ?? 0,
+        bandId: bandMeta.id,
+        flux: Number.isFinite(fluxVal) ? fluxVal : 0,
+        snr: Number.isFinite(snrVal) ? snrVal : 0,
+        classification: triageClass,
+        confidence: triageConfidence,
+      };
+
+      setMarkedObjects((prev) => [...prev, newMark]);
+      setSelectedMarkId(newMark.id);
+      setTriageSubmitted(false);
     },
-    [measuringMotion, currentFluxPlane, activeEpochIndex, surveyPasses, setProbedPixel, setUrlProbeX, setUrlProbeY]
+    [
+      measuringMotion,
+      snapToPeak,
+      currentFluxPlane,
+      currentVarPlane,
+      currentWidth,
+      currentHeight,
+      loadedTensor,
+      urlRa,
+      urlDec,
+      safeEpochIndex,
+      activeBandIndex,
+      surveyPasses,
+      triageClass,
+      triageConfidence,
+      setProbedPixel,
+      setProbeSkyPosition,
+      setUrlProbeX,
+      setUrlProbeY,
+    ]
   );
 
-  // Forced Aperture Light Curve Data across epochs (D1 vs D5), skipping masked/NaN core pixels
+  // Forced Aperture Light Curve Data across epochs (D1 vs D5), bound to circled object or center
   const lightCurveData = useMemo(() => {
+    const cx = selectedMark ? selectedMark.x : Math.floor(currentWidth / 2);
+    const cy = selectedMark ? selectedMark.y : Math.floor(currentHeight / 2);
+    const customRadius = selectedMark
+      ? Math.max(1, Math.min(4, Math.round(selectedMark.radiusPx)))
+      : null;
+
     const sampleFiniteMean = (plane: Float32Array | undefined): number => {
       if (!plane) return 0;
-      const cx = Math.floor(currentWidth / 2);
-      const cy = Math.floor(currentHeight / 2);
-      for (const radius of [1, 2]) {
+      const radii = customRadius !== null ? [customRadius] : [1, 2];
+      for (const radius of radii) {
         let sum = 0;
         let cnt = 0;
         for (let dy = -radius; dy <= radius; dy++) {
           for (let dx = -radius; dx <= radius; dx++) {
+            if (customRadius !== null && dx * dx + dy * dy > radius * radius) continue;
             const px = cx + dx;
             const py = cy + dy;
             if (px >= 0 && px < currentWidth && py >= 0 && py < currentHeight) {
@@ -1057,7 +1262,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         fluxD5: sampleFiniteMean(activeTensors.fluxData[ep]?.[4]),
       };
     });
-  }, [activeTensors, surveyPasses, totalEpochsCount, currentWidth, currentHeight]);
+  }, [activeTensors, surveyPasses, totalEpochsCount, currentWidth, currentHeight, selectedMark]);
 
   const activePass = surveyPasses[safeEpochIndex];
   const activeBand = BANDS[activeBandIndex];
@@ -1231,8 +1436,41 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             )}
           </div>
 
-          {/* Controls: Canvas Zoom/Smoothing + Raw vs. Rectified Toggle */}
+          {/* Controls: Marking, Canvas Zoom/Smoothing + Raw vs. Rectified Toggle */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="flex items-center space-x-1 sm:border-r sm:border-neutral-800 sm:pr-3">
+              <span
+                className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+                  measuringMotion
+                    ? 'border-sky-500/60 bg-sky-500/15 text-sky-300'
+                    : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                }`}
+              >
+                {measuringMotion ? 'Motion Vector Mode' : 'Circle / Mark Mode'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSnapToPeak((prev) => !prev)}
+                title="Snap single clicks to brightest nearby flux peak in a 3x3 pixel window"
+                className={`rounded px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                  snapToPeak
+                    ? 'border-primary/60 bg-primary/15 text-sky-300'
+                    : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white'
+                }`}
+              >
+                {snapToPeak ? 'Peak Snap: ON' : 'Peak Snap: OFF'}
+              </button>
+              {markedObjects.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearMarks}
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 hover:bg-amber-500/20 transition-colors"
+                >
+                  Clear Marks ({markedObjects.length})
+                </button>
+              )}
+            </div>
+
             <div className="flex items-center space-x-1 sm:border-r sm:border-neutral-800 sm:pr-3">
               <span className="text-neutral-400 text-[11px] mr-1">Scale:</span>
               {(['fit', '1x', '2x', '4x'] as const).map((z) => (
@@ -1370,6 +1608,131 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               </div>
             )}
 
+            {/* Circled Object Identifications Overlay */}
+            {markedObjects.map((mark) => {
+              const isSelected = mark.id === selectedMarkId;
+              return (
+                <div
+                  key={mark.id}
+                  className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2"
+                  style={{
+                    left: `${((mark.x + 0.5) / currentWidth) * 100}%`,
+                    top: `${((mark.y + 0.5) / currentHeight) * 100}%`,
+                    width: `${((mark.radiusPx * 2) / currentWidth) * 100}%`,
+                    height: `${((mark.radiusPx * 2) / currentHeight) * 100}%`,
+                    minWidth: '22px',
+                    minHeight: '22px',
+                  }}
+                >
+                  <div
+                    className={`relative h-full w-full rounded-full transition-all ${
+                      isSelected
+                        ? 'border-2 border-emerald-400 bg-emerald-400/10 shadow-[0_0_14px_rgba(52,211,153,0.55)]'
+                        : 'border border-amber-400/85 bg-amber-400/5 hover:border-amber-300'
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-1/2 top-0 h-1.5 w-[1px] -translate-x-1/2 -translate-y-1/2 ${
+                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
+                      }`}
+                    />
+                    <span
+                      className={`absolute left-1/2 bottom-0 h-1.5 w-[1px] -translate-x-1/2 translate-y-1/2 ${
+                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
+                      }`}
+                    />
+                    <span
+                      className={`absolute top-1/2 left-0 h-[1px] w-1.5 -translate-x-1/2 -translate-y-1/2 ${
+                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
+                      }`}
+                    />
+                    <span
+                      className={`absolute top-1/2 right-0 h-[1px] w-1.5 translate-x-1/2 -translate-y-1/2 ${
+                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
+                      }`}
+                    />
+                  </div>
+                  <div className="pointer-events-auto absolute bottom-full left-1/2 mb-1 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded border bg-black/90 px-1.5 py-0.5 font-mono text-[9px] shadow-md backdrop-blur-sm border-neutral-700">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectMark(mark);
+                      }}
+                      className={`hover:underline ${
+                        isSelected ? 'font-bold text-emerald-300' : 'text-amber-300'
+                      }`}
+                      title={`Select circled object #${mark.id} (${mark.ra.toFixed(4)}°, ${mark.dec.toFixed(4)}°)`}
+                    >
+                      #{mark.id} · {mark.passLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveMark(mark.id);
+                      }}
+                      aria-label={`Remove circled object #${mark.id}`}
+                      className="ml-0.5 text-neutral-400 hover:text-red-400"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Proper Motion Measurement Points & Vector Overlay */}
+            {(motionPoints.length > 0 || lastMotionVector) && (
+              <svg
+                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+                viewBox={`0 0 ${currentWidth} ${currentHeight}`}
+                preserveAspectRatio="none"
+              >
+                {lastMotionVector && (
+                  <g>
+                    <line
+                      x1={lastMotionVector.p0.x + 0.5}
+                      y1={lastMotionVector.p0.y + 0.5}
+                      x2={lastMotionVector.p1.x + 0.5}
+                      y2={lastMotionVector.p1.y + 0.5}
+                      stroke="#38BDF8"
+                      strokeWidth="0.35"
+                      strokeDasharray="0.8 0.5"
+                    />
+                    <circle
+                      cx={lastMotionVector.p0.x + 0.5}
+                      cy={lastMotionVector.p0.y + 0.5}
+                      r="0.7"
+                      fill="none"
+                      stroke="#38BDF8"
+                      strokeWidth="0.35"
+                    />
+                    <circle
+                      cx={lastMotionVector.p1.x + 0.5}
+                      cy={lastMotionVector.p1.y + 0.5}
+                      r="0.7"
+                      fill="#38BDF8"
+                      fillOpacity="0.35"
+                      stroke="#38BDF8"
+                      strokeWidth="0.35"
+                    />
+                  </g>
+                )}
+                {motionPoints.map((pt, idx) => (
+                  <circle
+                    key={idx}
+                    cx={pt.x + 0.5}
+                    cy={pt.y + 0.5}
+                    r="0.8"
+                    fill="none"
+                    stroke="#22D3EE"
+                    strokeWidth="0.4"
+                  />
+                ))}
+              </svg>
+            )}
+
             {/* NASA Eyes Corner Target Reticle [ ] tracking active target */}
             {benchmarkReticle && (
               <div
@@ -1388,6 +1751,13 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 <div className="absolute left-12 top-0 whitespace-nowrap rounded bg-black/85 px-2 py-0.5 font-mono text-[10px] text-primary border border-primary/40 shadow-lg backdrop-blur-sm">
                   {benchmarkReticle.label}
                 </div>
+              </div>
+            )}
+
+            {/* Interactive Circle Prompt when no objects marked yet */}
+            {markedObjects.length === 0 && !measuringMotion && (
+              <div className="pointer-events-none absolute right-2.5 top-2.5 z-10 rounded border border-emerald-500/40 bg-black/80 px-2 py-1 font-mono text-[10px] text-emerald-300 shadow backdrop-blur-sm">
+                Click or drag to circle an object
               </div>
             )}
 
@@ -1759,14 +2129,20 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           </div>
         </section>
 
-        {/* Forced 3x3 Aperture Photometry Light Curve */}
+        {/* Forced Aperture Photometry Light Curve */}
         <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-1.5">
             <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Forced Aperture Light Curve</h3>
-            <span className="font-mono text-[10px] text-neutral-400">3×3 px Aperture</span>
+            <span className="font-mono text-[10px] text-emerald-400">
+              {selectedMark
+                ? `Target #${selectedMark.id} ([${selectedMark.x}, ${selectedMark.y}])`
+                : '3×3 px Center Aperture'}
+            </span>
           </div>
           <p className="mb-2 text-[11px] text-neutral-400">
-            Evolution of calibrated flux across all {totalEpochsCount} survey passes in Optical/NIR (D1) versus Thermal Infrared (D5).
+            {selectedMark
+              ? `Calibrated flux across ${totalEpochsCount} passes inside r=${Math.max(1, Math.min(4, Math.round(selectedMark.radiusPx)))} px around circled object #${selectedMark.id}.`
+              : `Evolution of calibrated flux across all ${totalEpochsCount} survey passes in Optical/NIR (D1) versus Thermal Infrared (D5).`}
           </p>
 
           <div className="h-28 w-full rounded-lg border border-neutral-800 bg-black/60 p-2">
@@ -1841,6 +2217,10 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             <button
               type="button"
               onClick={() => {
+                if (!measuringMotion) {
+                  setLastMotionVector(null);
+                  setMotionResult(null);
+                }
                 setMeasuringMotion(!measuringMotion);
                 setMotionPoints([]);
               }}
@@ -1882,8 +2262,119 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         </section>
 
         {/* Classification Triage Form & In-situ Confirmation Banner */}
-        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
-          <h3 className="mb-2 font-semibold text-white text-xs tracking-wide uppercase">Candidate Triage &amp; Escalation</h3>
+        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Candidate Triage &amp; Escalation</h3>
+            {markedObjects.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
+                  {markedObjects.length} circled
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearMarks}
+                  className="text-[10px] font-mono text-neutral-400 hover:text-amber-300"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+
+          {markedObjects.length > 0 ? (
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                Circled Identifications
+              </div>
+              <div className="max-h-36 space-y-1.5 overflow-y-auto pr-1">
+                {markedObjects.map((mark) => {
+                  const isSelected = mark.id === selectedMarkId;
+                  return (
+                    <div
+                      key={mark.id}
+                      onClick={() => handleSelectMark(mark)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSelectMark(mark);
+                        }
+                      }}
+                      className={`flex cursor-pointer items-start justify-between gap-2 rounded-lg border p-2 text-left transition-colors ${
+                        isSelected
+                          ? 'border-emerald-500/60 bg-emerald-500/10 text-white'
+                          : 'border-neutral-800 bg-neutral-950/70 text-neutral-300 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                          <span
+                            className={`rounded px-1.5 py-0.5 font-bold ${
+                              isSelected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/15 text-amber-300'
+                            }`}
+                          >
+                            #{mark.id}
+                          </span>
+                          <span className="text-white">
+                            [{mark.x}, {mark.y}]
+                          </span>
+                          <span className="text-neutral-400">
+                            r={(mark.radiusPx * PIXEL_SCALE_ARCSEC).toFixed(1)}&quot;
+                          </span>
+                          <span className="text-sky-300">
+                            {mark.passLabel} · {mark.bandId}
+                          </span>
+                        </div>
+                        <div className="font-mono text-[10px] text-neutral-400">
+                          RA {mark.ra.toFixed(4)}°, Dec {mark.dec >= 0 ? '+' : ''}
+                          {mark.dec.toFixed(4)}° · SNR {mark.snr.toFixed(1)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveMark(mark.id);
+                        }}
+                        aria-label={`Delete circled object #${mark.id}`}
+                        className="shrink-0 rounded px-1.5 py-0.5 font-mono text-xs text-neutral-500 hover:bg-red-500/15 hover:text-red-300"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-950/60 p-2.5 text-[11px] text-neutral-400 leading-relaxed">
+              Click or drag on the flipbook canvas to circle an object of interest. Its coordinates, aperture light curve, and spectrum will bind here for classification.
+            </div>
+          )}
+
+          {selectedMark && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-2.5 py-2 text-[11px]">
+              <div className="min-w-0 font-mono text-[10px] text-emerald-200">
+                Classifying <strong className="text-white">#{selectedMark.id}</strong> ({selectedMark.ra.toFixed(4)}°,{' '}
+                {selectedMark.dec >= 0 ? '+' : ''}
+                {selectedMark.dec.toFixed(4)}°)
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setProbedPixel({ x: selectedMark.x, y: selectedMark.y });
+                  setProbeSkyPosition({ ra: selectedMark.ra, dec: selectedMark.dec });
+                  setUrlProbeX(selectedMark.x);
+                  setUrlProbeY(selectedMark.y);
+                  setTab('lab');
+                }}
+                className="shrink-0 font-sans text-[11px] font-medium text-sky-400 hover:text-sky-300 transition-colors"
+              >
+                Inspect in Spectral Lab →
+              </button>
+            </div>
+          )}
 
           {triageSubmitted ? (
             <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-emerald-300 animate-fadeIn">
@@ -1893,9 +2384,12 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               </div>
               <p className="mt-2 font-sans text-[11px] text-neutral-300 leading-relaxed">
                 Candidate recorded as <strong className="text-white capitalize">{triageClass.replace(/_/g, ' ')}</strong> at{' '}
-                <strong className="text-white">{triageConfidence}% confidence</strong>. Telemetry metadata registered in the SPHEREx community catalog.
+                <strong className="text-white">{triageConfidence}% confidence</strong>.
+                {selectedMark
+                  ? ` Marked #${selectedMark.id} at [${selectedMark.x}, ${selectedMark.y}] (RA ${selectedMark.ra.toFixed(4)}°, Dec ${selectedMark.dec >= 0 ? '+' : ''}${selectedMark.dec.toFixed(4)}°).`
+                  : ' Telemetry metadata registered in the SPHEREx community catalog.'}
               </p>
-              <div className="mt-3.5 flex items-center space-x-3 font-sans">
+              <div className="mt-3.5 flex flex-wrap items-center gap-3 font-sans">
                 <button
                   type="button"
                   onClick={() => setTab('discussions')}
@@ -1918,10 +2412,15 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 <label className="text-[11px] font-medium text-neutral-300">Object Classification:</label>
                 <select
                   value={triageClass}
-                  onChange={(e) => setTriageClass(e.target.value)}
+                  onChange={(e) => {
+                    const nextClass = e.target.value;
+                    setTriageClass(nextClass);
+                    syncSelectedMarkTriage(nextClass, triageConfidence);
+                  }}
                   className="mt-1.5 w-full rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-xs text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                 >
                   <option value="moving_brown_dwarf">High-Proper-Motion Brown Dwarf (Cold Y/T Dwarf)</option>
+                  <option value="dipole_mover">Dipole / Moving Object (Planet 9 / Substellar Mover)</option>
                   <option value="variable_star">Variable Stellar Object (T Tauri / Mira Pulsar)</option>
                   <option value="transient_glitch">Cosmic Ray Glitch / False Positive Artifact</option>
                   <option value="asteroid">Fast-Moving Solar System Asteroid</option>
@@ -1938,7 +2437,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                   min={10}
                   max={100}
                   value={triageConfidence}
-                  onChange={(e) => setTriageConfidence(Number(e.target.value))}
+                  onChange={(e) => {
+                    const nextConfidence = Number(e.target.value);
+                    setTriageConfidence(nextConfidence);
+                    syncSelectedMarkTriage(triageClass, nextConfidence);
+                  }}
                   className="mt-1.5 h-1 w-full cursor-pointer accent-primary"
                 />
               </div>
@@ -1949,7 +2452,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 disabled={isSubmittingClassification}
                 className="mt-2 w-full rounded-lg border border-primary bg-primary py-2 font-sans text-xs font-semibold text-white transition-all hover:bg-primary/90 disabled:opacity-50 shadow-sm"
               >
-                {isSubmittingClassification ? 'Submitting to Catalog...' : 'Submit Classification'}
+                {isSubmittingClassification
+                  ? 'Submitting to Catalog...'
+                  : selectedMark
+                    ? `Submit Classification for #${selectedMark.id}`
+                    : 'Submit Classification'}
               </button>
             </div>
           )}
