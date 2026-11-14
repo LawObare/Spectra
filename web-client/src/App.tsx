@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useState, useEffect, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NuqsAdapter } from 'nuqs/adapters/react';
 import { useSpectraUrlState } from './hooks/useSpectraUrlState';
@@ -11,6 +11,8 @@ import {
   SEARCHABLE_SKY_CATALOG,
 } from './components/GlobalCommandHeader';
 import { CommandPalette } from './components/CommandPalette';
+import { MissionLaunchpad } from './components/MissionLaunchpad';
+import { MajorDiscovery } from './components/MajorDiscoveriesData';
 import { CelestialNavigator } from './tabs/CelestialNavigator';
 import { TimeDomainComparator } from './tabs/TimeDomainComparator';
 import { ObservationDiscussions } from './tabs/ObservationDiscussions';
@@ -585,18 +587,41 @@ const LiveMolecularIceWorkbench: React.FC = () => {
 export const PublicExplorerPortal: React.FC = () => {
   const {
     tab,
+    setTab,
     ra: urlRa,
+    setRa,
     dec: urlDec,
+    setDec,
     fov: urlFov,
     cadence: urlCadence,
     mode: urlMode,
     preset: urlPreset,
+    setPreset,
     z: urlZ,
     probeX: urlPx,
     probeY: urlPy,
     isEmbed,
   } = useSpectraUrlState();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [isMissionBriefingActive, setIsMissionBriefingActive] = useState(false);
+
+  const handleLaunchWorkstationFromBriefing = (targetTab: string = 'comparator') => {
+    setTab(targetTab as any);
+    setIsMissionBriefingActive(false);
+  };
+
+  const handleSelectDiscoveryFromBriefing = (discovery: MajorDiscovery) => {
+    const store = useTelemetryStore.getState();
+    store.setCoordinates(discovery.ra, discovery.dec, discovery.name, discovery.badge);
+    setRa(discovery.ra);
+    setDec(discovery.dec);
+    if (discovery.preset) {
+      store.setRgbPreset(discovery.preset);
+      setPreset(discovery.preset);
+    }
+    setTab(discovery.launchTab);
+    setIsMissionBriefingActive(false);
+  };
 
   // Hydrate Zustand TelemetryStore from URL query parameters on deep-link load / URL navigation
   useEffect(() => {
@@ -664,6 +689,8 @@ export const PublicExplorerPortal: React.FC = () => {
       {!isEmbed && (
         <GlobalCommandHeader
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          onToggleMissionBriefing={() => setIsMissionBriefingActive((prev) => !prev)}
+          isMissionBriefingActive={isMissionBriefingActive}
         />
       )}
 
@@ -673,15 +700,51 @@ export const PublicExplorerPortal: React.FC = () => {
         onClose={() => setCommandPaletteOpen(false)}
       />
 
-      {/* Active Tab Workspace */}
+      {/* Main Content: Option A Mission Launchpad or Active Workstation */}
       <main className={`relative flex-1 overflow-hidden ${!isEmbed ? 'pt-[56px]' : ''}`}>
-        {tab === 'navigator' && <CelestialNavigator />}
-        {tab === 'comparator' && <TimeDomainComparator />}
-        {tab === 'spectral' && <LiveSpectrophotometricWorkbench />}
-        {tab === 'ice' && <LiveMolecularIceWorkbench />}
-        {tab === 'discussions' && <ObservationDiscussions />}
+        {isMissionBriefingActive ? (
+          <MissionLaunchpad
+            onLaunchWorkstation={handleLaunchWorkstationFromBriefing}
+            onSelectDiscovery={handleSelectDiscoveryFromBriefing}
+          />
+        ) : (
+          <>
+            {tab === 'navigator' && <CelestialNavigator />}
+            {tab === 'comparator' && <TimeDomainComparator />}
+            {tab === 'spectral' && <LiveSpectrophotometricWorkbench />}
+            {tab === 'ice' && <LiveMolecularIceWorkbench />}
+            {tab === 'discussions' && <ObservationDiscussions />}
+          </>
+        )}
       </main>
     </div>
+  );
+};
+
+/**
+ * Root Landing Page: Option A NASA SPHEREx Mission Launchpad
+ */
+const LandingMissionPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { setCoordinates, setRgbPreset } = useTelemetryStore();
+
+  const handleLaunchWorkstation = (targetTab: string = 'comparator') => {
+    navigate(`/explore?tab=${targetTab}`);
+  };
+
+  const handleSelectDiscovery = (discovery: MajorDiscovery) => {
+    setCoordinates(discovery.ra, discovery.dec, discovery.name, discovery.badge);
+    if (discovery.preset) setRgbPreset(discovery.preset);
+    navigate(
+      `/explore?tab=${discovery.launchTab}&ra=${discovery.ra}&dec=${discovery.dec}&preset=${discovery.preset}`
+    );
+  };
+
+  return (
+    <MissionLaunchpad
+      onLaunchWorkstation={handleLaunchWorkstation}
+      onSelectDiscovery={handleSelectDiscovery}
+    />
   );
 };
 
@@ -701,12 +764,13 @@ export default function App() {
             }
           >
             <Routes>
-              <Route path="/" element={<Navigate to="/explore?tab=navigator" replace />} />
+              {/* Option A: Authentic NASA SPHEREx Mission Launchpad at Root */}
+              <Route path="/" element={<LandingMissionPage />} />
               <Route path="/1" element={<Navigate to="/explore?tab=navigator" replace />} />
               <Route path="/explore/*" element={<PublicExplorerPortal />} />
               {/* Zero-Auth Route-Isolated Admin Suite (No blocking login screens) */}
               <Route path="/admin/*" element={<AdminMissionControl />} />
-              <Route path="*" element={<Navigate to="/explore" replace />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
         </BrowserRouter>
