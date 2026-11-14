@@ -86,6 +86,7 @@ export interface SpectrumSource {
   wavelengthsUm: number[];
   flux: number[];
   badge: string;
+  coverage?: boolean[];
 }
 
 export const ICE_BANDS: IceBand[] = [
@@ -631,7 +632,7 @@ export const MolecularIceStudio: React.FC = () => {
   const [annulusInner, setAnnulusInner] = useState(3.0);
   const [annulusOuter, setAnnulusOuter] = useState(5.0);
   const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('tau');
-  const [sourceMode, setSourceMode] = useState<'synthetic' | 'live'>('synthetic');
+  const [sourceMode, setSourceMode] = useState<'synthetic' | 'live'>('live');
   const [liveSpectrum, setLiveSpectrum] = useState<SpectrumSource | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
@@ -660,26 +661,38 @@ export const MolecularIceStudio: React.FC = () => {
     let cancelled = false;
     setLiveStatus('loading');
     setLiveSpectrum(null);
-    fetch(`/api/spectrum?ra=${selectedTarget.ra}&dec=${selectedTarget.dec}&normalize=false`)
-      .then(async (response) => {
+    const fetchLive = async () => {
+      try {
+        const response = await fetch('/api/spectrum/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ra: selectedTarget.ra, dec: selectedTarget.dec, normalize: false }) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((payload: { wavelengths_um?: number[]; flux_jy?: number[]; provenance?: { source_badge?: string } }) => {
+        const { task_id: taskId } = await response.json();
+        let payload: any;
+        while (!cancelled) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+          const poll = await fetch(`/api/spectrum/tasks/${taskId}`);
+          if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
+          const task = await poll.json();
+          if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
+          if (task.status === 'complete') { payload = task.result; break; }
+        }
+        if (cancelled || !payload) return;
         if (cancelled) return;
-        if (!Array.isArray(payload.wavelengths_um) || !Array.isArray(payload.flux_jy)) {
+        const sourceBadge = payload.provenance?.source_badge;
+        if (typeof sourceBadge !== 'string' || !/^\[IRSA Live \(.+\)\]$/.test(sourceBadge) || !Array.isArray(payload.wavelengths_um) || payload.wavelengths_um.length < 102 || !Array.isArray(payload.flux_jy) || payload.flux_jy.length < 102 || !Array.isArray(payload.channel_coverage)) {
           throw new Error('Malformed spectrum payload');
         }
         setLiveSpectrum({
           wavelengthsUm: payload.wavelengths_um,
-          flux: payload.flux_jy,
-          badge: payload.provenance?.source_badge || '[IRSA Live (spherex_qr2)]',
+          flux: payload.flux_jy.map((flux: number, i: number) => payload.channel_coverage[i] ? flux : Number.NaN),
+          badge: sourceBadge as string,
+          coverage: payload.channel_coverage,
         });
         setLiveStatus('ready');
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setLiveStatus('error');
-      });
+      }
+    };
+    void fetchLive();
     return () => {
       cancelled = true;
     };
@@ -690,14 +703,26 @@ export const MolecularIceStudio: React.FC = () => {
     return {
       wavelengthsUm: syntheticSpectrum.wavelengthsUm,
       flux: syntheticSpectrum.flux,
-      badge: selectedTarget.badge,
+      badge: '[Synthetic Injection Mode]',
     };
-  }, [liveSpectrum, selectedTarget.badge, sourceMode, syntheticSpectrum]);
+  }, [liveSpectrum, sourceMode, syntheticSpectrum]);
 
-  const solution = useMemo(
-    () => analyzeIceProfile(selectedTarget, activeSpectrum.wavelengthsUm, activeSpectrum.flux),
-    [activeSpectrum, selectedTarget]
-  );
+  const solution = useMemo(() => {
+    const wavelengths = activeSpectrum.coverage
+      ? activeSpectrum.wavelengthsUm.filter((_, i) => activeSpectrum.coverage?.[i])
+      : activeSpectrum.wavelengthsUm;
+    const flux = activeSpectrum.coverage
+      ? activeSpectrum.flux.filter((_, i) => activeSpectrum.coverage?.[i] && Number.isFinite(activeSpectrum.flux[i]))
+      : activeSpectrum.flux;
+    if (wavelengths.length < 5) {
+      return {
+        wavelengthsUm: wavelengths, flux, continuum: [], tau: [], ratioPercent: null,
+        brownDwarfNotice: null,
+        bands: ICE_BANDS.map((band) => ({ key: band.key, species: band.species, centerUm: band.centerUm, aValue: band.aValue, integratedTauCm1: null, columnDensity: null, suppressed: true })),
+      };
+    }
+    return analyzeIceProfile(selectedTarget, wavelengths, flux);
+  }, [activeSpectrum, selectedTarget]);
 
   // A sky-annulus selection has no background-star continuum; never report N_ice for it.
   const effectiveSolution = useMemo(() => {
@@ -871,7 +896,7 @@ export const MolecularIceStudio: React.FC = () => {
                 ? liveStatus === 'loading'
                   ? 'Fetching HDU 6 WCS-WAVE spectrum…'
                   : liveStatus === 'ready'
-                    ? 'Live IRSA HDU 6 spectrum loaded'
+                    ? `${liveSpectrum?.badge || 'Spectrum'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
                     : 'Live fetch unavailable — synthetic fallback active'
                 : 'Deterministic SPLICES synthetic template'}
             </div>
