@@ -12,6 +12,7 @@ TARGET_LAYERS = {
     "AstroFeatureSVM": "rbf",
 }
 FEATURE_AXES = ["ir_color_d5_d2", "motion_snr", "ice_methane_depth"]
+CLASS_LABELS = ["Field / Stationary", "Moving / Spectral Anomaly"]
 
 
 class DipoleConvNet3D(nn.Module):
@@ -29,10 +30,13 @@ class DipoleConvNet3D(nn.Module):
         self.pool2 = nn.MaxPool3d((1, 2, 2))
         self.head = nn.Linear(16, num_classes)
 
-    def forward(self, x):
+    def forward_features(self, x):
         x = self.pool1(self.act1(self.bn1(self.conv1(x))))
         x = self.pool2(self.act2(self.bn2(self.conv2(x))))
-        return self.head(x.mean(dim=(2, 3, 4)))
+        return x.mean(dim=(2, 3, 4))
+
+    def forward(self, x):
+        return self.head(self.forward_features(x))
 
 
 class ResBlock1D(nn.Module):
@@ -64,11 +68,14 @@ class SpectralResNet102(nn.Module):
         self.attn = nn.MultiheadAttention(width, num_heads=2, batch_first=True)
         self.head = nn.Linear(width, num_classes)
 
-    def forward(self, x):
+    def forward_features(self, x):
         h = self.block2(self.block1(self.stem(x)))  # [B, C, L]
         seq = h.transpose(1, 2)  # [B, L, C]
         attn_out, _ = self.attn(seq, seq, seq, need_weights=False)
-        return self.head((seq + attn_out).mean(dim=1))
+        return (seq + attn_out).mean(dim=1)
+
+    def forward(self, x):
+        return self.head(self.forward_features(x))
 
 
 class RBFLayer(nn.Module):
@@ -95,8 +102,11 @@ class AstroFeatureSVM(nn.Module):
         self.rbf = RBFLayer(in_dim, n_centers)
         self.readout = nn.Linear(n_centers, num_classes)
 
+    def forward_features(self, x):
+        return self.rbf(x)
+
     def forward(self, x):
-        return self.readout(self.rbf(x))
+        return self.readout(self.forward_features(x))
 
     @torch.no_grad()
     def boundary_probs(self, n: int = 25):
@@ -110,7 +120,111 @@ class AstroFeatureSVM(nn.Module):
         return probs
 
 
-def build_model(name: str) -> nn.Module:
+class LoraLinear(nn.Module):
+    """Low-Rank Adaptation wrapper matching PEFT LoraConfig on nn.Linear."""
+
+    def __init__(self, base: nn.Linear, r: int = 8, lora_alpha: int = 32, lora_dropout: float = 0.05):
+        super().__init__()
+        self.base = base
+        self.r = max(1, int(r))
+        self.lora_alpha = int(lora_alpha)
+        self.scaling = float(self.lora_alpha) / float(self.r)
+        self.dropout = nn.Dropout(p=float(lora_dropout)) if lora_dropout > 0 else nn.Identity()
+
+        # Freeze pre-trained / base linear parameters while training rank-r matrices A & B
+        self.base.weight.requires_grad_(False)
+        if self.base.bias is not None:
+            self.base.bias.requires_grad_(False)
+
+        self.lora_A = nn.Parameter(torch.empty(self.r, base.in_features, dtype=base.weight.dtype))
+        self.lora_B = nn.Parameter(torch.zeros(base.out_features, self.r, dtype=base.weight.dtype))
+        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+
+    @property
+    def weight(self) -> torch.Tensor:
+        return self.base.weight + self.scaling * (self.lora_B @ self.lora_A)
+
+    @property
+    def bias(self) -> torch.Tensor | None:
+        return self.base.bias
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        base_out = self.base(x)
+        lora_out = F.linear(F.linear(self.dropout(x), self.lora_A), self.lora_B) * self.scaling
+        return base_out + lora_out
+
+
+def apply_lora(
+    model: nn.Module,
+    r: int = 8,
+    lora_alpha: int = 32,
+    lora_dropout: float = 0.05,
+    freeze_backbone: bool = False,
+) -> nn.Module:
+    """Attach LoraLinear adapters to all nn.Linear layers; optionally freeze non-LoRA params."""
+    if r <= 0:
+        return model
+
+    if freeze_backbone:
+        for param in model.parameters():
+            param.requires_grad_(False)
+
+    for _parent_name, module in list(model.named_modules()):
+        for child_name, child in list(module.named_children()):
+            if isinstance(child, nn.Linear) and not isinstance(module, LoraLinear):
+                setattr(module, child_name, LoraLinear(child, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout))
+    return model
+
+
+def parameter_summary(
+    model: nn.Module,
+    lora_r: int = 0,
+    lora_alpha: int = 32,
+    quantization_bits: int = 16,
+) -> dict:
+    """Return total, trainable, frozen, LoRA parameter counts and estimated memory footprint."""
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    lora_params = sum(
+        p.numel()
+        for name, p in model.named_parameters()
+        if p.requires_grad and ("lora_A" in name or "lora_B" in name)
+    )
+    return {
+        "total_params": int(total_params),
+        "trainable_params": int(trainable_params),
+        "frozen_params": int(total_params - trainable_params),
+        "lora_params": int(lora_params),
+        "trainable_pct": round(100.0 * trainable_params / max(1, total_params), 2),
+        "lora_r": int(lora_r),
+        "lora_alpha": int(lora_alpha),
+        "quantization_bits": int(quantization_bits),
+        "vram_estimate_mb": round(total_params * (quantization_bits / 8.0) / (1024 * 1024), 4),
+    }
+
+
+@torch.no_grad()
+def extract_latent_vector(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """Extract normalized penultimate latent representation [B, D] for similarity graphing."""
+    was_training = model.training
+    model.eval()
+    try:
+        if hasattr(model, "forward_features"):
+            feat = model.forward_features(x)
+        else:
+            feat = model(x)
+        return F.normalize(feat.float(), p=2, dim=-1)
+    finally:
+        model.train(was_training)
+
+
+def build_model(
+    name: str,
+    lora_r: int = 0,
+    lora_alpha: int = 32,
+    lora_dropout: float = 0.05,
+    freeze_backbone: bool = False,
+) -> nn.Module:
     models = {
         "DipoleConvNet3D": DipoleConvNet3D,
         "SpectralResNet102": SpectralResNet102,
@@ -118,4 +232,7 @@ def build_model(name: str) -> nn.Module:
     }
     if name not in models:
         raise ValueError(f"Unknown model: {name}")
-    return models[name]()
+    model = models[name]()
+    if lora_r > 0:
+        apply_lora(model, r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout, freeze_backbone=freeze_backbone)
+    return model
