@@ -453,6 +453,7 @@ async def fetch_cutout_from_irsa(
     collection: str = DEFAULT_COLLECTION,
     s3_uri: str | None = None,
     include_psf: bool = False,
+    progress_hook: Callable[[float | None, str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Fetch server-side MEF cutout from IRSA Cutout Service.
 
@@ -491,31 +492,64 @@ async def fetch_cutout_from_irsa(
                     if remaining <= 0:
                         break
                     try:
-                        response = await asyncio.wait_for(
-                            client.get(cutout_url), timeout=min(30.0, remaining)
-                        )
+                        received = 0
+                        async with asyncio.timeout(min(30.0, remaining)):
+                            async with client.stream("GET", cutout_url) as response:
+                                response_status = response.status_code
+                                response_headers = dict(response.headers)
+                                if response_status == 200:
+                                    raw_total = response.headers.get("Content-Length")
+                                    try:
+                                        total_bytes = int(raw_total) if raw_total else None
+                                    except ValueError:
+                                        total_bytes = None
+                                    chunks = []
+                                    async for chunk in response.aiter_bytes():
+                                        chunks.append(chunk)
+                                        received += len(chunk)
+                                        if progress_hook:
+                                            fraction = (
+                                                min(1.0, received / total_bytes)
+                                                if total_bytes
+                                                else None
+                                            )
+                                            if total_bytes:
+                                                message = (
+                                                    f"Downloading {collection.upper()} cutout "
+                                                    f"({received / 1_000_000:.1f}/"
+                                                    f"{total_bytes / 1_000_000:.1f} MB)"
+                                                )
+                                            else:
+                                                message = (
+                                                    f"Receiving {collection.upper()} cutout "
+                                                    f"({received / 1_000_000:.1f} MB)"
+                                                )
+                                            await progress_hook(fraction, message)
+                                    response_content = b"".join(chunks)
+                                else:
+                                    response_content = await response.aread()
                         logger.info(
                             "IRSA cutout attempt collection=%s attempt=%d status=%d bytes=%d duration_s=%.3f",
                             collection,
                             attempt + 1,
-                            response.status_code,
-                            len(response.content),
+                            response_status,
+                            len(response_content),
                             time.monotonic() - started,
                         )
-                        if response.status_code != 200:
+                        if response_status != 200:
                             logger.warning(
                                 "IRSA Cutout returned HTTP %s for collection=%s: %s",
-                                response.status_code,
+                                response_status,
                                 collection,
                                 cutout_url,
                             )
                             if (
-                                response.status_code not in ARCHIVE_RETRYABLE_STATUSES
+                                response_status not in ARCHIVE_RETRYABLE_STATUSES
                                 or attempt + 1 >= ARCHIVE_REQUEST_ATTEMPTS
                             ):
                                 break
                             delay = _archive_retry_delay(
-                                response.headers.get("Retry-After"), attempt
+                                response_headers.get("Retry-After"), attempt
                             )
                             remaining = deadline - asyncio.get_running_loop().time()
                             if remaining <= 0:
@@ -524,7 +558,7 @@ async def fetch_cutout_from_irsa(
                             continue
                         else:
                             cutout_data = _parse_irsa_mef_cutout(
-                                response.content, collection=collection, include_psf=include_psf
+                                response_content, collection=collection, include_psf=include_psf
                             )
                             required_hdus = (
                                 "hdu1_image",
@@ -541,7 +575,7 @@ async def fetch_cutout_from_irsa(
                                 logger.info(
                                     "Cutout fetch collection=%s source=irsa bytes=%d duration_s=%.3f",
                                     collection,
-                                    len(response.content),
+                                    len(response_content),
                                     time.monotonic() - started,
                                 )
                                 return cutout_data
@@ -583,9 +617,31 @@ async def fetch_cutout_from_irsa(
             )
             if not slot_acquired:
                 return {}
+            loop = asyncio.get_running_loop()
+
+            def s3_progress(fraction: float, message: str) -> None:
+                if not progress_hook:
+                    return
+                future = asyncio.run_coroutine_threadsafe(
+                    progress_hook(fraction, message), loop
+                )
+                try:
+                    future.result(timeout=2.0)
+                except TimeoutError:
+                    future.cancel()
+                except Exception:  # noqa: BLE001
+                    logger.debug("Unable to publish S3 cutout progress", exc_info=True)
+
             try:
                 cutout_data = await _run_thread_to_completion(
-                    _fetch_cutout_from_s3, s3_uri, ra, dec, size_deg, collection, include_psf
+                    _fetch_cutout_from_s3,
+                    s3_uri,
+                    ra,
+                    dec,
+                    size_deg,
+                    collection,
+                    include_psf,
+                    s3_progress,
                 )
             finally:
                 ARCHIVE_IO_SEMAPHORE.release()
@@ -657,11 +713,16 @@ class _HTTPRangeReader(io.RawIOBase):
     """Seekable FITS source backed by bounded anonymous HTTP Range requests."""
 
     def __init__(
-        self, url: str, block_size: int = 1024 * 1024, collection: str = "unknown"
+        self,
+        url: str,
+        block_size: int = 1024 * 1024,
+        collection: str = "unknown",
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> None:
         super().__init__()
         self._url = url
         self._collection = collection
+        self._progress_callback = progress_callback
         self._deadline = time.monotonic() + 60.0
         self._block_size = block_size
         self._position = 0
@@ -686,6 +747,8 @@ class _HTTPRangeReader(io.RawIOBase):
                 self.range_count += 1
                 self.bytes_fetched += len(response.content)
                 self.range_duration_seconds += time.monotonic() - probe_started
+                if self._progress_callback:
+                    self._progress_callback(self.bytes_fetched, self._size)
             finally:
                 response.close()
         except Exception:
@@ -721,6 +784,8 @@ class _HTTPRangeReader(io.RawIOBase):
                 raise OSError("S3 returned an incomplete FITS byte range")
             self.range_count += 1
             self.bytes_fetched += len(data)
+            if self._progress_callback:
+                self._progress_callback(self.bytes_fetched, self._size)
             if self._etag:
                 with _RANGE_CACHE_LOCK:
                     _RANGE_CACHE[cache_key] = data
@@ -837,6 +902,7 @@ def _fetch_cutout_from_s3(
     size_deg: float,
     collection: str,
     include_psf: bool = True,
+    progress_callback: Callable[[float, str], None] | None = None,
 ) -> dict[str, Any]:
     """Read FITS sections from anonymous S3 ranges and crop them around the target."""
     from astropy import units as u
@@ -849,6 +915,15 @@ def _fetch_cutout_from_s3(
     endpoint_region = region or "us-east-1"
     hostname = f"{bucket}.s3.{endpoint_region}.amazonaws.com"
     object_url = f"https://{hostname}/{quote(key, safe='/')}"
+
+    def report_range_progress(bytes_read: int, total_bytes: int) -> None:
+        if progress_callback and total_bytes > 0:
+            fraction = min(0.35, 0.35 * bytes_read / total_bytes)
+            progress_callback(
+                fraction,
+                f"Reading S3 cutout ranges ({bytes_read / 1_000_000:.1f} MB transferred)",
+            )
+
     result: dict[str, Any] = {
         "hdu1_image": None,
         "hdu2_flags": None,
@@ -861,7 +936,11 @@ def _fetch_cutout_from_s3(
         "metadata": {"collection": collection, "wcs": "TAN/SIP"},
     }
     with (
-        _HTTPRangeReader(object_url, collection=collection) as remote_file,
+        _HTTPRangeReader(
+            object_url,
+            collection=collection,
+            progress_callback=report_range_progress,
+        ) as remote_file,
         fits.open(remote_file, memmap=False, lazy_load_hdus=True) as hdul,
     ):
         image_hdu = next(
@@ -889,6 +968,8 @@ def _fetch_cutout_from_s3(
 
         section = (slice(y0, y1), slice(x0, x1))
         result["hdu1_image"] = np.asarray(image_hdu.section[section], dtype=np.float32)
+        if progress_callback:
+            progress_callback(0.5, "Read the S3 image cutout")
         image_shape = (int(image_hdu.header["NAXIS2"]), int(image_hdu.header["NAXIS1"]))
         result["hdu1_header"] = image_hdu.header.copy()
         result["hdu1_header"].update(wcs.slice(section).to_header(relax=True))
@@ -911,7 +992,9 @@ def _fetch_cutout_from_s3(
         )
         if include_psf:
             extension_keys += (("hdu5_psf", {"PSF"}, 5, np.float32),)
-        for output_key, names, fallback_index, dtype in extension_keys:
+        for extension_index, (output_key, names, fallback_index, dtype) in enumerate(
+            extension_keys
+        ):
             hdu = next(
                 (
                     hdu
@@ -934,6 +1017,9 @@ def _fetch_cutout_from_s3(
                     if output_key in {"hdu2_flags", "hdu3_variance"}:
                         raise
                     logger.warning("Skipping incompatible optional FITS extension %s", hdu.name)
+            if progress_callback:
+                fraction = 0.52 + 0.4 * (extension_index + 1) / (len(extension_keys) + 1)
+                progress_callback(fraction, f"Read S3 {output_key.removeprefix('hdu')}")
 
         wave_hdu = next(
             (
@@ -949,6 +1035,8 @@ def _fetch_cutout_from_s3(
             for name in ("X", "Y", "VALUES"):
                 wave_tab[name] = np.asarray(wave_hdu.data[name][0], dtype=np.float64)
             result["hdu6_wave_tab"] = wave_tab
+        if progress_callback:
+            progress_callback(0.98, "Read S3 wavelength metadata")
     return result
 
 
@@ -1289,10 +1377,39 @@ async def ingest_exposures_for_target(
         completed_fetches = 0
         progress_lock = asyncio.Lock()
         exposure_fetch_semaphore = asyncio.Semaphore(EXPOSURE_FETCH_CONCURRENCY)
+        fetch_progress = [0.0] * len(selected)
 
-        async def fetch_exposure(exposure: dict[str, Any]) -> dict[str, Any] | None:
+        async def report_fetch_progress(
+            index: int,
+            exposure: dict[str, Any],
+            fraction: float | None,
+            message: str,
+        ) -> None:
+            async with progress_lock:
+                if fraction is not None:
+                    fetch_progress[index] = max(
+                        fetch_progress[index], min(1.0, max(0.0, fraction))
+                    )
+                aggregate = sum(fetch_progress) / len(fetch_progress)
+                if progress_hook:
+                    await progress_hook(
+                        "fetching",
+                        0.4 + 0.28 * aggregate,
+                        f"{exposure['collection']} {exposure['exposure_id']}: {message}; "
+                        f"{completed_fetches} of {len(selected)} cutouts complete",
+                    )
+
+        async def fetch_exposure(
+            index: int, exposure: dict[str, Any]
+        ) -> dict[str, Any] | None:
             nonlocal completed_fetches
             fetch_started = time.monotonic()
+
+            async def on_download_progress(
+                fraction: float | None, message: str
+            ) -> None:
+                await report_fetch_progress(index, exposure, fraction, message)
+
             async with exposure_fetch_semaphore:
                 cutout = await fetch_cutout_from_irsa(
                     str(exposure["access_url"]),
@@ -1304,6 +1421,7 @@ async def ingest_exposures_for_target(
                     collection=str(exposure["collection"]),
                     s3_uri=exposure.get("s3_uri"),
                     include_psf=spectrum_mode,
+                    progress_hook=on_download_progress,
                 )
             logger.info(
                 "Exposure fetch collection=%s id=%s usable=%s duration_s=%.3f",
@@ -1314,8 +1432,9 @@ async def ingest_exposures_for_target(
             )
             async with progress_lock:
                 completed_fetches += 1
+                fetch_progress[index] = 1.0
                 if progress_hook:
-                    fraction = completed_fetches / len(selected)
+                    fraction = sum(fetch_progress) / len(fetch_progress)
                     await progress_hook(
                         "fetching",
                         0.4 + 0.28 * fraction,
@@ -1327,7 +1446,9 @@ async def ingest_exposures_for_target(
             exposure["mjd_range"] = (float(exposure["mjd"]), float(exposure["mjd"]))
             return exposure
 
-        fetched = await asyncio.gather(*(fetch_exposure(exp) for exp in selected))
+        fetched = await asyncio.gather(
+            *(fetch_exposure(index, exposure) for index, exposure in enumerate(selected))
+        )
         result["exposures"] = [exp for exp in fetched if exp is not None]
         if not result["exposures"]:
             result["error"] = "IRSA cutout service returned no usable MEF images"
