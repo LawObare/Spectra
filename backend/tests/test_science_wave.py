@@ -17,10 +17,12 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 try:
+    from backend.api import spectrum as spectrum_api
     from backend.api.spectrum import SpectrumResponse
     from backend.api.spectrum import router as spectrum_router
     from backend.science.wave import (
@@ -38,6 +40,7 @@ try:
         match_benchmark_target,
     )
 except ImportError:
+    from api import spectrum as spectrum_api
     from api.spectrum import SpectrumResponse
     from api.spectrum import router as spectrum_router
     from science.wave import (
@@ -274,9 +277,41 @@ def test_match_benchmark_target_all_5():
     assert t_none is None
 
 
+def _make_archive_observations() -> list[ChannelPoint]:
+    grid = get_standard_channel_grid()
+    bands = ["D1", "D2", "D3", "D4", "D5", "D6"]
+    points: list[ChannelPoint] = []
+    for idx, lam in enumerate(grid):
+        band = bands[min(5, idx // CHANNELS_PER_BAND)]
+        points.append(
+            ChannelPoint(
+                wavelength_um=float(lam),
+                bandwidth_um=0.05,
+                flux_jy=float(0.05 * (lam / 1.0) ** (-0.8)),
+                variance_jy2=1e-7,
+                flag=0,
+                mjd=60789.85 + idx * 4.4,
+                exposure_id=f"exp_{idx:03d}",
+                band=band,
+            )
+        )
+    return points
+
+
+def test_extract_102_channel_spectrum_requires_observations():
+    """Verify extract_102_channel_spectrum never synthesizes mock data without archive points."""
+    with pytest.raises(ValueError, match="Archive observations are required"):
+        extract_102_channel_spectrum(ra=269.44639, dec=4.76676, normalize=True)
+
+
 def test_extract_102_channel_spectrum_non_simultaneity():
     """Verify non-simultaneity tracking across SPHEREx survey passes."""
-    spec = extract_102_channel_spectrum(ra=269.44639, dec=4.76676, normalize=True)
+    spec = extract_102_channel_spectrum(
+        ra=269.44639,
+        dec=4.76676,
+        normalize=True,
+        custom_observations=_make_archive_observations(),
+    )
     assert spec.channels == 102
     assert len(spec.wavelengths_um) == 102
     assert len(spec.flux_jy) == 102
@@ -294,12 +329,18 @@ def test_extract_102_channel_spectrum_non_simultaneity():
 # ============================================================================
 
 
-def test_api_spectrum_acceptance_criterion_1():
+def test_api_spectrum_acceptance_criterion_1(monkeypatch):
     """Acceptance Criterion 1: GET /api/spectrum?ra=269.44639&dec=4.76676 returns
 
     102 channels with wavelengths_um, flux_jy, variance_jy2, flags, mjd_per_channel,
-    mjd_span, and is_simultaneous.
+    mjd_span, and is_simultaneous from archive observations (no synthetic fallback).
     """
+    obs = _make_archive_observations()
+
+    async def _fake_live(ra: float, dec: float, progress_hook=None):
+        return obs, ["spherex_dr1", "spherex_qr3"], [p.exposure_id for p in obs]
+
+    monkeypatch.setattr(spectrum_api, "extract_live_observations", _fake_live)
     response = client.get("/api/spectrum?ra=269.44639&dec=4.76676")
     assert response.status_code == 200
 
@@ -308,6 +349,7 @@ def test_api_spectrum_acceptance_criterion_1():
     assert np.isclose(data["dec"], 4.76676, atol=1e-4)
     assert data["target_name"] == "Barnard's Star"
     assert data["channels"] == 102
+    assert data["provenance"]["source_badge"] == "[IRSA Live (spherex_dr1 + spherex_qr3)]"
 
     assert len(data["wavelengths_um"]) == 102
     assert len(data["flux_jy"]) == 102
@@ -323,8 +365,14 @@ def test_api_spectrum_acceptance_criterion_1():
     assert data["optical_depth_tau"] is None
 
 
-def test_api_spectrum_with_normalization():
+def test_api_spectrum_with_normalization(monkeypatch):
     """Verify GET /api/spectrum?ra=...&dec=...&normalize=true returns continuum & tau."""
+    obs = _make_archive_observations()
+
+    async def _fake_live(ra: float, dec: float, progress_hook=None):
+        return obs, ["spherex_dr1"], [p.exposure_id for p in obs]
+
+    monkeypatch.setattr(spectrum_api, "extract_live_observations", _fake_live)
     response = client.get("/api/spectrum?ra=133.73712&dec=-7.24038&normalize=true")
     assert response.status_code == 200
 
