@@ -347,28 +347,35 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           </button>
         </div>
 
-        {/* 3. 5 Mandatory NASA Benchmark Calibration Targets */}
-        <div className="hidden lg:flex items-center gap-1" role="group" aria-label="NASA benchmark targets">
-          {MANDATORY_BENCHMARKS.map((b) => {
-            const isSelected =
-              Math.abs(ra - b.ra) < 0.005 && Math.abs(dec - b.dec) < 0.005;
-            return (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => handleBenchmarkSelect(b)}
-                onMouseEnter={() => prefetchBenchmark(b.name)}
-                title={`${b.name} — ${b.description}`}
-                className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
-                  isSelected
-                    ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                    : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:border-[#94A3B8]/50 hover:text-[#E6ECF2]'
-                }`}
-              >
-                {b.label}
-              </button>
-            );
-          })}
+        {/* 3. Calibration Presets Dropdown (clean, non-flooded, acts as proof/test suite) */}
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="benchmark-preset-select" className="sr-only">
+            Calibration Targets
+          </label>
+          <select
+            id="benchmark-preset-select"
+            value={
+              MANDATORY_BENCHMARKS.find(
+                (b) => Math.abs(ra - b.ra) < 0.005 && Math.abs(dec - b.dec) < 0.005
+              )?.id || ''
+            }
+            onChange={(e) => {
+              const selected = MANDATORY_BENCHMARKS.find((b) => b.id === e.target.value);
+              if (selected) {
+                handleBenchmarkSelect(selected);
+              }
+            }}
+            className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1 text-xs text-[#E6ECF2] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+          >
+            <option value="" disabled>
+              Calibration Presets...
+            </option>
+            {MANDATORY_BENCHMARKS.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} ({b.description})
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
