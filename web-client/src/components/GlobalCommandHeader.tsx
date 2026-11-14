@@ -463,7 +463,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           parsedCoords.ra,
           parsedCoords.dec,
           matched ? matched.name : `J2000 ${parsedCoords.ra.toFixed(4)}°, ${parsedCoords.dec >= 0 ? '+' : ''}${parsedCoords.dec.toFixed(4)}°`,
-          matched ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]',
+          matched ? '[NASA Benchmark (Pre-cached)]' : '[Synthetic Injection Mode]',
           matched?.preset
         );
         return;
@@ -482,7 +482,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           catalogHit.ra,
           catalogHit.dec,
           catalogHit.name,
-          isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]',
+          isBench ? '[NASA Benchmark (Pre-cached)]' : '[Synthetic Injection Mode]',
           catalogHit.preset
         );
         return;
@@ -494,22 +494,25 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         try {
           const backendCtrl = new AbortController();
           const backendTimer = setTimeout(() => backendCtrl.abort(), 1500);
-          const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`, {
-            signal: backendCtrl.signal,
-          });
-          clearTimeout(backendTimer);
-          if (res.ok) {
-            const data = await res.json();
-            if (typeof data.ra === 'number' && typeof data.dec === 'number') {
-              applyResolvedTarget(
-                data.ra,
-                data.dec,
-                data.target_name || value,
-                data.source_badge || '[IRSA Live (spherex_qr2)]'
-              );
-              setIsResolving(false);
-              return;
+          try {
+            const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`, {
+              signal: backendCtrl.signal,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (typeof data.ra === 'number' && typeof data.dec === 'number') {
+                applyResolvedTarget(
+                  data.ra,
+                  data.dec,
+                  data.target_name || value,
+                  data.source_badge || '[IRSA Live (spherex_qr2)]'
+                );
+                setIsResolving(false);
+                return;
+              }
             }
+          } finally {
+            clearTimeout(backendTimer);
           }
         } catch {
           // Proceed to CDS Sesame resolver
@@ -521,26 +524,29 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         const sesameUrl = `https://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame/-oxp/SNV?${encodeURIComponent(
           value
         )}`;
-        const sesameRes = await fetch(sesameUrl, { signal: sesameCtrl.signal });
-        clearTimeout(sesameTimer);
-        if (sesameRes.ok) {
-          const xmlText = await sesameRes.text();
-          const jradegMatch = xmlText.match(/<jradeg>([+-]?\d+(?:\.\d+)?)<\/jradeg>/i);
-          const jdedegMatch = xmlText.match(/<jdedeg>([+-]?\d+(?:\.\d+)?)<\/jdedeg>/i);
-          const onameMatch = xmlText.match(/<oname>([^<]+)<\/oname>/i);
-          if (jradegMatch && jdedegMatch) {
-            const resolvedRa = parseFloat(jradegMatch[1]);
-            const resolvedDec = parseFloat(jdedegMatch[1]);
-            const resolvedName = onameMatch ? onameMatch[1].trim() : value;
-            if (Number.isFinite(resolvedRa) && Number.isFinite(resolvedDec)) {
-              applyResolvedTarget(
-                resolvedRa,
-                resolvedDec,
-                resolvedName,
-                '[SIMBAD / IRSA Resolved]'
-              );
+        try {
+          const sesameRes = await fetch(sesameUrl, { signal: sesameCtrl.signal });
+          if (sesameRes.ok) {
+            const xmlText = await sesameRes.text();
+            const jradegMatch = xmlText.match(/<jradeg>([+-]?\d+(?:\.\d+)?)<\/jradeg>/i);
+            const jdedegMatch = xmlText.match(/<jdedeg>([+-]?\d+(?:\.\d+)?)<\/jdedeg>/i);
+            const onameMatch = xmlText.match(/<oname>([^<]+)<\/oname>/i);
+            if (jradegMatch && jdedegMatch) {
+              const resolvedRa = parseFloat(jradegMatch[1]);
+              const resolvedDec = parseFloat(jdedegMatch[1]);
+              const resolvedName = onameMatch ? onameMatch[1].trim() : value;
+              if (Number.isFinite(resolvedRa) && Number.isFinite(resolvedDec)) {
+                applyResolvedTarget(
+                  resolvedRa,
+                  resolvedDec,
+                  resolvedName,
+                  '[SIMBAD / IRSA Resolved]'
+                );
+              }
             }
           }
+        } finally {
+          clearTimeout(sesameTimer);
         }
       } catch {
         // Graceful fallback
