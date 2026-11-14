@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ADMIN_LAYERS,
   AdminLayerName,
+  BaseModelCard,
   ModelArchitecture,
   useAdminTelemetry,
 } from './hooks/useAdminTelemetry';
@@ -23,6 +25,42 @@ const SAMPLE_COMPLETION_TOKENS = [
   'Class:', 'Y4', 'Brown', 'Dwarf',
 ];
 
+const FALLBACK_BASE_MODELS: BaseModelCard[] = [
+  {
+    model_name: 'SpectralResNet102',
+    title: 'SpectralResNet-102 + Multi-Head Attention',
+    family: '1D Spectral Transformer-ResNet',
+    input_shape: '[B, 2, 102] (Flux + Ivar)',
+    layers_summary: 'Conv1d Stem → 2× ResBlock1D → 2-Head Self-Attention → LoRA Head',
+    total_params: 6850,
+    recommended_for: 'Fast CPU fine-tuning, 102-channel continuum + ice/CH4 attribution',
+    has_trained_checkpoint: false,
+    active_checkpoint: null,
+  },
+  {
+    model_name: 'DipoleConvNet3D',
+    title: 'DipoleConvNet-3D + Spatial Grad-CAM',
+    family: '3D Spatio-Temporal ConvNet',
+    input_shape: '[B, 6, T, 32, 32] Cutouts',
+    layers_summary: 'Conv3d(6→16) → Conv3d(16→32) → Global Pool → LoRA Classifier',
+    total_params: 4858,
+    recommended_for: 'Multi-epoch proper-motion dipole blinking & Grad-CAM heatmaps',
+    has_trained_checkpoint: false,
+    active_checkpoint: null,
+  },
+  {
+    model_name: 'AstroFeatureSVM',
+    title: 'AstroFeatureSVM (Gaussian RBF Margin)',
+    family: 'Learnable RBF Kernel Classifier',
+    input_shape: '[B, 3] ([D5/D2, Motion SNR, Ice Depth])',
+    layers_summary: 'Learnable RBF Centers (K=12) → Gaussian Kernel → LoRA Margin Head',
+    total_params: 226,
+    recommended_for: 'Ultra-lightweight interpretable decision boundary & anomaly margin',
+    has_trained_checkpoint: false,
+    active_checkpoint: null,
+  },
+];
+
 export const TrainingDynamics: React.FC = () => {
   const {
     hyperparams,
@@ -40,6 +78,8 @@ export const TrainingDynamics: React.FC = () => {
     selectedLayer,
     setSelectedLayer,
     overfittingAnalysis,
+    modelsRegistry,
+    refreshModelsRegistry,
     startTrainingRun,
     pauseTrainingRun,
     resumeTrainingRun,
@@ -49,8 +89,25 @@ export const TrainingDynamics: React.FC = () => {
 
   const lossCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const histCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const neuralCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [showScriptDrawer, setShowScriptDrawer] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
+  const [neuralYaw, setNeuralYaw] = useState(-0.42);
+  const [neuralPitch, setNeuralPitch] = useState(0.24);
+  const [neuralAutoOrbit, setNeuralAutoOrbit] = useState(true);
+  const neuralDragRef = useRef<{ dragging: boolean; x: number; y: number }>({
+    dragging: false,
+    x: 0,
+    y: 0,
+  });
+  const neuralAngleRef = useRef<{ yaw: number; pitch: number }>({
+    yaw: -0.42,
+    pitch: 0.24,
+  });
+
+  useEffect(() => {
+    neuralAngleRef.current = { yaw: neuralYaw, pitch: neuralPitch };
+  }, [neuralYaw, neuralPitch]);
 
   const activeLayerKeys = useMemo(() => {
     const keys = Object.keys(currentFrame?.histograms || {});
@@ -218,6 +275,359 @@ export const TrainingDynamics: React.FC = () => {
     ctx.fillText('+1.0', width - padL, height - 4);
   }, [currentFrame, selectedLayer]);
 
+  // 3D Live Neural & PEFT LoRA Layer Visualizer
+  useEffect(() => {
+    const canvas = neuralCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let rafId = 0;
+    const startTime = performance.now();
+
+    const draw = (now: number) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 10 && rect.height > 10) {
+        const dpr = window.devicePixelRatio || 1;
+        if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+          canvas.width = Math.round(rect.width * dpr);
+          canvas.height = Math.round(rect.height * dpr);
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const width = rect.width;
+        const height = rect.height;
+        const t = (now - startTime) * 0.001;
+
+        if (neuralAutoOrbit && !neuralDragRef.current.dragging) {
+          neuralAngleRef.current.yaw = Math.sin(t * 0.35) * 0.42 - 0.18;
+          neuralAngleRef.current.pitch = 0.24 + Math.cos(t * 0.28) * 0.08;
+        }
+
+        const yaw = neuralAngleRef.current.yaw;
+        const pitch = neuralAngleRef.current.pitch;
+        const cy = Math.cos(yaw);
+        const sy = Math.sin(yaw);
+        const cp = Math.cos(pitch);
+        const sp = Math.sin(pitch);
+
+        const cx = width * 0.5;
+        const cyPx = height * 0.53;
+        const unit = Math.min(width / 6.2, height / 2.65);
+
+        const proj = (x: number, y: number, z: number) => {
+          const x1 = x * cy - z * sy;
+          const z1 = x * sy + z * cy;
+          const y2 = y * cp - z1 * sp;
+          const z2 = y * sp + z1 * cp;
+          const fov = 6.0;
+          const scale = fov / Math.max(1.4, fov + z2);
+          return {
+            sx: cx + x1 * unit * scale,
+            sy: cyPx + y2 * unit * scale,
+            depth: z2,
+            scale,
+          };
+        };
+
+        // Background
+        const bg = ctx.createLinearGradient(0, 0, 0, height);
+        bg.addColorStop(0, '#070b14');
+        bg.addColorStop(1, '#0b1220');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, width, height);
+
+        // Subtle 3D floor grid
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+        ctx.lineWidth = 1;
+        for (let gx = -2.6; gx <= 2.61; gx += 0.65) {
+          const a = proj(gx, 0.92, -0.95);
+          const b = proj(gx, 0.92, 0.95);
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+        }
+        for (let gz = -0.95; gz <= 0.96; gz += 0.475) {
+          const a = proj(-2.6, 0.92, gz);
+          const b = proj(2.6, 0.92, gz);
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+        }
+
+        const loraActive = hyperparams.loraR > 0;
+        const rankScale = loraActive ? Math.min(1.0, 0.25 + hyperparams.loraR / 32) : 0.18;
+        const gradEnergy = Math.min(1, (currentFrame?.metrics.global_grad_norm ?? 0.35) / 1.5);
+        const pulseSpeed = isTrainingLive || isRunning ? 0.95 : 0.42;
+
+        type LayerBox = {
+          id: string;
+          label: string;
+          sub: string;
+          x: number;
+          y: number;
+          z: number;
+          dx: number;
+          dy: number;
+          dz: number;
+          fill: string;
+          stroke: string;
+          glow?: boolean;
+          dashed?: boolean;
+        };
+
+        const archSpec: Record<ModelArchitecture, [string, string, string, string]> = {
+          SpectralResNet102: ['[B, 2, 102] SED', 'Conv1d Stem', '2× ResBlock + MHA', 'Y/T/M/K/M Logits'],
+          DipoleConvNet3D: ['[B, 6, T, 32²]', 'Conv3d(6→16)', 'Conv3d(16→32)+Pool', 'Dipole Class Logits'],
+          AstroFeatureSVM: ['[B, 3] Features', '12× RBF Kernels', 'Margin Gram Space', 'Hyperplane Score'],
+        };
+        const [inSub, stemSub, hidSub, outSub] = archSpec[hyperparams.model];
+
+        const boxes: LayerBox[] = [
+          {
+            id: 'input',
+            label: 'Input Tensor',
+            sub: inSub,
+            x: -2.25,
+            y: 0.08,
+            z: 0,
+            dx: 0.34,
+            dy: 0.72,
+            dz: 0.72,
+            fill: 'rgba(14, 165, 233, 0.22)',
+            stroke: '#38bdf8',
+          },
+          {
+            id: 'stem',
+            label: 'Encoder Stem',
+            sub: stemSub,
+            x: -1.18,
+            y: 0.08,
+            z: 0,
+            dx: 0.42,
+            dy: 0.86,
+            dz: 0.78,
+            fill: 'rgba(56, 189, 248, 0.20)',
+            stroke: '#7dd3fc',
+          },
+          {
+            id: 'hidden',
+            label: 'Feature Block',
+            sub: hidSub,
+            x: -0.05,
+            y: 0.08,
+            z: 0,
+            dx: 0.48,
+            dy: 0.94,
+            dz: 0.84,
+            fill: `rgba(129, 140, 248, ${0.22 + gradEnergy * 0.16})`,
+            stroke: '#818cf8',
+          },
+          {
+            id: 'base',
+            label: hyperparams.freezeBackbone || loraActive ? 'W₀ Frozen Base' : 'W₀ Full Train',
+            sub: `${hyperparams.quantizationBits}-bit Base`,
+            x: 1.08,
+            y: 0.28,
+            z: 0,
+            dx: 0.46,
+            dy: 0.56,
+            dz: 0.68,
+            fill:
+              hyperparams.freezeBackbone || loraActive
+                ? 'rgba(100, 116, 139, 0.24)'
+                : 'rgba(16, 185, 129, 0.24)',
+            stroke: hyperparams.freezeBackbone || loraActive ? '#94a3b8' : '#34d399',
+            dashed: hyperparams.freezeBackbone || loraActive,
+          },
+          {
+            id: 'head',
+            label: 'Output + Entropy',
+            sub: outSub,
+            x: 2.25,
+            y: 0.08,
+            z: 0,
+            dx: 0.34,
+            dy: 0.66,
+            dz: 0.66,
+            fill: 'rgba(16, 185, 129, 0.24)',
+            stroke: '#34d399',
+          },
+        ];
+
+        if (loraActive) {
+          boxes.push(
+            {
+              id: 'loraA',
+              label: `LoRA A (d×${hyperparams.loraR})`,
+              sub: `α=${hyperparams.loraAlpha}`,
+              x: 0.82,
+              y: -0.58,
+              z: 0,
+              dx: 0.26,
+              dy: 0.26 + rankScale * 0.12,
+              dz: 0.34 + rankScale * 0.14,
+              fill: 'rgba(245, 158, 11, 0.34)',
+              stroke: '#fbbf24',
+              glow: true,
+            },
+            {
+              id: 'loraB',
+              label: `LoRA B (${hyperparams.loraR}×k)`,
+              sub: `ΔW = B·A`,
+              x: 1.36,
+              y: -0.58,
+              z: 0,
+              dx: 0.26,
+              dy: 0.26 + rankScale * 0.12,
+              dz: 0.34 + rankScale * 0.14,
+              fill: 'rgba(16, 185, 129, 0.34)',
+              stroke: '#34d399',
+              glow: true,
+            }
+          );
+        }
+
+        // Draw spine connections + animated forward signal pulses
+        const draw3DLink = (
+          p1: [number, number, number],
+          p2: [number, number, number],
+          color: string,
+          pulseColor: string,
+          phaseOffset: number,
+          active = true
+        ) => {
+          const a = proj(p1[0], p1[1], p1[2]);
+          const b = proj(p2[0], p2[1], p2[2]);
+          ctx.save();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = active ? 1.8 : 1.1;
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+
+          if (active) {
+            const u = ((t * pulseSpeed + phaseOffset) % 1 + 1) % 1;
+            const px = a.sx + (b.sx - a.sx) * u;
+            const py = a.sy + (b.sy - a.sy) * u;
+            ctx.fillStyle = pulseColor;
+            ctx.beginPath();
+            ctx.arc(px, py, 3.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        };
+
+        draw3DLink([-2.05, 0.08, 0], [-1.42, 0.08, 0], 'rgba(56,189,248,0.45)', '#38bdf8', 0.0);
+        draw3DLink([-0.94, 0.08, 0], [-0.32, 0.08, 0], 'rgba(129,140,248,0.45)', '#818cf8', 0.25);
+        draw3DLink([0.22, 0.14, 0], [0.82, 0.28, 0], 'rgba(148,163,184,0.38)', '#cbd5e1', 0.45);
+        draw3DLink([1.34, 0.28, 0], [2.05, 0.12, 0], 'rgba(16,185,129,0.45)', '#34d399', 0.72);
+        if (loraActive) {
+          draw3DLink([0.16, -0.05, 0], [0.68, -0.58, 0], 'rgba(245,158,11,0.65)', '#fbbf24', 0.38);
+          draw3DLink([0.96, -0.58, 0], [1.22, -0.58, 0], 'rgba(245,158,11,0.75)', '#fde68a', 0.54);
+          draw3DLink([1.50, -0.58, 0], [2.05, 0.02, 0], 'rgba(52,211,153,0.72)', '#34d399', 0.78);
+        }
+
+        // Depth-sort 3D boxes back-to-front
+        const sortedBoxes = [...boxes].sort((a, b) => proj(b.x, b.y, b.z).depth - proj(a.x, a.y, a.z).depth);
+
+        const faceVerts: number[][] = [
+          [0, 1, 2, 3], // -z
+          [4, 5, 6, 7], // +z
+          [0, 1, 5, 4], // -y
+          [2, 3, 7, 6], // +y
+          [0, 3, 7, 4], // -x
+          [1, 2, 6, 5], // +x
+        ];
+
+        for (const box of sortedBoxes) {
+          const hx = box.dx * 0.5;
+          const hy = box.dy * 0.5;
+          const hz = box.dz * 0.5;
+          const corners = [
+            proj(box.x - hx, box.y - hy, box.z - hz),
+            proj(box.x + hx, box.y - hy, box.z - hz),
+            proj(box.x + hx, box.y + hy, box.z - hz),
+            proj(box.x - hx, box.y + hy, box.z - hz),
+            proj(box.x - hx, box.y - hy, box.z + hz),
+            proj(box.x + hx, box.y - hy, box.z + hz),
+            proj(box.x + hx, box.y + hy, box.z + hz),
+            proj(box.x - hx, box.y + hy, box.z + hz),
+          ];
+
+          const sortedFaces = faceVerts
+            .map((idxs) => ({
+              pts: idxs.map((i) => corners[i]),
+              depth: idxs.reduce((acc, i) => acc + corners[i].depth, 0) / 4,
+            }))
+            .sort((a, b) => b.depth - a.depth);
+
+          ctx.save();
+          if (box.glow) {
+            ctx.shadowColor = box.stroke;
+            ctx.shadowBlur = 10;
+          }
+          if (box.dashed) {
+            ctx.setLineDash([4, 3]);
+          }
+          for (const face of sortedFaces) {
+            ctx.beginPath();
+            ctx.moveTo(face.pts[0].sx, face.pts[0].sy);
+            for (let k = 1; k < face.pts.length; k++) {
+              ctx.lineTo(face.pts[k].sx, face.pts[k].sy);
+            }
+            ctx.closePath();
+            ctx.fillStyle = box.fill;
+            ctx.fill();
+            ctx.strokeStyle = box.stroke;
+            ctx.lineWidth = box.glow ? 1.4 : 1.0;
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          const topPt = proj(box.x, box.y - hy - 0.14, box.z);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.font = '600 10px ui-sans-serif, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(box.label, topPt.sx, Math.max(14, topPt.sy));
+
+          const botPt = proj(box.x, box.y + hy + 0.15, box.z);
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '9px ui-monospace, monospace';
+          ctx.fillText(box.sub, botPt.sx, Math.min(height - 18, botPt.sy));
+        }
+
+        // Bottom HUD overlay
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px ui-monospace, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+          `Drag to rotate 3D stack · Arch: ${hyperparams.model} · LoRA r=${hyperparams.loraR} · GradNorm ${(currentFrame?.metrics.global_grad_norm ?? 0).toFixed(3)}`,
+          12,
+          height - 7
+        );
+      }
+
+      rafId = requestAnimationFrame(draw);
+    };
+
+    rafId = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    hyperparams.model,
+    hyperparams.loraR,
+    hyperparams.loraAlpha,
+    hyperparams.freezeBackbone,
+    hyperparams.quantizationBits,
+    currentFrame,
+    isTrainingLive,
+    isRunning,
+    neuralAutoOrbit,
+  ]);
+
   const pythonSnippet = useMemo(
     () => `from peft import LoraConfig
 from trl import SFTConfig, SFTTrainer
@@ -314,7 +724,7 @@ trainer.train()`,
             onClick={startTrainingRun}
             className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
           >
-            {isTrainingLive ? '⏳ Training PyTorch...' : '▶ Train Model (Live PyTorch)'}
+            {isTrainingLive ? '⏳ Training PyTorch...' : '▶ + Train New Model'}
           </Button>
         </div>
       </div>
@@ -330,6 +740,18 @@ trainer.train()`,
               <Badge variant="sky" className="font-mono text-[10px]">LoraConfig</Badge>
             </CardHeader>
             <CardContent className="p-3.5 flex flex-col gap-2.5 text-xs">
+              <div>
+                <label className="text-[10px] uppercase text-muted-foreground font-semibold">
+                  New Model Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={hyperparams.customName}
+                  onChange={(e) => setHyperparams((p) => ({ ...p, customName: e.target.value }))}
+                  placeholder={`e.g. ${hyperparams.model.toLowerCase()}-v2`}
+                  className="mt-1 w-full bg-background border border-border rounded px-2.5 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground/60"
+                />
+              </div>
               <div className="grid grid-cols-3 gap-1">
                 {(['SpectralResNet102', 'DipoleConvNet3D', 'AstroFeatureSVM'] as ModelArchitecture[]).map((m) => (
                   <button
@@ -588,6 +1010,160 @@ trainer.train()`,
             </Card>
           )}
 
+          {/* MODEL REGISTRY & + TRAIN NEW MODEL */}
+          <Card className="border-sky-500/30 bg-card/85">
+            <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/35 flex flex-row flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-xs font-semibold">
+                  Models Registry &amp; + Train New Model
+                </CardTitle>
+                <Badge variant="sky" className="font-mono text-[10px]">
+                  {(modelsRegistry?.base_models || FALLBACK_BASE_MODELS).length} Base · {(modelsRegistry?.trained_models || []).length} Trained
+                </Badge>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={hyperparams.customName}
+                  onChange={(e) => setHyperparams((p) => ({ ...p, customName: e.target.value }))}
+                  placeholder={`New model name (e.g. my-${hyperparams.model.toLowerCase()})`}
+                  aria-label="New model name"
+                  className="h-7 w-52 bg-background border border-border rounded px-2.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/60"
+                />
+                <Button
+                  size="sm"
+                  disabled={isTrainingLive}
+                  onClick={startTrainingRun}
+                  className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                >
+                  {isTrainingLive ? '⏳ Training...' : '▶ + Train New Model'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void refreshModelsRegistry()}
+                  className="h-7 text-[11px] font-mono"
+                >
+                  ↻ Refresh
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3.5 flex flex-col gap-3">
+              {/* 3 BASE PYTORCH ARCHITECTURES */}
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">
+                  PyTorch Base Architectures (Click to Select for Training)
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                  {(modelsRegistry?.base_models?.length ? modelsRegistry.base_models : FALLBACK_BASE_MODELS).map((card) => {
+                    const selected = hyperparams.model === card.model_name;
+                    return (
+                      <div
+                        key={card.model_name}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setHyperparams((p) => ({ ...p, model: card.model_name }))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setHyperparams((p) => ({ ...p, model: card.model_name }));
+                          }
+                        }}
+                        className={cn(
+                          'rounded-md border p-2.5 text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5',
+                          selected
+                            ? 'border-sky-400 bg-sky-500/10 ring-1 ring-sky-400/40'
+                            : 'border-border bg-secondary/20 hover:border-border/80 hover:bg-secondary/35'
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-semibold text-foreground leading-tight">
+                              {card.title}
+                            </div>
+                            <div className="text-[10px] font-mono text-sky-400 mt-0.5">
+                              {card.family}
+                            </div>
+                          </div>
+                          <Badge
+                            variant={card.has_trained_checkpoint ? 'emerald' : 'muted'}
+                            className="font-mono text-[9px] shrink-0"
+                          >
+                            {card.has_trained_checkpoint ? 'Trained ✓' : 'Base Ready'}
+                          </Badge>
+                        </div>
+                        <div className="text-[10px] font-mono text-muted-foreground">
+                          In: {card.input_shape} · {card.total_params.toLocaleString()} params
+                        </div>
+                        <div className="text-[10px] text-muted-foreground leading-snug">
+                          {card.layers_summary}
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-border/50 text-[10px] font-mono">
+                          <span className={selected ? 'text-sky-300 font-semibold' : 'text-muted-foreground'}>
+                            {selected ? '● Selected Base' : 'Click to use base'}
+                          </span>
+                          {card.active_checkpoint && (
+                            <span className="text-emerald-400">
+                              Best {(card.active_checkpoint.val_acc * 100).toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* TRAINED CHECKPOINTS / LORA RUNS */}
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">
+                  Trained Model Checkpoints ({modelsRegistry?.trained_models?.length ?? 0})
+                </div>
+                {modelsRegistry?.trained_models && modelsRegistry.trained_models.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {modelsRegistry.trained_models.map((tm) => (
+                      <div
+                        key={tm.model_id}
+                        className="rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 flex flex-col gap-1"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-mono font-bold text-foreground truncate" title={tm.custom_name}>
+                            {tm.custom_name}
+                          </span>
+                          <Badge variant="emerald" className="font-mono text-[9px] shrink-0">
+                            {(tm.val_acc * 100).toFixed(1)}% acc
+                          </Badge>
+                        </div>
+                        <div className="text-[10px] font-mono text-muted-foreground">
+                          Base: {tm.base_model} · {tm.lora_r > 0 ? `LoRA r=${tm.lora_r}` : 'Full'} · {tm.loss_type.toUpperCase()} · E{tm.epochs_completed}
+                        </div>
+                        <div className="flex items-center justify-between pt-1 text-[10px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => setHyperparams((p) => ({ ...p, model: tm.model_name }))}
+                            className="text-sky-400 hover:text-sky-300 underline"
+                          >
+                            Select {tm.model_name}
+                          </button>
+                          <Link
+                            to="/admin/boundaries"
+                            className="text-violet-300 hover:text-violet-200 underline"
+                          >
+                            Inspect in 3D Graph →
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] font-mono text-muted-foreground rounded border border-dashed border-border px-3 py-2">
+                    Loading trained PyTorch checkpoints or click <span className="text-emerald-400">▶ + Train New Model</span> above to train and save a custom run.
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* OFFICIAL TRL LOGGED METRICS GRID */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
             {[
@@ -639,6 +1215,77 @@ trainer.train()`,
                   E{activeEpoch}/{totalEpochs}
                 </span>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* 3D LIVE NEURAL & PEFT LORA TOPOLOGY VISUALIZER */}
+          <Card className="border-violet-500/30">
+            <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/30 flex flex-row flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-xs font-semibold">
+                  3D Live Neural &amp; PEFT LoRA Architecture Visualizer
+                </CardTitle>
+                <Badge variant="outline" className="font-mono text-[10px] border-violet-500/40 bg-violet-500/15 text-violet-300">
+                  {hyperparams.model}
+                </Badge>
+                <Badge variant={hyperparams.loraR > 0 ? 'amber' : 'emerald'} className="font-mono text-[10px]">
+                  {hyperparams.loraR > 0
+                    ? `LoRA r=${hyperparams.loraR} · ${paramSummary.trainable_pct.toFixed(1)}% trainable`
+                    : 'Full Fine-Tune (100%)'}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant={neuralAutoOrbit ? 'default' : 'outline'}
+                  className="h-6 text-[10px] font-mono px-2"
+                  onClick={() => setNeuralAutoOrbit((v) => !v)}
+                >
+                  {neuralAutoOrbit ? 'Auto-Orbit: ON' : 'Auto-Orbit: OFF'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[10px] font-mono px-2"
+                  onClick={() => {
+                    setNeuralAutoOrbit(false);
+                    neuralAngleRef.current = { yaw: -0.42, pitch: 0.24 };
+                    setNeuralYaw(-0.42);
+                    setNeuralPitch(0.24);
+                  }}
+                >
+                  Reset 3D
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3">
+              <canvas
+                ref={neuralCanvasRef}
+                aria-label="3D neural and LoRA architecture canvas"
+                onMouseDown={(e) => {
+                  setNeuralAutoOrbit(false);
+                  neuralDragRef.current = { dragging: true, x: e.clientX, y: e.clientY };
+                }}
+                onMouseMove={(e) => {
+                  if (!neuralDragRef.current.dragging) return;
+                  const dx = e.clientX - neuralDragRef.current.x;
+                  const dy = e.clientY - neuralDragRef.current.y;
+                  neuralDragRef.current.x = e.clientX;
+                  neuralDragRef.current.y = e.clientY;
+                  neuralAngleRef.current.yaw += dx * 0.008;
+                  neuralAngleRef.current.pitch = Math.max(
+                    -1.1,
+                    Math.min(1.1, neuralAngleRef.current.pitch + dy * 0.006)
+                  );
+                }}
+                onMouseUp={() => {
+                  neuralDragRef.current.dragging = false;
+                }}
+                onMouseLeave={() => {
+                  neuralDragRef.current.dragging = false;
+                }}
+                className="w-full h-64 rounded border border-border/60 cursor-grab active:cursor-grabbing"
+              />
             </CardContent>
           </Card>
 
