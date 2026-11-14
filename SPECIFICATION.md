@@ -24,7 +24,7 @@ The scientific problem addressed by this platform stems from a fundamental diver
 
 ### 1.2 Evolution of the Platform Architecture
 1. **Initial Concept:** A hybrid client-server model inspired by *WiseView* (client-side Canvas blinking and URL hash state) and *Pan-STARRS* (server-side cutout slicing).
-2. **Clarification of 3D Mechanics:** The 3D component is not an arbitrary or speculative spatial distance plot; it is an **inside-out 3D Celestial Sphere** (virtual planetarium dome in Aladin Lite v3 WebGL2) that de-warps raw detector footprints into a rectified, North-Up tangent plane.
+2. **Clarification of Sky Viewport Mechanics:** The sky navigator is not an external 3D toy sphere floating in a box; it is an **immersed, full-bleed tangent-plane sky survey window** (`TAN`/`STG` projection in Aladin Lite v3 WebGL2 and a continuous procedural astrometric starfield fallback) where observers pan seamlessly in all directions and zoom from wide-field sky context ($12^\circ\text{–}60^\circ$) down to arcminute patches of space ($1'\text{–}10'$), governed by [`DESIGN.md`](DESIGN.md).
 3. **Mandatory NASA Benchmark Requirement:** The core hackathon requirement demands that an arbitrary user can type an RA/Dec coordinate or target name and view an animated video of that patch across time, tested explicitly against 5 benchmark targets (**Barnard’s Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis**).
 4. **Resolution of the Single-Screen vs. Tabbed Dilemma:** Multi-pane dashboards displaying 102-channel spectra, 3D globes, and blinking canvases simultaneously cause severe visual fatigue. The system isolates each tool into a full-screen dedicated tab while maintaining zero state loss via a global Zustand store and URL hash persistence.
 5. **Dual-Portal Route Isolation:** Active users are not exposed to machine learning agent training internals. The platform is partitioned into a public exploration and community discussion portal (`/explore`) and a hidden, token-authenticated administrative mission control console (`/admin`).
@@ -1355,51 +1355,49 @@ Mounted persistently at the top of the viewport in `/explore` (fixed `56px` heig
 ### 6.3 Public Workspace Tabs: Detailed Component Breakdown
 
 #### 6.3.1 Tab 1: Celestial Navigator (`<CelestialNavigator />`)
-Serves as the spatial macro-gateway, replacing IRSA’s 2D Aitoff oval with a full-viewport inside-out WebGL 3D celestial sphere.
+Serves as the spatial sky survey gateway (`DESIGN.md` §5), replacing distorted 2D Aitoff ovals and external 3D toy spheres with a **full-bleed, edge-to-edge immersed tangent-plane sky window** (`TAN` projection) where users pan continuously in all directions ($0^\circ\text{–}360^\circ$ RA, $\pm 90^\circ$ Dec) and zoom smoothly across credible patches of space.
 
 ```
 +---------------------------------------------------------------------------------------------------+
-| LAYER 1: WebGL 3D Sky Dome (Aladin Lite v3 Canvas in 'SIN' Projection)                            |
-|          Background Survey: P/allWISE/color HiPS                                                  |
+| LAYER 1: Immersed Full-Viewport Sky Plane (Aladin Lite v3 WebGL2 in 'TAN' Projection / Starfield) |
+|          Background Survey: P/allWISE/color HiPS (Continuous pan & scroll-wheel zoom 60° -> 1')   |
 |                                                                                                   |
-| LAYER 2: Cyan Wireframe SPHEREx MOC Coverage (12% opacity) + Deep Field HUD Beacons               |
+| LAYER 2: Hairline WCS Coordinate Grid + SPHEREx MOC Coverage (12% opacity) + NEP/SEP 5.64° Rings  |
 |                                                                                                   |
-| LAYER 3: Dynamic Overlay: Gaia DR3 Proper Motion Arrows (mu_alpha, mu_delta) + SkyBot Asteroids    |
+| LAYER 3: Astrometric Overlays: Gaia DR3 Proper Motion Vectors (mu_alpha*, mu_delta) + SkyBot      |
 |                                                                                                   |
-| LAYER 4: Interactive Target Reticle (180" x 180" Square) Tracking Mouse Cursor                    |
+| LAYER 4: Cutout Footprint Reticle (60"-600" Square) + Angular Scale Bar + Zoom Controls (+/-/1:1) |
 +---------------------------------------------------------------------------------------------------+
-| FLOATING HUD CARD (Bottom-Left): RA/Dec Readout | Dynamic Survey Passes (MJD) | [Inspect in Time-Domain ->]  |
+| DOCKED INSTRUMENT STRIP (Bottom): J2000 Decimal & Sexagesimal | Field FoV | Passes | [Open cutout]|
 +---------------------------------------------------------------------------------------------------+
 ```
 
 - **Aladin Lite v3 Initialization Protocol:**
   ```javascript
+  await A.init;
   const aladin = A.aladin('#sky-globe-mount', {
     survey: 'P/allWISE/color',
-    projection: 'SIN', // Orthographic 3D globe projection (inside planetarium view)
-    fov: 180,          // Macro all-sky orientation
+    projection: 'TAN', // Immersed gnomonic tangent-plane sky window (fills 100% of viewport)
+    fov: 12,           // Wide-field immersed sky context (zoomable from 60 deg down to 0.02 deg)
+    target: `${ra} ${dec}`,
     cooFrame: 'ICRSd',
     showReticle: false,
     showCooGrid: true,
     showCooGridControl: false
   });
   ```
-- **MOC Layer Configuration:**
-  - Loads `spherex_qr2` coverage map via `aladin.addMOC(A.MOCFromURL('/data/spherex_moc.fits', { color: '#00f0ff', opacity: 0.12, lineWidth: 1 }))`.
-  - Loads North and South Ecliptic Pole deep fields as persistent glowing magenta circles (`#ff0055`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
-- **3-Stage Camera Dive Implementation:**
-  - *Stage 1 (Macro):* User navigates 3D sphere via click-and-drag rotation.
-  - *Stage 2 (Reticle Lock):* Moving cursor renders a dynamic square bounding box corresponding to the selected FoV ($180''$). Hovering over known benchmark beacons displays preview tooltips.
-  - *Stage 3 (The Dive):* Double-clicking or clicking `[Inspect in Time-Domain]` triggers smooth camera interpolation:
+- **MOC & Deep-Field Layer Configuration:**
+  - Loads `spherex_qr2` coverage map via `aladin.addMOC(A.MOCFromJSON(SPHEREX_MOC_JSON, { color: '#38bdf8', opacity: 0.12, lineWidth: 1 }))`.
+  - Loads North and South Ecliptic Pole deep fields as `1px` magenta boundary rings (`#ff0055`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
+- **Continuous Sky Pan, Zoom & Cutout Extraction:**
+  - *Continuous Navigation:* User pans across the sky via click-and-drag or arrow keys and zooms in/out via scroll wheel or on-screen `+` / `−` / `Reset` controls (`60°` down to `1'`). When offline, a deterministic full-viewport tangent-plane starfield renders realistic multi-magnitude field stars ($G = 8..18$), PSF cores, WCS gridlines, and proper-motion vectors across the entire screen.
+  - *Reticle & Scale Bar:* Center `1px` reticle frame scales dynamically to represent the active cutout FoV ($60''\text{–}600''$) alongside a calibrated angular scale bar.
+  - *Cutout Transition:* Double-clicking a target or clicking `[Open cutout]` in the docked bottom instrument strip pans/zooms smoothly (`1.2s`) to the cutout footprint:
     ```javascript
-    aladin.animateToRaDec(targetRa, targetDec, {
-      duration: 1.2, // seconds
-      endFoV: fovArcsec / 3600, // Converts arcsec to degrees
-      onComplete: () => {
-        // Triggers background prefetch in FastAPI backend and routes smoothly to Tab 2
-        navigate('/explore/comparator');
-      }
+    aladin.animateToRaDec(targetRa, targetDec, 1.2, () => {
+      setTab('comparator');
     });
+    aladin.zoomToFoV(fovArcsec / 3600, 1.2);
     ```
 - **Real-Time Catalog Layers (VizieR & SkyBot):**
   - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$ within a $300''$ radius (limited to top 50 brightest sources with compact JSON delivery). Renders circles scaled by magnitude with vector arrows calculated as:
@@ -2043,7 +2041,7 @@ flowchart TD
 3. **Public Frontend Workspaces (Tabs 1 & 2):**
    - Scaffold React 18 + Vite 5 + TypeScript with `nuqs` (type-safe URL parameters: `tab`, `ra`, `dec`, `mode`, `preset`) and TanStack Query v5.
    - Global Command Header with sexagesimal coordinate parsing, CDS Sesame resolver, 5 benchmark quick-loader pills, and `cmdk` command bar (`Ctrl+K`).
-   - **Tab 1 (Celestial Navigator):** Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx MOC layer, Gaia DR3 vectors, target reticle, and 3-stage camera dive.
+   - **Tab 1 (Celestial Navigator):** Full-bleed immersed tangent-plane sky viewport (`TAN` projection in Aladin Lite v3 WebGL2 + procedural astrometric starfield fallback) with continuous all-direction pan, smooth zoom (`60°` to `1'`), SPHEREx MOC layer, Gaia DR3 proper-motion vectors, cutout reticle, and docked instrument strip (`DESIGN.md`).
    - **Tab 2 (Time-Domain Comparator):** WebGL2 multi-epoch player with Asinh stretch slider, pairwise difference subtraction ($t_N - t_0$), inverse-variance coaddition for faint WISE 0855, sub-pixel Gaia centroid pins for Epsilon Indi B ($0.76\,\text{px/yr}$), discrete survey epoch stepping derived from exposure MJDs, and live hover crosshair HUD.
 
 > [!IMPORTANT]

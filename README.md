@@ -25,7 +25,7 @@ Traditional astronomical portals fail citizen scientists and researchers attempt
 3. **Linear Variable Filter (LVF) "Smile":** Wavelength shifts continuously along the detector $Y$-axis. Raw detector cutouts are *not* monochromatic.
 4. **Large Pixel Crowding ($6.2''$):** Dense starfields blend multiple sources into single spatial elements.
 
-**Spectra solves all four challenges:** It provides an inside-out 3D virtual planetarium dome (Aladin Lite v3 WebGL2) that de-warps detector footprints into North-Up tangent planes, executes zero-copy 32-bit floating-point wavelength-matched difference math in GPU shaders, extracts calibrated 102-band spectra via `WCS-WAVE` smile inversion, and enables instant in-memory spectral similarity search.
+**Spectra solves all four challenges:** It provides an immersed full-viewport tangent-plane sky survey navigator (Aladin Lite v3 WebGL2 + procedural astrometric starfield) that de-warps detector footprints into North-Up tangent planes, executes zero-copy 32-bit floating-point wavelength-matched difference math in GPU shaders, extracts calibrated 102-band spectra via `WCS-WAVE` smile inversion, and enables instant in-memory spectral similarity search.
 
 ---
 
@@ -49,7 +49,7 @@ Traditional astronomical portals fail citizen scientists and researchers attempt
 ```
 
 ### Public Discovery Workspaces (`/explore`)
-- **Tab 1: Celestial Navigator (`/explore?tab=navigator`):** Full-viewport Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx coverage MOC, Gaia DR3 proper motion vectors, CDS Sesame name resolver, universal coordinate parsing, and 3-stage camera dive.
+- **Tab 1: Celestial Navigator (`/explore?tab=navigator`):** Full-bleed immersed tangent-plane sky survey window (`TAN` projection in Aladin Lite v3 WebGL2 + continuous starfield fallback) with all-direction pan, smooth zoom (`60°` to `1'`), SPHEREx coverage MOC, Gaia DR3 proper-motion vectors, universal coordinate parsing, and docked instrument strip (`DESIGN.md`).
 - **Tab 2: Time-Domain Comparator (`/explore?tab=comparator`):** WebGL2 multi-epoch player with Asinh stretch slider, pairwise difference subtraction ($t_N - t_0$), inverse-variance co-add mode for faint brown dwarfs, sub-pixel Gaia DR3 centroid pins ($0.77\,\text{px/yr}$ deblending), discrete 6-month survey epoch stepping, and live hover HUD.
 - **Tab 3: Spectrophotometric Lab (`/explore?tab=spectrophotometer`):** Canvas `uPlot` chart rendering 102 calibrated flux channels with `VARIANCE` error bars at 60 FPS, synchronized epoch animation, two-component composite spectral unmixing ($a \cdot T_1 + b \cdot T_2$), automated galaxy photo-$z$ solver ($P(z)$, lookback time, Mpc distance), and instant 102-band in-memory NumPy cosine similarity search ($<20\,\text{ms}$).
 - **Tab 4: Molecular & Ice Mapping Studio (`/explore?tab=ice_studio`):** Continuum-normalized optical depth ($\tau_\lambda$), point-source background star aperture photometry (seeded from the IRSA SPLICES catalog), and quantitative biogenic ice column density integration ($N_{\text{ice}}$ in $\text{cm}^{-2}$) using verified laboratory $A$-values for $\text{H}_2\text{O}$ ($3.05\,\mu\text{m}$), $\text{CO}_2$ ($4.27\,\mu\text{m}$), $^{13}\text{CO}_2$ ($4.38\,\mu\text{m}$), $\text{CO}$ ($4.67\,\mu\text{m}$), and $\text{CH}_3\text{OH}$ ($3.54\,\mu\text{m}$).
@@ -102,7 +102,7 @@ To remove all login friction for hackathon judges while maintaining cryptographi
 | Layer | Technologies | Key Responsibility |
 |---|---|---|
 | **Frontend UI** | React 18, Vite 5, TypeScript 5.5, Tailwind CSS | High-performance single-page application with isolated route chunks. |
-| **Sky Visualizer** | Aladin Lite v3 (WebGL2), Canvas 2D | Inside-out 3D celestial sphere (`SIN` projection) with SPHEREx coverage MOC. |
+| **Sky Visualizer** | Aladin Lite v3 (WebGL2), Canvas 2D | Immersed full-bleed tangent-plane sky window (`TAN` projection) with SPHEREx coverage MOC and astrometric starfield. |
 | **Float32 Comparator** | WebGL2 fragment shaders, IEEE-754 `Float32Array` | Zero-copy 32-bit floating point Asinh stretch, wavelength-matched differencing, and coverage matrix. |
 | **URL State** | `nuqs` (query strings) | Type-safe URL parameters (`tab`, `ra`, `dec`, `band`, `win`, `mode`, `epoch`, `px`, `py`, `z`, `embed`). |
 | **Async Caching** | `@tanstack/react-query` v5 | Background prefetching on target hover; 30-min stale time; deduplication. |
