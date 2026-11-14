@@ -672,6 +672,7 @@ def coadd_inverse_variance(
         "shape": [n_epochs, 6, height, width],
         "crval": [float(master_wcs.wcs.crval[0]), float(master_wcs.wcs.crval[1])],
         "cdelt": [float(master_wcs.wcs.cdelt[0]), float(master_wcs.wcs.cdelt[1])],
+        "crpix": [float(master_wcs.wcs.crpix[0]), float(master_wcs.wcs.crpix[1])],
         "mjd_ranges": [
             [[start, end] for start, end in band_mjds] for band_mjds in mjd_ranges
         ],
