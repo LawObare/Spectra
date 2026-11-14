@@ -482,7 +482,9 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 title="Browse all 24 calibrated targets in the source catalog"
               >
                 <span>Switch Target (24)</span>
-                <span className="text-primary text-[9px]">▾</span>
+                <svg className="h-3 w-3 text-primary inline-block" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                </svg>
               </button>
             )}
             <span className="rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
