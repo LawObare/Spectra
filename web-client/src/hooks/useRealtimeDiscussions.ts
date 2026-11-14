@@ -19,10 +19,12 @@ function normalizeThread<TThread extends IdentifiedThread>(value: unknown): TThr
 }
 
 export function useRealtimeDiscussions<TThread extends IdentifiedThread>(
-  initialThreads: TThread[]
+  initialThreads: TThread[] = []
 ) {
   const [threads, setThreads] = useState<TThread[]>(initialThreads);
   const [sseConnected, setSseConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -37,7 +39,10 @@ export function useRealtimeDiscussions<TThread extends IdentifiedThread>(
 
     void fetch('/api/forum/threads')
       .then(async (response) => {
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (active) setLoadError(`Forum API returned HTTP ${response.status}`);
+          return;
+        }
         const payload: unknown = await response.json();
         const rows = Array.isArray(payload)
           ? payload
@@ -50,9 +55,15 @@ export function useRealtimeDiscussions<TThread extends IdentifiedThread>(
           .map((row) => normalizeThread<TThread>(row))
           .filter((row): row is TThread => row !== null);
         setThreads(normalized);
+        setLoadError(null);
       })
-      .catch(() => {
-        // Keep the bundled community examples available when the API is offline.
+      .catch((err: unknown) => {
+        if (active) {
+          setLoadError(err instanceof Error ? err.message : 'Unable to reach forum API');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
       });
 
     if (typeof EventSource === 'undefined') {
@@ -93,5 +104,5 @@ export function useRealtimeDiscussions<TThread extends IdentifiedThread>(
     };
   }, []);
 
-  return { threads, setThreads, sseConnected };
+  return { threads, setThreads, sseConnected, isLoading, loadError };
 }
