@@ -49,7 +49,7 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
-type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'panstarrs-color' | 'dss2-color';
+type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'sdss-color' | 'dss2-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
@@ -62,28 +62,28 @@ interface PhotographicSurveySpec {
 const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
     id: 'allwise-color',
-    hipsId: 'P/allWISE/color',
+    hipsId: 'https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1',
     label: 'AllWISE Infrared',
     badge: 'NASA 3.4 & 4.6 µm (All-Sky)',
     description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of NASA WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
   },
   {
     id: '2mass-color',
-    hipsId: 'P/2MASS/color',
+    hipsId: 'https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color',
     label: '2MASS Near-IR',
     badge: 'J/H/Ks (All-Sky)',
     description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
-    id: 'panstarrs-color',
-    hipsId: 'P/PanSTARRS/DR1/color-z-zg-g',
-    label: 'Pan-STARRS DR1',
+    id: 'sdss-color',
+    hipsId: 'https://irsa.ipac.caltech.edu/data/hips/CDS/SDSS/DR9/color',
+    label: 'SDSS DR9 Optical',
     badge: 'Deep Optical (Resolved Galaxies)',
-    description: 'Pan-STARRS DR1 high-resolution optical sky survey resolving galaxies and nebulae with extreme clarity.',
+    description: 'Sloan Digital Sky Survey DR9 high-resolution optical sky survey resolving galaxies and nebulae with extreme clarity.',
   },
   {
     id: 'dss2-color',
-    hipsId: 'P/DSS2/color',
+    hipsId: 'https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color',
     label: 'DSS2 Optical',
     badge: 'Palomar/UKST (All-Sky)',
     description: 'Digitized Sky Survey 2 full-sphere optical photographic mosaic covering 100% of both hemispheres.',
@@ -303,7 +303,7 @@ export const CelestialNavigator: React.FC = () => {
         setHipsReady(false);
         setHipsError(true);
       }
-    }, 10000);
+    }, 15000);
     return A.HiPS(surveySpec.hipsId, {
       name: surveySpec.label,
       cooFrame: 'equatorial',
