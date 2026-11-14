@@ -102,6 +102,36 @@ function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: 
 }
 
 type PzPoint = { z: number; chi2: number; p: number; lookbackGyr: number; dCMpc: number };
+type PhotoZResult = { grid: PzPoint[]; bestZ: number | null };
+
+interface CachedExtractedSpectrum {
+  channels: SpectralChannel[];
+  badge: string;
+  status: string;
+}
+
+const MAX_SPECTRUM_CACHE_ENTRIES = 16;
+const SPECTRUM_MEM_CACHE = new Map<string, CachedExtractedSpectrum>();
+
+function getCachedSpectrum(key: string): CachedExtractedSpectrum | null {
+  const hit = SPECTRUM_MEM_CACHE.get(key);
+  if (!hit) return null;
+  SPECTRUM_MEM_CACHE.delete(key);
+  SPECTRUM_MEM_CACHE.set(key, hit);
+  return hit;
+}
+
+function setCachedSpectrum(key: string, entry: CachedExtractedSpectrum): void {
+  if (SPECTRUM_MEM_CACHE.has(key)) {
+    SPECTRUM_MEM_CACHE.delete(key);
+  } else if (SPECTRUM_MEM_CACHE.size >= MAX_SPECTRUM_CACHE_ENTRIES) {
+    const oldestKey = SPECTRUM_MEM_CACHE.keys().next().value;
+    if (oldestKey !== undefined) {
+      SPECTRUM_MEM_CACHE.delete(oldestKey);
+    }
+  }
+  SPECTRUM_MEM_CACHE.set(key, entry);
+}
 
 function planckCosmo(z: number): { lookbackGyr: number; dCMpc: number } {
   // Planck 2018: H0=67.4, Ωm=0.315, ΩΛ=0.685 (flat)
@@ -192,13 +222,27 @@ export const SpectrophotometricLab: React.FC = () => {
     let cancelled = false;
     const controller = new AbortController();
     const fetchLiveSpectrum = async () => {
+      const position = probeSkyPosition ?? { ra, dec };
+      const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
+      const quickMatch = findMatchingSection(readyInstalledSections, position.ra, position.dec);
+      const buildCacheKey = (sec: { section_id: string; updated_at?: string | null; size_bytes?: number }) =>
+        `${sec.section_id}:${sec.updated_at || sec.size_bytes || ''}:${probedPixel?.x ?? ''}:${probedPixel?.y ?? ''}:${isSpectralBlinkSynced ? activeEpochIndex : ''}`;
+
+      if (quickMatch) {
+        const cached = getCachedSpectrum(buildCacheKey(quickMatch));
+        if (cached) {
+          setActiveSpectrum(cached.channels);
+          setSpectrumSourceBadge(cached.badge);
+          setSpectrumStatus(cached.status);
+          setSpectrumLoading(false);
+          return;
+        }
+      }
+
       setSpectrumLoading(true);
       setActiveSpectrum([]);
       setSpectrumSourceBadge('[Loading Archive Spectrum…]');
       try {
-        const position = probeSkyPosition ?? { ra, dec };
-        const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
-
         let sections = readyInstalledSections;
         if (sections.length === 0) {
           sections = (await fetchInstalledSections()).filter((s) => s.status === 'ready');
@@ -206,6 +250,18 @@ export const SpectrophotometricLab: React.FC = () => {
         if (cancelled) return;
 
         const matched = findMatchingSection(sections, position.ra, position.dec);
+        const matchedKey = matched ? buildCacheKey(matched) : null;
+        if (matched && matchedKey) {
+          const cached = getCachedSpectrum(matchedKey);
+          if (cached) {
+            setActiveSpectrum(cached.channels);
+            setSpectrumSourceBadge(cached.badge);
+            setSpectrumStatus(cached.status);
+            setSpectrumLoading(false);
+            return;
+          }
+        }
+
         let data: any;
         if (matched) {
           setSpectrumStatus(`Extracting 102-ch spectrum from installed "${matched.label}"…`);
@@ -265,9 +321,17 @@ export const SpectrophotometricLab: React.FC = () => {
             mjd: data.mjd_per_channel?.[i],
             fluxMjySr: data.channel_coverage?.[i] ? Number((data.flux_jy[i] / convFactor).toFixed(5)) : Number.NaN,
           }));
+          const statusText = `${data.provenance.covered_channels}/${data.provenance.channel_count} channels covered`;
+          if (matchedKey) {
+            setCachedSpectrum(matchedKey, {
+              channels,
+              badge: sourceBadge as string,
+              status: statusText,
+            });
+          }
           setActiveSpectrum(channels);
           setSpectrumSourceBadge(sourceBadge as string);
-          setSpectrumStatus(`${data.provenance.covered_channels}/${data.provenance.channel_count} channels covered`);
+          setSpectrumStatus(statusText);
         }
       } catch (err) {
         if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
@@ -421,11 +485,21 @@ export const SpectrophotometricLab: React.FC = () => {
     return solveNnls2(y, t1, t6, s);
   }, [isEpsInd, spectrum]);
 
-  const photoZ = useMemo(() => {
-    const lambdas = spectrum.map((c) => c.wavelengthUm);
-    const flux = spectrum.map((c) => c.fluxMjySr);
-    const sig = spectrum.map((c) => c.uncertainty);
-    return computePhotoZ(lambdas, flux, sig);
+  // Defer Photo-z grid search + Planck cosmology integrals past first paint so the 102-channel uPlot chart renders cleanly.
+  const [photoZ, setPhotoZ] = useState<PhotoZResult>({ grid: [], bestZ: null });
+
+  useEffect(() => {
+    if (spectrum.length === 0) {
+      setPhotoZ({ grid: [], bestZ: null });
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      const lambdas = spectrum.map((c) => c.wavelengthUm);
+      const flux = spectrum.map((c) => c.fluxMjySr);
+      const sig = spectrum.map((c) => c.uncertainty);
+      setPhotoZ(computePhotoZ(lambdas, flux, sig));
+    }, 16);
+    return () => window.clearTimeout(timerId);
   }, [spectrum]);
 
   // Build uPlot instance
