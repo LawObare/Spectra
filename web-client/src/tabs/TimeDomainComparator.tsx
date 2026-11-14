@@ -160,6 +160,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   } | null>(null);
   const [dataStatus, setDataStatus] = useState<'loading' | 'error' | 'ready'>('loading');
   const [dataMessage, setDataMessage] = useState('Contacting the SPHEREx archive…');
+  const [dataProgress, setDataProgress] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
 
   const handleSubmitClassification = async () => {
@@ -500,6 +501,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
     const loadCutoutTensor = async () => {
       setDataStatus('loading');
+      setDataProgress(0);
       setDataMessage('Querying IRSA for real SPHEREx exposures…');
       setLoadedTensor(null);
       setEpochIndex(0);
@@ -545,7 +547,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             }
             if (progress.status === 'complete') {
               taskComplete = true;
+              setDataProgress(1);
               break;
+            }
+            if (typeof progress.progress === 'number' && Number.isFinite(progress.progress)) {
+              setDataProgress(Math.max(0, Math.min(1, progress.progress)));
             }
             setDataMessage(progress.message || 'Waiting for IRSA cutouts…');
           }
@@ -772,9 +778,24 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             {dataMessage}
           </p>
           {dataStatus === 'loading' ? (
-            <div className="mt-6 h-1 overflow-hidden rounded bg-slate-800">
-              <div className="h-full w-1/3 animate-pulse rounded bg-cyan-400" />
-            </div>
+            <>
+              <div
+                className="mt-6 h-1 overflow-hidden rounded bg-slate-800"
+                role="progressbar"
+                aria-label="SPHEREx data loading progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(dataProgress * 100)}
+              >
+                <div
+                  className="h-full rounded bg-cyan-400 transition-[width] duration-300 ease-out"
+                  style={{ width: `${Math.max(1, dataProgress * 100)}%` }}
+                />
+              </div>
+              <p className="mt-1 text-right font-mono text-[10px] text-slate-500">
+                {Math.round(dataProgress * 100)}%
+              </p>
+            </>
           ) : (
             <button
               type="button"
