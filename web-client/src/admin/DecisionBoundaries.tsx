@@ -387,7 +387,7 @@ export const DecisionBoundaries: React.FC = () => {
               onClick={() => scrubToEpoch(1)}
               title="First epoch"
             >
-              |◀
+              |&lt;
             </Button>
             <Button
               size="xs"
@@ -395,7 +395,7 @@ export const DecisionBoundaries: React.FC = () => {
               onClick={() => scrubToEpoch(Math.max(1, activeEpoch - 5))}
               title="Step back 5 epochs"
             >
-              ◀◀
+              &lt;&lt;
             </Button>
             <Button
               size="xs"
@@ -410,7 +410,7 @@ export const DecisionBoundaries: React.FC = () => {
               onClick={() => scrubToEpoch(Math.min(totalEpochs, activeEpoch + 5))}
               title="Step forward 5 epochs"
             >
-              ▶▶
+              &gt;&gt;
             </Button>
             <Button
               size="xs"
@@ -418,7 +418,7 @@ export const DecisionBoundaries: React.FC = () => {
               onClick={() => scrubToEpoch(totalEpochs)}
               title="Final epoch"
             >
-              ▶|
+              &gt;|
             </Button>
           </div>
 

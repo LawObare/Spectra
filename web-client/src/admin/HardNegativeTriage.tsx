@@ -364,9 +364,9 @@ export const HardNegativeTriage: React.FC = () => {
       {/* TOAST ALERT BANNER */}
       {toastMessage && (
         <div className="bg-primary/20 border-b border-primary/40 px-6 py-1.5 text-xs text-primary-foreground flex items-center justify-between animate-fadeIn">
-          <span>✓ {toastMessage}</span>
+          <span>[OK] {toastMessage}</span>
           <button onClick={() => setToastMessage(null)} className="text-xs hover:underline">
-            ✕
+            Dismiss
           </button>
         </div>
       )}
@@ -500,7 +500,7 @@ export const HardNegativeTriage: React.FC = () => {
                               handleVerifyDiscovery(cand.subject_id);
                             }}
                           >
-                            ✓ Promote
+                            Promote
                           </Button>
                         </div>
                       </td>
@@ -619,7 +619,7 @@ export const HardNegativeTriage: React.FC = () => {
                   className="text-xs"
                   onClick={() => handleVerifyDiscovery(currentCandidate.subject_id)}
                 >
-                  ✓ Promote
+                  Promote
                 </Button>
                 <Button
                   variant="destructive"
@@ -627,7 +627,7 @@ export const HardNegativeTriage: React.FC = () => {
                   className="text-xs"
                   onClick={() => handleFlagArtifact(currentCandidate.subject_id)}
                 >
-                  ✕ Flag Artifact
+                  Flag Artifact
                 </Button>
               </div>
 
