@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["spectrum"])
 _spectrum_tasks: dict[str, dict[str, Any]] = {}
-_spectrum_semaphore = asyncio.Semaphore(1)
+_spectrum_semaphore = asyncio.Semaphore(2)
 _MAX_PENDING_SPECTRUM_TASKS = 3
 _SPECTRUM_TASK_TTL_SECONDS = 900
 
