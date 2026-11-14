@@ -173,3 +173,40 @@ def test_sections_list_tensor_spectrum_and_uninstall(tmp_path: Path, monkeypatch
     assert rem.status_code == 200
     assert not Path(tensor_path).exists()
     assert client.get("/api/sections").json()["sections"] == []
+
+
+def test_section_spectrum_masked_core_falls_back_to_psf_wings():
+    """Bright sources with NaN/masked core pixel (n_exp=0) recover flux from neighboring pixels."""
+    n_epochs, n_bands, h, w = 1, 6, 5, 5
+    header = {
+        "shape": [n_epochs, n_bands, h, w],
+        "crval": [269.44639, 4.76676],
+        "cdelt": [-0.00172222, 0.00172222],
+        "mjd_ranges": [[[60800.0, 60801.0] for _ in range(n_bands)]],
+        "exposure_ids": ["exp_1"],
+        "release": "spherex_dr1",
+        "source_badge": "[IRSA Live (spherex_dr1)]",
+        "compression": "none",
+    }
+    header_bytes = json.dumps(header).encode("utf-8")
+    flux = np.full((n_epochs, n_bands, h, w), 12.0, dtype="<f4")
+    var = np.full((n_epochs, n_bands, h, w), 0.05, dtype="<f4")
+    flags = np.zeros((n_epochs, n_bands, h, w), dtype="<u4")
+    n_exp = np.ones((n_epochs, n_bands, h, w), dtype="<u2")
+    # Mask center pixel (2, 2) across all bands as if saturated
+    flux[:, :, 2, 2] = np.nan
+    n_exp[:, :, 2, 2] = 0
+    payload = (
+        struct.pack("<I", len(header_bytes))
+        + header_bytes
+        + flux.tobytes()
+        + var.tobytes()
+        + flags.tobytes()
+        + n_exp.tobytes()
+    )
+    out = sections._extract_spectrum_from_tensor_payload(
+        payload, ra=269.44639, dec=4.76676, label="Barnard's Star", px=2, py=2
+    )
+    assert out["provenance"]["covered_channels"] == 102
+    assert out["provenance"]["aperture_fallback_bands"] == ["D1", "D2", "D3", "D4", "D5", "D6"]
+    assert all(f > 0 for f in out["flux_jy"])
