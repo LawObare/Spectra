@@ -18,6 +18,11 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Input, Select } from '../components/ui';
+import {
+  fetchInstalledSections,
+  findMatchingSection,
+  type InstalledSection,
+} from '../lib/installedSections';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 
@@ -632,7 +637,9 @@ export const MolecularIceStudio: React.FC = () => {
   const [annulusInner, setAnnulusInner] = useState(3.0);
   const [annulusOuter, setAnnulusOuter] = useState(5.0);
   const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('tau');
-  const [sourceMode, setSourceMode] = useState<'synthetic' | 'live'>('live');
+  const [sourceMode, setSourceMode] = useState<'installed' | 'live' | 'synthetic'>('installed');
+  const [installedSections, setInstalledSections] = useState<InstalledSection[]>([]);
+  const [selectedSectionId, setSelectedSectionId] = useState<string>('');
   const [liveSpectrum, setLiveSpectrum] = useState<SpectrumSource | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
@@ -655,30 +662,89 @@ export const MolecularIceStudio: React.FC = () => {
     [photometry.sourceFraction, selectedTarget]
   );
 
-  // Optional live HDU 6 spectrum. Offline demo mode falls back to the synthetic template.
+  const readyInstalledSections = useMemo(
+    () => installedSections.filter((s) => s.status === 'ready'),
+    [installedSections]
+  );
+
+  // Load installed sections once on mount / target change
   useEffect(() => {
-    if (sourceMode !== 'live') return;
+    const controller = new AbortController();
+    fetchInstalledSections(controller.signal)
+      .then((sections) => {
+        setInstalledSections(sections);
+        const ready = sections.filter((s) => s.status === 'ready');
+        if (ready.length === 0) {
+          setSelectedSectionId('');
+          return;
+        }
+        const match =
+          findMatchingSection(ready, selectedTarget.ra, selectedTarget.dec) ||
+          findMatchingSection(ready, ra, dec) ||
+          ready[0];
+        setSelectedSectionId((prev) => (prev && ready.some((s) => s.section_id === prev) ? prev : match.section_id));
+      })
+      .catch(() => {
+        // Ignore transient offline errors
+      });
+    return () => controller.abort();
+  }, [ra, dec, selectedTarget.ra, selectedTarget.dec]);
+
+  // Installed section or on-demand live HDU 6 spectrum. Falls back to synthetic template when unavailable.
+  useEffect(() => {
+    if (sourceMode === 'synthetic') {
+      setLiveStatus('idle');
+      setLiveSpectrum(null);
+      return;
+    }
     let cancelled = false;
+    const controller = new AbortController();
     setLiveStatus('loading');
     setLiveSpectrum(null);
-    const fetchLive = async () => {
+
+    const fetchSourceSpectrum = async () => {
       try {
-        const response = await fetch('/api/spectrum/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ra: selectedTarget.ra, dec: selectedTarget.dec, normalize: false }) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const { task_id: taskId } = await response.json();
         let payload: any;
-        while (!cancelled) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1500));
-          const poll = await fetch(`/api/spectrum/tasks/${taskId}`);
-          if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
-          const task = await poll.json();
-          if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
-          if (task.status === 'complete') { payload = task.result; break; }
+        if (sourceMode === 'installed') {
+          const activeSec =
+            readyInstalledSections.find((s) => s.section_id === selectedSectionId) ||
+            findMatchingSection(readyInstalledSections, selectedTarget.ra, selectedTarget.dec) ||
+            readyInstalledSections[0];
+          if (!activeSec) {
+            if (!cancelled) setLiveStatus('idle');
+            return;
+          }
+          const res = await fetch(`/api/sections/${activeSec.section_id}/spectrum?normalize=false`, {
+            signal: controller.signal,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          payload = await res.json();
+        } else {
+          const response = await fetch('/api/spectrum/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ ra: selectedTarget.ra, dec: selectedTarget.dec, normalize: false }),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const { task_id: taskId } = await response.json();
+          while (!cancelled) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1500));
+            const poll = await fetch(`/api/spectrum/tasks/${taskId}`, { signal: controller.signal });
+            if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
+            const task = await poll.json();
+            if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
+            if (task.status === 'complete') { payload = task.result; break; }
+          }
         }
         if (cancelled || !payload) return;
-        if (cancelled) return;
         const sourceBadge = payload.provenance?.source_badge;
-        if (typeof sourceBadge !== 'string' || !/^\[IRSA Live \(.+\)\]$/.test(sourceBadge) || !Array.isArray(payload.wavelengths_um) || payload.wavelengths_um.length < 102 || !Array.isArray(payload.flux_jy) || payload.flux_jy.length < 102 || !Array.isArray(payload.channel_coverage)) {
+        const isValidBadge =
+          typeof sourceBadge === 'string' &&
+          (/^\[Installed\]/.test(sourceBadge) ||
+            /^\[IRSA Live \(.+\)\]$/.test(sourceBadge) ||
+            /^\[NASA Benchmark/.test(sourceBadge));
+        if (!isValidBadge || !Array.isArray(payload.wavelengths_um) || payload.wavelengths_um.length < 102 || !Array.isArray(payload.flux_jy) || payload.flux_jy.length < 102 || !Array.isArray(payload.channel_coverage)) {
           throw new Error('Malformed spectrum payload');
         }
         setLiveSpectrum({
@@ -692,14 +758,15 @@ export const MolecularIceStudio: React.FC = () => {
         if (!cancelled) setLiveStatus('error');
       }
     };
-    void fetchLive();
+    void fetchSourceSpectrum();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [selectedTarget, sourceMode]);
+  }, [selectedTarget, sourceMode, selectedSectionId, readyInstalledSections]);
 
   const activeSpectrum: SpectrumSource = useMemo(() => {
-    if (sourceMode === 'live' && liveSpectrum) return liveSpectrum;
+    if ((sourceMode === 'live' || sourceMode === 'installed') && liveSpectrum) return liveSpectrum;
     return {
       wavelengthsUm: syntheticSpectrum.wavelengthsUm,
       flux: syntheticSpectrum.flux,
@@ -888,27 +955,52 @@ export const MolecularIceStudio: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center justify-between gap-2 rounded-sm border border-border bg-card px-3 py-2">
-          <div>
-            <div className="text-[11px] font-medium text-foreground">Spectrum source</div>
-            <div className="text-[10px] text-muted-foreground">
-              {sourceMode === 'live'
-                ? liveStatus === 'loading'
-                  ? 'Fetching HDU 6 WCS-WAVE spectrum…'
-                  : liveStatus === 'ready'
-                    ? `${liveSpectrum?.badge || 'Spectrum'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
-                    : 'Live fetch unavailable — synthetic fallback active'
-                : 'Deterministic SPLICES synthetic template'}
+        <div className="space-y-2 rounded-sm border border-border bg-card px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-medium text-foreground">Spectrum source</div>
+              <div className="text-[10px] text-muted-foreground">
+                {sourceMode === 'installed'
+                  ? readyInstalledSections.length === 0
+                    ? 'No installed section yet — synthetic preview active'
+                    : liveStatus === 'loading'
+                      ? 'Loading installed section spectrum…'
+                      : liveStatus === 'ready'
+                        ? `${liveSpectrum?.badge || 'Installed'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
+                        : 'Installed fetch unavailable — synthetic fallback active'
+                  : sourceMode === 'live'
+                    ? liveStatus === 'loading'
+                      ? 'Fetching HDU 6 WCS-WAVE spectrum…'
+                      : liveStatus === 'ready'
+                        ? `${liveSpectrum?.badge || 'Spectrum'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
+                        : 'Live fetch unavailable — synthetic fallback active'
+                    : 'Deterministic SPLICES synthetic template'}
+              </div>
             </div>
+            <Select
+              value={sourceMode}
+              onChange={(event) => setSourceMode(event.target.value as 'installed' | 'live' | 'synthetic')}
+              sizeVariant="xs"
+            >
+              <option value="installed">Installed ({readyInstalledSections.length})</option>
+              <option value="live">Live /api/spectrum</option>
+              <option value="synthetic">Synthetic SPLICES</option>
+            </Select>
           </div>
-          <Select
-            value={sourceMode}
-            onChange={(event) => setSourceMode(event.target.value as 'synthetic' | 'live')}
-            sizeVariant="xs"
-          >
-            <option value="synthetic">Synthetic SPLICES</option>
-            <option value="live">Live /api/spectrum</option>
-          </Select>
+          {sourceMode === 'installed' && readyInstalledSections.length > 0 && (
+            <Select
+              value={selectedSectionId}
+              onChange={(event) => setSelectedSectionId(event.target.value)}
+              sizeVariant="xs"
+              aria-label="Choose installed section"
+            >
+              {readyInstalledSections.map((sec) => (
+                <option key={sec.section_id} value={sec.section_id}>
+                  {sec.label} ({sec.ra.toFixed(3)}°, {sec.dec >= 0 ? '+' : ''}{sec.dec.toFixed(3)}°)
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
 
         <div className="rounded-sm border border-border bg-card p-3">
