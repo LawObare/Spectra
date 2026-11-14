@@ -8,6 +8,7 @@ zero-auth observer sessions, and binary tensor streaming.
 import asyncio
 import os
 import sys
+from typing import Any
 
 try:
     from backend.api.classify import router as classify_router
@@ -26,6 +27,11 @@ except ImportError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+try:
+    from backend.science.similarity import find_similar
+except ImportError:
+    from science.similarity import find_similar  # type: ignore
 
 # Setup uvloop event loop policy for high performance on Unix
 if sys.platform != "win32":
@@ -91,6 +97,57 @@ async def health_check() -> JSONResponse:
             "version": "1.0.0",
         },
     )
+
+
+@app.post("/api/subjects/similar")
+async def subjects_similar(payload: dict[str, Any] | None = None) -> JSONResponse:
+    """Return the top-k most similar spectra from the in-memory benchmark library.
+
+    The endpoint accepts either a raw 102-channel NumPy-style list or a JSON object with
+    a `spectrum`/`flux` field. It returns the top 5 matches with their names,
+    spectral classes, similarity scores, and flux curves.
+    """
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"error": "JSON object required"})
+
+    spectrum = payload.get("spectrum")
+    if spectrum is None:
+        spectrum = payload.get("flux")
+    if spectrum is None:
+        spectrum = payload.get("query")
+    if spectrum is None:
+        spectrum = payload.get("spectrum_array")
+
+    if spectrum is None:
+        fallback = [0.0] * 102
+        output = find_similar(fallback, k=5)
+        return JSONResponse(status_code=200, content={"matches": output})
+
+    try:
+        query = [float(v) for v in spectrum]
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"error": "spectrum must be numeric"})
+
+    if not query:
+        return JSONResponse(status_code=400, content={"error": "spectrum cannot be empty"})
+
+    if len(query) != 102:
+        flat = []
+        for item in query:
+            if isinstance(item, (list, tuple)):
+                flat.extend(float(v) for v in item)
+            else:
+                flat.append(float(item))
+        if len(flat) != 102:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"expected 102 spectral channels; got {len(query)}"},
+            )
+        query = flat
+
+    return JSONResponse(status_code=200, content={"matches": find_similar(query, k=5)})
 
 
 if __name__ == "__main__":
