@@ -633,7 +633,10 @@ export const SpectrophotometricLab: React.FC = () => {
     plot.over.addEventListener('mouseleave', onLeave);
 
     const ro = new ResizeObserver((entries) => {
-      for (const ent of entries) plot.setSize({ width: Math.floor(ent.contentRect.width), height: 420 });
+      for (const ent of entries) {
+        const h = ent.contentRect.width < 640 ? 280 : ent.contentRect.width < 1280 ? 340 : 420;
+        plot.setSize({ width: Math.max(260, Math.floor(ent.contentRect.width)), height: h });
+      }
     });
     ro.observe(chartRef.current);
 
@@ -666,8 +669,8 @@ export const SpectrophotometricLab: React.FC = () => {
   }, [isRDraconis, colorByMjd, hasFiniteMjds, perChannelMjd]);
 
   return (
-    <div className="flex h-full min-h-[720px] bg-neutral-950 text-neutral-100">
-      <div className="flex min-w-0 flex-1 flex-col border-r border-neutral-800">
+    <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-neutral-950 text-neutral-100">
+      <div className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800">
         <div className="border-b border-neutral-800 px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold tracking-wide text-white">Tab 3 — Spectrophotometric Lab</h2>
@@ -750,9 +753,9 @@ export const SpectrophotometricLab: React.FC = () => {
         </div>
 
         <div className="relative min-h-0 flex-1 p-3">
-          <div ref={chartRef} className="h-[420px] w-full rounded border border-neutral-800 bg-neutral-950" aria-label="102-channel hyperspectral plot" />
+          <div ref={chartRef} className="h-[280px] sm:h-[340px] xl:h-[420px] w-full rounded border border-neutral-800 bg-neutral-950" aria-label="102-channel hyperspectral plot" />
           {spectrum.length === 0 && (
-            <div className="pointer-events-none absolute inset-3 flex h-[420px] items-center justify-center">
+            <div className="pointer-events-none absolute inset-3 flex h-[280px] sm:h-[340px] xl:h-[420px] items-center justify-center">
               <div className="rounded border border-neutral-800 bg-neutral-900/90 px-4 py-2 text-center text-xs text-neutral-300">
                 {spectrumStatus || 'No archive spectrum loaded for this coordinate'}
               </div>
@@ -834,7 +837,7 @@ export const SpectrophotometricLab: React.FC = () => {
       </div>
 
       {/* Right: NNLS unmixing / controls */}
-      <aside className="w-[360px] shrink-0 overflow-y-auto bg-neutral-900/20 p-4">
+      <aside className="w-full lg:w-[330px] xl:w-[360px] shrink-0 lg:overflow-y-auto bg-neutral-900/20 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-300">Two-Component NNLS Spectral Unmixing</h3>
         {isEpsInd && unmix ? (
           <div className="mt-2 rounded border border-amber-500/30 bg-amber-950/10 p-3 text-[11px]">
