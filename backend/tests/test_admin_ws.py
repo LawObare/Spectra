@@ -67,6 +67,7 @@ def test_studio_train_returns_202_and_runs_lora_dft(client):
         "/api/admin/studio/train",
         json={
             "model": "SpectralResNet102",
+            "custom_name": "my-y4-detector",
             "epochs": 3,
             "lora_r": 8,
             "lora_alpha": 32,
@@ -92,6 +93,10 @@ def test_studio_train_returns_202_and_runs_lora_dft(client):
     assert st["frames"][-1]["trl"]["loss_type"] == "dft"
     assert st["frames"][-1]["trl"]["param_summary"]["lora_params"] > 0
 
+    models_resp = client.get("/api/admin/models").json()
+    assert len(models_resp["base_models"]) == 3
+    assert any(m["custom_name"] == "my-y4-detector" for m in models_resp["trained_models"])
+
 
 def test_knowledge_graph_base_and_trained(client):
     r_tr = client.get("/api/admin/graph?model=SpectralResNet102&space=trained&min_similarity=0.2")
@@ -100,6 +105,7 @@ def test_knowledge_graph_base_and_trained(client):
     g_tr = r_tr.json()
     assert g_tr["embedding_space"] == "trained"
     assert any(n["kind"] == "target" for n in g_tr["nodes"])
+    assert all("z" in n for n in g_tr["nodes"])
     assert any(n["kind"] == "feature" for n in g_tr["nodes"])
     assert any(n["kind"] == "class" for n in g_tr["nodes"])
     assert any(n["kind"] == "template" for n in g_tr["nodes"])
