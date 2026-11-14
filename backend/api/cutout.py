@@ -602,7 +602,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                     return
                 nonlocal last_partial_publish_time
                 now = time.monotonic()
-                if now - last_partial_publish_time < 1.5:
+                if now - last_partial_publish_time < 5.0:
                     return
                 last_partial_publish_time = now
                 master_wcs, _, shape_out = build_master_wcs(
