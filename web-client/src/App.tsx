@@ -705,7 +705,8 @@ export default function App() {
             }
           >
             <Routes>
-              <Route path="/" element={<Navigate to="/explore" replace />} />
+              <Route path="/" element={<Navigate to="/explore?tab=navigator" replace />} />
+              <Route path="/1" element={<Navigate to="/explore?tab=navigator" replace />} />
               <Route path="/explore/*" element={<PublicExplorerPortal />} />
               {/* Zero-Auth Route-Isolated Admin Suite (No blocking login screens) */}
               <Route path="/admin/*" element={<AdminMissionControl />} />
