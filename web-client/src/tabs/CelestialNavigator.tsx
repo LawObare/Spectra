@@ -588,34 +588,80 @@ export const CelestialNavigator: React.FC = () => {
     [ra, dec, showSyntheticPreview]
   );
 
-  // Pre-load all-sky SPHEREx mission coverage footprints from database
+  const coverageLoadedRef = useRef<boolean>(false);
+  const coverageInFlightRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
+
   useEffect(() => {
-    let active = true;
-    fetch('/api/coverage/full')
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Coverage unavailable'))))
-      .then((payload) => {
-        if (!active) return;
-        if (Array.isArray(payload.exposures)) {
-          const parsed = parseIrsaSiaResponse(payload);
-          setFullCoverageExposures(parsed);
-        }
-        if (payload.mocs && typeof payload.mocs === 'object') {
-          setCoverageMocs(payload.mocs);
-        }
-        if (Array.isArray(payload.deep_fields)) {
-          setDeepFieldExposures(parseIrsaSiaResponse({ exposures: payload.deep_fields }));
-        }
-        if (Array.isArray(payload.zones)) {
-          setCoverageZones(payload.zones);
-        }
-      })
-      .catch((err) => {
-        console.warn('Full coverage fetch error:', err);
-      });
+    isMountedRef.current = true;
     return () => {
-      active = false;
+      isMountedRef.current = false;
     };
   }, []);
+
+  // Defer 198 KB all-sky SPHEREx mission coverage fetch until idle (or immediately when coverage layer is enabled)
+  useEffect(() => {
+    if (coverageLoadedRef.current || coverageInFlightRef.current) return;
+    if (!showAvailableCoverage && !aladinReady) return;
+
+    let idleId: number | null = null;
+    let timerId: number | null = null;
+
+    const loadCoverage = () => {
+      if (!isMountedRef.current || coverageLoadedRef.current || coverageInFlightRef.current) return;
+      coverageInFlightRef.current = true;
+      fetch('/api/coverage/full')
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Coverage unavailable'))))
+        .then((payload) => {
+          if (!isMountedRef.current) return;
+          coverageLoadedRef.current = true;
+          if (Array.isArray(payload.exposures)) {
+            const parsed = parseIrsaSiaResponse(payload);
+            setFullCoverageExposures(parsed);
+          }
+          if (payload.mocs && typeof payload.mocs === 'object') {
+            setCoverageMocs(payload.mocs);
+          }
+          if (Array.isArray(payload.deep_fields)) {
+            setDeepFieldExposures(parseIrsaSiaResponse({ exposures: payload.deep_fields }));
+          }
+          if (Array.isArray(payload.zones)) {
+            setCoverageZones(payload.zones);
+          }
+        })
+        .catch((err) => {
+          console.warn('Full coverage fetch error:', err);
+        })
+        .finally(() => {
+          coverageInFlightRef.current = false;
+        });
+    };
+
+    const idleWin =
+      typeof window !== 'undefined'
+        ? (window as Window & {
+            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+            cancelIdleCallback?: (id: number) => void;
+          })
+        : null;
+
+    if (showAvailableCoverage) {
+      loadCoverage();
+    } else if (idleWin && typeof idleWin.requestIdleCallback === 'function') {
+      timerId = window.setTimeout(() => {
+        idleId = idleWin.requestIdleCallback?.(loadCoverage, { timeout: 2500 }) ?? null;
+      }, 1500);
+    } else {
+      timerId = window.setTimeout(loadCoverage, 2500);
+    }
+
+    return () => {
+      if (timerId !== null) window.clearTimeout(timerId);
+      if (idleId !== null && idleWin && typeof idleWin.cancelIdleCallback === 'function') {
+        idleWin.cancelIdleCallback(idleId);
+      }
+    };
+  }, [aladinReady, showAvailableCoverage]);
 
   // Reset target-level exposure table when user selects a new coordinate (no auto-querying on pan)
   useEffect(() => {
@@ -948,7 +994,7 @@ export const CelestialNavigator: React.FC = () => {
                 setRa(normRa);
                 setDec(normDec);
               });
-            }, 250);
+            }, 700);
           }
         });
 
@@ -1278,7 +1324,7 @@ export const CelestialNavigator: React.FC = () => {
           }
         }
       );
-    }, 450);
+    }, 1200);
 
     return () => {
       cancelled = true;
@@ -1290,7 +1336,7 @@ export const CelestialNavigator: React.FC = () => {
     };
   }, [ra, dec, aladinReady]);
 
-  // SkyBot is opportunistic: abandon the query after two seconds without delaying the sky view.
+  // SkyBot is opportunistic: wait 1200ms after panning settles, then abandon after 2s without delaying the sky view.
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladinReady || !aladin) return;
@@ -1298,7 +1344,9 @@ export const CelestialNavigator: React.FC = () => {
       setSkybotStatus('unavailable');
       return;
     }
+    let cancelled = false;
     let settled = false;
+    let timeout: number | null = null;
     const cacheKey = `${ra.toFixed(5)}:${dec.toFixed(5)}:300`;
     const useCachedCatalog = () => {
       const cachedCatalog = skybotCacheRef.current.get(cacheKey);
@@ -1310,46 +1358,52 @@ export const CelestialNavigator: React.FC = () => {
       aladin.addCatalog(cachedCatalog);
       setSkybotStatus('cached_only');
     };
-    const timeout = window.setTimeout(() => {
-      settled = true;
-      useCachedCatalog();
-    }, 2000);
 
-    setSkybotStatus('loading');
-    if (skybotCatalogRef.current) aladin.removeOverlay?.(skybotCatalogRef.current);
-    skybotCatalogRef.current = null;
-    A.catalogFromSkyBot(
-      ra,
-      dec,
-      300 / 3600,
-      new Date().toISOString(),
-      {},
-      { name: 'SkyBot · 300 arcsec', color: '#A78BFA', sourceSize: 7 },
-      (catalog: any) => {
-        if (settled) return;
+    const debounceTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      timeout = window.setTimeout(() => {
         settled = true;
-        window.clearTimeout(timeout);
-        skybotCatalogRef.current = catalog;
-        skybotCacheRef.current.set(cacheKey, catalog);
-        if (skybotCacheRef.current.size > 32) {
-          const oldestKey = skybotCacheRef.current.keys().next().value;
-          if (oldestKey) skybotCacheRef.current.delete(oldestKey);
-        }
-        aladin.addCatalog(catalog);
-        setSkybotStatus('live');
-      },
-      (error: unknown) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        console.warn('SkyBot query failed:', error);
         useCachedCatalog();
-      }
-    );
+      }, 2000);
+
+      setSkybotStatus('loading');
+      if (skybotCatalogRef.current) aladin.removeOverlay?.(skybotCatalogRef.current);
+      skybotCatalogRef.current = null;
+      A.catalogFromSkyBot(
+        ra,
+        dec,
+        300 / 3600,
+        new Date().toISOString(),
+        {},
+        { name: 'SkyBot · 300 arcsec', color: '#A78BFA', sourceSize: 7 },
+        (catalog: any) => {
+          if (cancelled || settled) return;
+          settled = true;
+          if (timeout !== null) window.clearTimeout(timeout);
+          skybotCatalogRef.current = catalog;
+          skybotCacheRef.current.set(cacheKey, catalog);
+          if (skybotCacheRef.current.size > 32) {
+            const oldestKey = skybotCacheRef.current.keys().next().value;
+            if (oldestKey) skybotCacheRef.current.delete(oldestKey);
+          }
+          aladin.addCatalog(catalog);
+          setSkybotStatus('live');
+        },
+        (error: unknown) => {
+          if (cancelled || settled) return;
+          settled = true;
+          if (timeout !== null) window.clearTimeout(timeout);
+          console.warn('SkyBot query failed:', error);
+          useCachedCatalog();
+        }
+      );
+    }, 1200);
 
     return () => {
+      cancelled = true;
       settled = true;
-      window.clearTimeout(timeout);
+      window.clearTimeout(debounceTimer);
+      if (timeout !== null) window.clearTimeout(timeout);
       if (skybotCatalogRef.current) aladin.removeOverlay?.(skybotCatalogRef.current);
       skybotCatalogRef.current = null;
     };
