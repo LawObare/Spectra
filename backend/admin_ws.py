@@ -272,6 +272,7 @@ async def retrain(req: RetrainRequest):
 
 class StudioTrainRequest(BaseModel):
     model: str = "SpectralResNet102"
+    custom_name: str = Field(default="", max_length=80)
     epochs: int = Field(default=25, ge=1, le=100)
     seed: int = 0
     learning_rate: float | None = Field(default=None, gt=0.0, le=0.5)
@@ -284,6 +285,13 @@ class StudioTrainRequest(BaseModel):
     completion_only_loss: bool = True
     packing: bool = True
     quantization_bits: int = Field(default=4, ge=4, le=32)
+
+
+@router.get("/models")
+async def list_models():
+    """Return all Base Models + Trained LoRA/SFT Model Checkpoints."""
+    registry = await asyncio.to_thread(_ml_trainer().list_models_registry)
+    return {**registry, "training_active": _training_lock.locked()}
 
 
 @router.post("/studio/train", status_code=202)
@@ -304,6 +312,7 @@ async def studio_train(req: StudioTrainRequest):
         completion_only_loss=req.completion_only_loss,
         packing=req.packing,
         quantization_bits=req.quantization_bits,
+        custom_name=req.custom_name or None,
     )
     return {
         "status": "started",
