@@ -249,11 +249,28 @@ def _extract_spectrum_from_tensor_payload(
         for ep_list in mjd_ranges
         for band_pair in ep_list
         for val in band_pair
-        if isinstance(val, (int, float))
+        if isinstance(val, (int, float)) and val > 0
     ]
-    mjd_min = min(mjd_flat) if mjd_flat else 60789.85
+    mjd_min = min(mjd_flat) if mjd_flat else 0.0
     mjd_max = max(mjd_flat) if mjd_flat else mjd_min
-    mjd_mid = 0.5 * (mjd_min + mjd_max)
+    mjd_mid = 0.5 * (mjd_min + mjd_max) if mjd_flat else 0.0
+
+    mjd_per_channel = [round(mjd_mid, 2)] * TOTAL_SPHEREX_CHANNELS
+    for b_idx, (c_start, c_end) in enumerate(_BAND_CHANNEL_RANGES):
+        band_mjds = [
+            float(val)
+            for e in epoch_indices
+            if e < len(mjd_ranges) and b_idx < len(mjd_ranges[e])
+            for val in mjd_ranges[e][b_idx]
+            if isinstance(val, (int, float)) and val > 0
+        ]
+        if band_mjds:
+            band_mid = round(0.5 * (min(band_mjds) + max(band_mjds)), 2)
+            for ch in range(c_start, c_end):
+                mjd_per_channel[ch] = band_mid
+        elif not band_valid[b_idx]:
+            for ch in range(c_start, c_end):
+                mjd_per_channel[ch] = 0.0
 
     cont_flux = None
     tau = None
@@ -273,7 +290,7 @@ def _extract_spectrum_from_tensor_payload(
         "variance_jy2": [float(v) for v in np.round(interp_var, 12)],
         "flags": channel_flags,
         "channel_coverage": channel_cov,
-        "mjd_per_channel": [round(mjd_mid, 2)] * TOTAL_SPHEREX_CHANNELS,
+        "mjd_per_channel": mjd_per_channel,
         "mjd_span": [round(mjd_min, 2), round(mjd_max, 2)],
         "is_simultaneous": (mjd_max - mjd_min) <= 1.0,
         "continuum_flux_jy": cont_flux,
