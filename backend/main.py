@@ -37,8 +37,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 try:
+    from backend.science.reproject import shutdown_cpu_pool
     from backend.science.similarity import find_similar
 except ImportError:
+    from science.reproject import shutdown_cpu_pool  # type: ignore
     from science.similarity import find_similar  # type: ignore
 
 # Setup uvloop event loop policy for high performance on Unix
@@ -69,6 +71,7 @@ async def _lifespan(_app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logger.debug("Skipping startup benchmark seed: %s", exc)
     yield
+    shutdown_cpu_pool(wait=False)
 
 
 app = FastAPI(
