@@ -9,9 +9,20 @@ import asyncio
 import os
 import sys
 
-from backend.api.classify import router as classify_router
-from backend.api.cutout import router as cutout_router
-from backend.api.resolve import router as resolve_router
+try:
+    from backend.api.classify import router as classify_router
+    from backend.api.cutout import router as cutout_router
+    from backend.api.export import router as export_router
+    from backend.api.forum import router as forum_router
+    from backend.api.resolve import router as resolve_router
+    from backend.api.spectrum import router as spectrum_router
+except ImportError:
+    from api.classify import router as classify_router  # type: ignore
+    from api.cutout import router as cutout_router  # type: ignore
+    from api.export import router as export_router  # type: ignore
+    from api.forum import router as forum_router  # type: ignore
+    from api.resolve import router as resolve_router  # type: ignore
+    from api.spectrum import router as spectrum_router  # type: ignore
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -52,6 +63,9 @@ app.add_middleware(
 app.include_router(resolve_router)
 app.include_router(cutout_router)
 app.include_router(classify_router)
+app.include_router(spectrum_router)
+app.include_router(forum_router)
+app.include_router(export_router)
 
 
 @app.get("/api/health/live")

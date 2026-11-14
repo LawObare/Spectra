@@ -216,8 +216,42 @@ export const SpectrophotometricLab: React.FC = () => {
   const {
     ra, dec, activeTargetName, probedPixel, activeSpectrum, activeEpochIndex,
     isSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
+    setActiveSpectrum, setSpectrumLoading,
   } = useTelemetryStore();
   const { setZ } = useSpectraUrlState();
+
+  // Live 102-Channel WCS-WAVE Hyperspectral Fetch (SPECIFICATION.md §4.1 Pipeline 2, §5.3.1)
+  useEffect(() => {
+    let cancelled = false;
+    const fetchLiveSpectrum = async () => {
+      setSpectrumLoading(true);
+      try {
+        const res = await fetch(`/api/spectrum?ra=${ra}&dec=${dec}&normalize=false`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.wavelengths_um) && Array.isArray(data.flux_jy)) {
+          const convFactor = 9.035103099229226e-4; // Jy per (MJy/sr) for 6.2" pixel
+          const channels: SpectralChannel[] = data.wavelengths_um.map((lam: number, i: number) => ({
+            channel: i + 1,
+            detector: detectorFor(lam),
+            wavelengthUm: lam,
+            fluxMjySr: Number((data.flux_jy[i] / convFactor).toFixed(5)),
+            uncertainty: Number((Math.sqrt(Math.max(0, data.variance_jy2?.[i] ?? 0)) / convFactor).toFixed(5)),
+            flag: data.flags?.[i] ?? 0,
+          }));
+          setActiveSpectrum(channels);
+        }
+      } catch {
+        // Graceful fallback to synthetic model when offline
+      } finally {
+        if (!cancelled) setSpectrumLoading(false);
+      }
+    };
+    fetchLiveSpectrum();
+    return () => {
+      cancelled = true;
+    };
+  }, [ra, dec, setActiveSpectrum, setSpectrumLoading]);
 
   const [colorByMjd, setColorByMjd] = useState(false);
   const [flagTip, setFlagTip] = useState<{ x: number; y: number; text: string } | null>(null);
