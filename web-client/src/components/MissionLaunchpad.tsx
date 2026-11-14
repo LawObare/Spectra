@@ -19,7 +19,7 @@ export const MissionLaunchpad: React.FC<MissionLaunchpadProps> = ({
     <div className="w-full min-h-screen bg-black text-white font-sans overflow-y-auto">
       {/* 1. Official NASA Mission Hero Banner */}
       <MissionHero
-        onLaunchWorkstation={() => onLaunchWorkstation('comparator')}
+        onLaunchWorkstation={() => onLaunchWorkstation('navigator')}
       />
 
       {/* 2. Major Discoveries Library (Production Grade) */}
