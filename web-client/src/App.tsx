@@ -164,8 +164,8 @@ export const PublicExplorerPortal: React.FC = () => {
   });
 
   return (
-    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background font-sans text-foreground">
-      {/* Fixed Global Command Header (56px) - hidden when embedded */}
+    <div className="flex h-dvh w-full max-w-[100vw] flex-col overflow-hidden bg-background font-sans text-foreground">
+      {/* Global Command Header - hidden when embedded */}
       {!isEmbed && (
         <GlobalCommandHeader
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
@@ -191,7 +191,7 @@ export const PublicExplorerPortal: React.FC = () => {
       />
 
       {/* Main Content: Option A Mission Launchpad or Active Workstation */}
-      <main className={`relative flex-1 overflow-hidden ${!isEmbed ? 'pt-[56px]' : ''}`}>
+      <main className="relative flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
         {isMissionBriefingActive ? (
           <MissionLaunchpad
             onLaunchWorkstation={handleLaunchWorkstationFromBriefing}
