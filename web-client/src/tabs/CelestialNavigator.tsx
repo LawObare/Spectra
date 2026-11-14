@@ -33,7 +33,7 @@ const SPHEREX_DETECTORS: DetectorSpec[] = [
 
 const FOV_CUTOUT_PRESETS = [60, 120, 180, 300, 600];
 const DEFAULT_SKY_FOV_DEG = 18;
-const MIN_SKY_FOV_DEG = 0.02;
+const MIN_SKY_FOV_DEG = 0.08;
 const MAX_SKY_FOV_DEG = 60;
 const SIMULATED_PREVIEW_BADGE = '[Synthetic Injection Mode]';
 
@@ -293,6 +293,11 @@ export const CelestialNavigator: React.FC = () => {
   const surveyLoadIdRef = useRef<number>(0);
   const surveyLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Smooth gesture telemetry & anti-feedback refs
+  const lastInternalCoordRef = useRef<{ ra: number; dec: number }>({ ra, dec });
+  const posDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoomDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const createHiPSSurvey = useCallback((surveySpec: PhotographicSurveySpec) => {
     const requestId = ++surveyLoadIdRef.current;
     if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
@@ -472,7 +477,7 @@ export const CelestialNavigator: React.FC = () => {
           console.warn('Aladin catalog init:', e);
         }
 
-        // Sync telemetry when user drags or pans the sky
+        // Sync telemetry when user drags or pans the sky (debounced to break feedback loop)
         instance.on('positionChanged', (data: any) => {
           if (!data) return;
           const newRa = typeof data.ra === 'number' ? data.ra : Number(data.ra);
@@ -480,24 +485,32 @@ export const CelestialNavigator: React.FC = () => {
           if (Number.isFinite(newRa) && Number.isFinite(newDec)) {
             const normRa = Number((((newRa % 360) + 360) % 360).toFixed(6));
             const normDec = Number(Math.max(-90, Math.min(90, newDec)).toFixed(6));
-            setCoordinates(
-              normRa,
-              normDec,
-              `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
-              SIMULATED_PREVIEW_BADGE
-            );
-            setRa(normRa);
-            setDec(normDec);
+            lastInternalCoordRef.current = { ra: normRa, dec: normDec };
+
+            if (posDebounceTimerRef.current) clearTimeout(posDebounceTimerRef.current);
+            posDebounceTimerRef.current = setTimeout(() => {
+              setCoordinates(
+                normRa,
+                normDec,
+                `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
+                SIMULATED_PREVIEW_BADGE
+              );
+              setRa(normRa);
+              setDec(normDec);
+            }, 120);
           }
         });
 
-        // Sync field of view when user zooms in or out
+        // Sync field of view when user zooms in or out (debounced URL/history sync)
         instance.on('zoomChanged', (fovDeg: number) => {
           if (Number.isFinite(fovDeg)) {
             setDisplayFovDeg(fovDeg);
-            const arcsec = Math.round(fovDeg * 3600);
-            setFov(arcsec);
-            setUrlFov(arcsec);
+            if (zoomDebounceTimerRef.current) clearTimeout(zoomDebounceTimerRef.current);
+            zoomDebounceTimerRef.current = setTimeout(() => {
+              const arcsec = Math.round(fovDeg * 3600);
+              setFov(arcsec);
+              setUrlFov(arcsec);
+            }, 120);
           }
         });
 
@@ -571,6 +584,8 @@ export const CelestialNavigator: React.FC = () => {
     return () => {
       cancelled = true;
       if (surveyLoadTimerRef.current) clearTimeout(surveyLoadTimerRef.current);
+      if (posDebounceTimerRef.current) clearTimeout(posDebounceTimerRef.current);
+      if (zoomDebounceTimerRef.current) clearTimeout(zoomDebounceTimerRef.current);
       aladinInstanceRef.current = null;
     };
     // Aladin captures the initial target and survey when it mounts; later changes sync through event handlers.
@@ -594,6 +609,13 @@ export const CelestialNavigator: React.FC = () => {
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladin) return;
+    const deltaRa = Math.abs(ra - lastInternalCoordRef.current.ra);
+    const deltaDec = Math.abs(dec - lastInternalCoordRef.current.dec);
+    // Ignore internal movements (< 0.0005 deg) to prevent breaking smooth pan/scroll animations
+    if (deltaRa < 0.0005 && deltaDec < 0.0005) {
+      return;
+    }
+    lastInternalCoordRef.current = { ra, dec };
     try {
       aladin.gotoRaDec(ra, dec);
     } catch (e) {
@@ -884,7 +906,8 @@ export const CelestialNavigator: React.FC = () => {
           {/* Aladin Lite v3 Canvas Container (Receives all drag, scroll, touch, and click events directly) */}
           <div
             ref={aladinContainerRef}
-            className="absolute inset-0 h-full w-full"
+            className="absolute inset-0 h-full w-full [&_canvas]:[image-rendering:auto]"
+            style={{ touchAction: 'none' }}
           />
 
           {!hipsReady && !hipsError && (
