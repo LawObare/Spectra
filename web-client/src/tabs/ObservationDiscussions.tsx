@@ -181,9 +181,23 @@ function decodeStampWithWorker(buffer: ArrayBuffer): Promise<TensorWorkerRespons
   });
 }
 
+async function fetchBinaryTensorResponse(url: string): Promise<Response | null> {
+  try {
+    const response = await fetch(url);
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (response.ok && !contentType.includes('text/html')) {
+      return response;
+    }
+  } catch {
+    // Ignore transient fetch failures so fallback candidates can run
+  }
+  return null;
+}
+
 async function fetchAndDecodeStampTensor(
   cacheKey: string,
-  url: string
+  url: string,
+  fallbackUrl?: string
 ): Promise<DecodedStampTensor | null> {
   const hit = STAMP_TENSOR_LRU.get(cacheKey);
   if (hit) {
@@ -196,8 +210,17 @@ async function fetchAndDecodeStampTensor(
 
   const flight = (async () => {
     try {
-      const response = await fetch(url);
-      if (!response.ok) return null;
+      let response = await fetchBinaryTensorResponse(url);
+      if (!response) {
+        const secMatch = url.match(/^\/api\/sections\/([^/?]+)\/tensor/);
+        if (secMatch) {
+          response = await fetchBinaryTensorResponse(`/benchmarks/${secMatch[1]}.f32`);
+        }
+      }
+      if (!response && fallbackUrl) {
+        response = await fetchBinaryTensorResponse(fallbackUrl);
+      }
+      if (!response) return null;
       const buf = await response.arrayBuffer();
       const decoded = await decodeStampWithWorker(buf);
       const hdr: TensorHeader = decoded.header;
@@ -835,6 +858,10 @@ const SkyPatchPreview: React.FC<{
         url: `/api/sections/${matchedSection.section_id}/tensor?v=${encodeURIComponent(
           String(matchedSection.updated_at || matchedSection.size_bytes)
         )}`,
+        fallbackUrl:
+          benchmarkId && BENCHMARK_TENSOR_URLS[benchmarkId]
+            ? BENCHMARK_TENSOR_URLS[benchmarkId]
+            : undefined,
       };
     }
     if (benchmarkId && BENCHMARK_TENSOR_URLS[benchmarkId]) {
@@ -876,7 +903,11 @@ const SkyPatchPreview: React.FC<{
       setViewMode('tensor');
       return;
     }
-    void fetchAndDecodeStampTensor(tensorSource.cacheKey, tensorSource.url).then((loaded) => {
+    void fetchAndDecodeStampTensor(
+      tensorSource.cacheKey,
+      tensorSource.url,
+      tensorSource.fallbackUrl
+    ).then((loaded) => {
       if (cancelled) return;
       if (loaded) {
         setTensor(loaded);
