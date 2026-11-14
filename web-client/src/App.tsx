@@ -14,12 +14,23 @@ import { CommandPalette } from './components/CommandPalette';
 import { MissionLaunchpad } from './components/MissionLaunchpad';
 import { MajorDiscovery } from './components/MajorDiscoveriesData';
 import { CandidateCatalogDrawer, CatalogTarget } from './components/CandidateCatalogDrawer';
-import { CelestialNavigator } from './tabs/CelestialNavigator';
-import { TimeDomainComparator } from './tabs/TimeDomainComparator';
-import { SpectrophotometricLab } from './tabs/SpectrophotometricLab';
-import { MolecularIceStudio } from './tabs/MolecularIceStudio';
-import { ObservationDiscussions } from './tabs/ObservationDiscussions';
 import { Button, Badge, Select } from './components/ui';
+
+const CelestialNavigator = lazy(() =>
+  import('./tabs/CelestialNavigator').then((module) => ({ default: module.CelestialNavigator }))
+);
+const TimeDomainComparator = lazy(() =>
+  import('./tabs/TimeDomainComparator').then((module) => ({ default: module.TimeDomainComparator }))
+);
+const SpectrophotometricLab = lazy(() =>
+  import('./tabs/SpectrophotometricLab').then((module) => ({ default: module.SpectrophotometricLab }))
+);
+const MolecularIceStudio = lazy(() =>
+  import('./tabs/MolecularIceStudio').then((module) => ({ default: module.MolecularIceStudio }))
+);
+const ObservationDiscussions = lazy(() =>
+  import('./tabs/ObservationDiscussions').then((module) => ({ default: module.ObservationDiscussions }))
+);
 
 /**
  * Spectra Root Application Component
@@ -522,15 +533,23 @@ export const PublicExplorerPortal: React.FC = () => {
             onSelectDiscovery={handleSelectDiscoveryFromBriefing}
           />
         ) : (
-          <>
-            {tab === 'navigator' && <CelestialNavigator />}
-            {tab === 'comparator' && (
-              <TimeDomainComparator onOpenCatalog={() => setIsCatalogOpen(true)} />
-            )}
-            {tab === 'spectral' && <SpectrophotometricLab />}
-            {tab === 'ice' && <MolecularIceStudio />}
-            {tab === 'discussions' && <ObservationDiscussions />}
-          </>
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center font-mono text-xs text-muted-foreground">
+                Loading selected science view…
+              </div>
+            }
+          >
+            <>
+              {tab === 'navigator' && <CelestialNavigator />}
+              {tab === 'comparator' && (
+                <TimeDomainComparator onOpenCatalog={() => setIsCatalogOpen(true)} />
+              )}
+              {tab === 'spectral' && <SpectrophotometricLab />}
+              {tab === 'ice' && <MolecularIceStudio />}
+              {tab === 'discussions' && <ObservationDiscussions />}
+            </>
+          </Suspense>
         )}
       </main>
     </div>
