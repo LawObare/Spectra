@@ -270,7 +270,7 @@ export const DecisionBoundaries: React.FC = () => {
       if (focusId && isFocused) {
         ctx.globalAlpha = 0.9;
         ctx.fillStyle = '#cbd5e1';
-        ctx.font = '9px ui-monospace, monospace';
+        ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
         ctx.textAlign = 'center';
         ctx.fillText(e.label, (a.cx + b.cx) * 0.5, (a.cy + b.cy) * 0.5 - 3);
       }
@@ -325,7 +325,7 @@ export const DecisionBoundaries: React.FC = () => {
       ctx.stroke();
 
       ctx.fillStyle = isSelected ? '#ffffff' : '#e2e8f0';
-      ctx.font = n.kind === 'class' ? 'bold 11px system-ui, sans-serif' : '10px system-ui, sans-serif';
+      ctx.font = n.kind === 'class' ? 'bold 11px "IBM Plex Sans", system-ui, sans-serif' : '10px "IBM Plex Sans", system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(n.label, p.cx, p.cy + r + 13);
       ctx.restore();
@@ -361,7 +361,7 @@ export const DecisionBoundaries: React.FC = () => {
         ctx.stroke();
 
         ctx.fillStyle = ax.color;
-        ctx.font = 'bold 9px ui-monospace, monospace';
+        ctx.font = 'bold 9px "IBM Plex Mono", ui-monospace, monospace';
         ctx.textAlign = 'center';
         ctx.fillText(ax.label, originX + x1 * (axisLen + 11), originY + y2 * (axisLen + 11) + 3);
       }
