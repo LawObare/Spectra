@@ -270,3 +270,63 @@ NASA Benchmark Target   Physical Kinematics / Photometry               Spectra I
    (RA 248.17°, +66.76°)245-day Mira pulsation cycle                   PASS: Flux follows 10.0 + 8.0 * sin(2*pi*dt/245).
 ====================================================================================================================
 ```
+
+---
+
+## 10. The Human User Reality Check: Vibe-Coded, Cramped & Alienating
+
+> [!CAUTION]
+> **Direct User Verdict:** *"The UI does not look gorgeous; it looks vibecoded, plain, and squeezed. There is jargon everywhere, and the benchmark pills are completely uninteresting because I don't even know what they are."*
+
+This feedback cuts straight to the truth: the current interface is an engineer's dashboard packed with arbitrary borders, cramped viewports, and cryptic academic acronyms.
+
+### 10.1 The Visual Reality: "Squeezed, Plain & Vibe-Coded"
+1. **The "Box-Inside-A-Box" Syndrome:**
+   - The UI suffers from nested border soup (`bg-[#080A0F]` containing `border-[#1E2530]` cards, containing `bg-[#151B24]` sub-boxes, containing `border-[#1E2530]` tables).
+   - This arbitrary nesting is the hallmark of "vibe-coded" developer styling: rather than creating visual breathing room and generous negative space, elements are wrapped in endless dark gray borders.
+2. **The Cramped 480×480 Viewport:**
+   - The core astronomical experience—the canvas where the discovery actually happens—is trapped in a tiny 480px box.
+   - On modern high-resolution screens, 75% of the viewport is dead black margin, forcing users to squint at tiny 5mm star displacements.
+3. **The Squeezed 56px Header:**
+   - The top bar attempts to cram: Logo + Subtitle + 5 Benchmark Pills + Universal Search + 5 Tab Navigation Links + 2 Clearance Badges + Admin Link all into a single horizontal strip.
+   - It feels claustrophobic, cluttered, and overwhelming.
+
+---
+
+### 10.2 The Benchmark Pills Failure: Cryptic Astrometric Shorthand
+Currently, the quick-launch header pills display:
+- `Barnard's Star (M4V)`
+- `WISE 0855-0714 (Y4)`
+- `Epsilon Indi B (T1+T6)`
+- `RW Aurigae (T Tau)`
+- `R Draconis (Mira)`
+
+**Why this fails real humans:**
+- Normal people do not know what stellar spectral classifications (`M4V`, `Y4`, `T1+T6`) mean. They read like serial numbers or model codes for industrial machinery.
+- There is zero narrative hook or emotional resonance. Why should anyone care to click `RW Aurigae (T Tau)`?
+
+**The Human-First Re-Framing:**
+Every benchmark must tell a 1-sentence physical story that sparks curiosity:
+
+| Current Cryptic Label | Human-First Narrative Label | The Intriguing 1-Sentence Hook |
+|:---|:---|:---|
+| `Barnard's Star (M4V)` | **The Cosmic Speed Demon** | *"Watch the fastest-moving star in the northern sky sprint across space at 10 arcseconds per year."* |
+| `WISE 0855-0714 (Y4)` | **The Frozen Brown Dwarf** | *"A star as cold as an ice cube (-10°C). It is completely invisible in optical light, but glows in SPHEREx mid-IR."* |
+| `Epsilon Indi B (T1+T6)` | **The Invisible Binary Pair** | *"Two twin worlds locked in an orbit so tight they blend into a single pixel. Can you separate their motion?"* |
+| `RW Aurigae (T Tau)` | **The Flashing Baby Star** | *"A chaotic newborn sun surrounded by dust clouds that violently block 75% of its light across seasons."* |
+| `R Draconis (Mira)` | **The Beating Giant Heart** | *"A massive red giant star that expands, contracts, and pulses in brightness every 245 days."* |
+
+---
+
+### 10.3 The Jargon Wall Audit: What to Strip / Translate
+
+| Jargon Currently in UI | What It Actually Means in Human English | Action Required |
+|:---|:---|:---|
+| `HDU 6 WCS-WAVE` | **SPHEREx 102-Color Infrared Spectrum** | Replace header title with plain English. |
+| `Asinh stretch factor (a = 0.001)` | **Contrast / Faint Target Boost** | Relabel slider: Low Contrast $\longleftrightarrow$ Max Faint Boost. |
+| `Beer-Lambert tau = -ln(F_obs/F_cont)` | **Ice Absorption Depth** | Remove formula from title; explain as *"How much light is blocked by interstellar ice."* |
+| `Signed diff (t_N - t_0)` | **Motion Subtraction Mode (Stationary stars vanish, movers leave dipoles)** | Add explanatory subtitle below button. |
+| `Epoch x Band Coverage Matrix` | **Survey Passes (Time) × Infrared Colors (Wavelength)** | Add descriptive column and row group labels. |
+| `Native TAN North-Up` | **Standard Sky Alignment (North is Up, East is Left)** | Move to tooltip; keep HUD clean. |
+| `MJD 60810` | **May 15, 2025 (Survey Pass 1)** | Show human calendar dates first, MJD in subtle mono. |
+| `A-values (cm/molecule)` | **Laboratory Ice Absorption Strength** | Move to table footnote; label column *"Absorption Power"*. |
