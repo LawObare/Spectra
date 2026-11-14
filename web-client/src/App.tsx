@@ -100,7 +100,7 @@ export const PublicExplorerPortal: React.FC = () => {
   });
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-space-950 font-mono text-gray-100">
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-[#080A0F] font-sans text-[#E6ECF2]">
       {/* Fixed Global Command Header (56px) - hidden when embedded */}
       {!isEmbed && (
         <GlobalCommandHeader
@@ -115,24 +115,24 @@ export const PublicExplorerPortal: React.FC = () => {
       />
 
       {/* Active Tab Workspace */}
-      <main className="relative flex-1 overflow-hidden">
+      <main className={`relative flex-1 overflow-hidden ${!isEmbed ? 'pt-[56px]' : ''}`}>
         {tab === 'navigator' && <CelestialNavigator />}
 
         {tab === 'comparator' && (
-          <div className="flex h-full w-full flex-col items-center justify-center bg-space-950 p-6 text-center">
-            <div className="max-w-md rounded-lg border border-space-800 bg-space-900/80 p-6 backdrop-blur">
-              <span className="text-xs uppercase tracking-widest text-telemetry-cyan font-bold">
-                Tab 2 // Time-Domain Comparator
-              </span>
-              <p className="mt-3 text-sm text-gray-400">
-                Awaiting E3 WebGL2 Float32 multi-epoch shader pipeline integration (#17, #18).
+          <div className="flex h-full w-full flex-col items-center justify-center bg-[#080A0F] p-6">
+            <div className="w-full max-w-md rounded-sm border border-[#1E2530] bg-[#0F131A] p-6 text-left">
+              <h2 className="text-sm font-semibold text-[#E6ECF2]">
+                Time-domain comparator
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-[#94A3B8]">
+                Target coordinates <span className="font-mono tabular-nums text-[#E6ECF2]">{urlRa.toFixed(5)}°, {urlDec.toFixed(5)}°</span> at <span className="font-mono tabular-nums text-[#E6ECF2]">{urlFov}&quot;</span> cutout field of view are staged in the telemetry store. Multi-epoch WebGL2 Float32 canvas mounts here (Issues #17, #18).
               </p>
-              <div className="mt-5 flex justify-center">
+              <div className="mt-5">
                 <a
                   href="/explore?tab=navigator"
-                  className="rounded border border-telemetry-cyan/40 bg-telemetry-cyan/10 px-3 py-1.5 text-xs text-telemetry-cyan hover:bg-telemetry-cyan/20 transition-colors"
+                  className="inline-block rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-1.5 text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:bg-[#38BDF8]/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
                 >
-                  ← Return to 3D Navigator
+                  Return to sky view
                 </a>
               </div>
             </div>
@@ -140,20 +140,20 @@ export const PublicExplorerPortal: React.FC = () => {
         )}
 
         {tab === 'spectral' && (
-          <div className="flex h-full w-full flex-col items-center justify-center bg-space-950 p-6 text-center">
-            <div className="max-w-md rounded-lg border border-space-800 bg-space-900/80 p-6 backdrop-blur">
-              <span className="text-xs uppercase tracking-widest text-telemetry-amber font-bold">
-                Tab 3 // Spectrophotometric Lab
-              </span>
-              <p className="mt-3 text-sm text-gray-400">
-                Awaiting E5 uPlot 102-channel spectrophotometry integration (#20, #21).
+          <div className="flex h-full w-full flex-col items-center justify-center bg-[#080A0F] p-6">
+            <div className="w-full max-w-md rounded-sm border border-[#1E2530] bg-[#0F131A] p-6 text-left">
+              <h2 className="text-sm font-semibold text-[#E6ECF2]">
+                Spectrophotometric lab
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-[#94A3B8]">
+                102-channel WCS-WAVE spectral extraction and uPlot canvas for <span className="font-mono tabular-nums text-[#E6ECF2]">{urlRa.toFixed(5)}°, {urlDec.toFixed(5)}°</span> mounts here (Issues #20, #21).
               </p>
-              <div className="mt-5 flex justify-center">
+              <div className="mt-5">
                 <a
                   href="/explore?tab=navigator"
-                  className="rounded border border-space-700 bg-space-800 px-3 py-1.5 text-xs text-gray-300 hover:text-white transition-colors"
+                  className="inline-block rounded-sm border border-[#1E2530] bg-[#151B24] px-3 py-1.5 text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
                 >
-                  ← Return to 3D Navigator
+                  Return to sky view
                 </a>
               </div>
             </div>
@@ -161,20 +161,20 @@ export const PublicExplorerPortal: React.FC = () => {
         )}
 
         {tab === 'ice' && (
-          <div className="flex h-full w-full flex-col items-center justify-center bg-space-950 p-6 text-center">
-            <div className="max-w-md rounded-lg border border-space-800 bg-space-900/80 p-6 backdrop-blur">
-              <span className="text-xs uppercase tracking-widest text-telemetry-cyan font-bold">
-                Tab 4 // Molecular & Ice Studio
-              </span>
-              <p className="mt-3 text-sm text-gray-400">
-                Awaiting E5 SPLICES point-source ice column density integration (#25).
+          <div className="flex h-full w-full flex-col items-center justify-center bg-[#080A0F] p-6">
+            <div className="w-full max-w-md rounded-sm border border-[#1E2530] bg-[#0F131A] p-6 text-left">
+              <h2 className="text-sm font-semibold text-[#E6ECF2]">
+                Molecular and ice studio
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-[#94A3B8]">
+                SPLICES point-source optical depth and laboratory A-value column density integrator for <span className="font-mono tabular-nums text-[#E6ECF2]">{urlRa.toFixed(5)}°, {urlDec.toFixed(5)}°</span> mounts here (Issue #25).
               </p>
-              <div className="mt-5 flex justify-center">
+              <div className="mt-5">
                 <a
                   href="/explore?tab=navigator"
-                  className="rounded border border-space-700 bg-space-800 px-3 py-1.5 text-xs text-gray-300 hover:text-white transition-colors"
+                  className="inline-block rounded-sm border border-[#1E2530] bg-[#151B24] px-3 py-1.5 text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
                 >
-                  ← Return to 3D Navigator
+                  Return to sky view
                 </a>
               </div>
             </div>
@@ -182,20 +182,20 @@ export const PublicExplorerPortal: React.FC = () => {
         )}
 
         {tab === 'discussions' && (
-          <div className="flex h-full w-full flex-col items-center justify-center bg-space-950 p-6 text-center">
-            <div className="max-w-md rounded-lg border border-space-800 bg-space-900/80 p-6 backdrop-blur">
-              <span className="text-xs uppercase tracking-widest text-purple-400 font-bold">
-                Tab 5 // Observation Discussions
-              </span>
-              <p className="mt-3 text-sm text-gray-400">
-                Phase 2 Community Intelligence Hub (Gated behind Phase 1 Milestone Gate 1, #23).
+          <div className="flex h-full w-full flex-col items-center justify-center bg-[#080A0F] p-6">
+            <div className="w-full max-w-md rounded-sm border border-[#1E2530] bg-[#0F131A] p-6 text-left">
+              <h2 className="text-sm font-semibold text-[#E6ECF2]">
+                Observation discussions
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-[#94A3B8]">
+                Real-time SSE community feed and external archive cross-match deck (Phase 2, Issue #23).
               </p>
-              <div className="mt-5 flex justify-center">
+              <div className="mt-5">
                 <a
                   href="/explore?tab=navigator"
-                  className="rounded border border-space-700 bg-space-800 px-3 py-1.5 text-xs text-gray-300 hover:text-white transition-colors"
+                  className="inline-block rounded-sm border border-[#1E2530] bg-[#151B24] px-3 py-1.5 text-xs font-medium text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
                 >
-                  ← Return to 3D Navigator
+                  Return to sky view
                 </a>
               </div>
             </div>
@@ -209,8 +209,8 @@ export const PublicExplorerPortal: React.FC = () => {
 // Lazy-loaded administrative route chunk (SPECIFICATION.md §6.1.1: Physical chunk isolation)
 const AdminMissionControl = lazy(async () => ({
   default: () => (
-    <div className="flex min-h-screen items-center justify-center bg-[#090C10] font-mono text-amber-400">
-      INITIALIZING SPECTRA ADMIN MISSION CONTROL...
+    <div className="flex min-h-dvh items-center justify-center bg-[#080A0F] font-sans text-xs text-[#94A3B8]">
+      Loading administrative mission control...
     </div>
   ),
 }));
@@ -222,8 +222,8 @@ export default function App() {
         <BrowserRouter>
           <Suspense
             fallback={
-              <div className="flex min-h-screen items-center justify-center bg-[#090C10] font-mono text-[#00F0FF]">
-                INITIALIZING SPECTRA WORKBENCH...
+              <div className="flex min-h-dvh items-center justify-center bg-[#080A0F] font-sans text-xs text-[#94A3B8]">
+                Loading Spectra workbench...
               </div>
             }
           >
