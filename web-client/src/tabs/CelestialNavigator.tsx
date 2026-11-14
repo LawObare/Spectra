@@ -130,29 +130,22 @@ interface IrsaExposure {
 }
 
 function parseIrsaSiaResponse(payload: unknown): IrsaExposure[] {
-  if (!payload || typeof payload !== 'object') throw new Error('IRSA returned an invalid coverage response.');
-  const table = payload as { metadata?: Array<{ name?: string }>; data?: unknown[] };
-  if (!Array.isArray(table.data)) throw new Error('IRSA coverage response is missing its results table.');
-  const metadata = table.metadata || [];
-  const rows = table.data;
+  if (!payload || typeof payload !== 'object') throw new Error('Coverage API returned an invalid response.');
+  const exposures = (payload as { exposures?: unknown }).exposures;
+  if (!Array.isArray(exposures)) throw new Error('Coverage API response is missing its exposure list.');
 
-  return rows.flatMap((row, index) => {
-    const values = Array.isArray(row)
-      ? Object.fromEntries(metadata.map((column, columnIndex) => [
-          String(column.name || '').toLowerCase(),
-          row[columnIndex],
-        ]))
-      : row && typeof row === 'object'
-        ? Object.fromEntries(Object.entries(row).map(([key, value]) => [key.toLowerCase(), value]))
-        : {};
-    const accessUrl = String(values.access_url || values.accessurl || '');
+  return exposures.flatMap((exposure, index) => {
+    if (!exposure || typeof exposure !== 'object') return [];
+    const values = Object.fromEntries(
+      Object.entries(exposure).map(([key, value]) => [key.toLowerCase(), value])
+    );
+    const accessUrl = String(values.access_url || '');
     if (!accessUrl.startsWith('https://')) return [];
-
     return [{
-      obsId: String(values.obs_id || values.obsid || values.id || `IRSA-${index + 1}`),
-      detector: String(values.instrument_name || values.bandpassname || values.energy_bandpassname || 'SPHEREx'),
-      mjd: String(values.t_min || values.mjd_obs || ''),
-      wavelength: String(values.energy_bandpassname || values.em_min || ''),
+      obsId: String(values.obs_id || `IRSA-${index + 1}`),
+      detector: String(values.instrument_name || values.energy_bandpassname || 'SPHEREx'),
+      mjd: String(values.t_min || ''),
+      wavelength: String(values.energy_bandpassname || ''),
       accessUrl,
       sRegion: String(values.s_region || ''),
     }];
@@ -386,7 +379,7 @@ export const CelestialNavigator: React.FC = () => {
   const [aladinReady, setAladinReady] = useState<boolean>(false);
   const [archiveExposures, setArchiveExposures] = useState<IrsaExposure[]>([]);
   const [cachedRegions, setCachedRegions] = useState<Array<{ ra: number; dec: number; fov_arcsec: number }>>([]);
-  const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'partial' | 'empty' | 'error'>('loading');
   const [gaiaStatus, setGaiaStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
   const [skybotStatus, setSkybotStatus] = useState<'loading' | 'live' | 'cached_only' | 'unavailable'>('loading');
   const [showSyntheticPreview, setShowSyntheticPreview] = useState<boolean>(false);
@@ -454,28 +447,22 @@ export const CelestialNavigator: React.FC = () => {
       setArchiveStatus('loading');
       const radiusDeg = Math.max(displayFovDeg / Math.SQRT2, fovArcsec / 7200, 30 / 3600);
       const params = new URLSearchParams({
-        POS: `CIRCLE ${ra} ${dec} ${radiusDeg}`,
-        CALIB: '2',
-        MAXREC: '500',
-        RESPONSEFORMAT: 'JSON',
+        ra: String(ra),
+        dec: String(dec),
+        radius_deg: String(radiusDeg),
       });
-      params.append('COLLECTION', 'spherex_qr2');
-      params.append('COLLECTION', 'spherex_qr3');
 
       try {
-        const response = await fetch(`https://irsa.ipac.caltech.edu/SIA?${params}`, {
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(`IRSA SIA returned ${response.status}`);
+        const response = await fetch(`/api/coverage?${params}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`Coverage API returned ${response.status}`);
         const payload = await response.json();
         const results = parseIrsaSiaResponse(payload);
-        const rows = (payload as { data: unknown[] }).data;
-        if (rows.length > 0 && results.length === 0) {
-          throw new Error('IRSA returned exposures without usable HTTPS data URLs.');
-        }
+        const coverageStatus = (payload as { status?: string }).status;
         if (active) {
           setArchiveExposures(results);
-          setArchiveStatus(results.length > 0 ? 'ready' : 'empty');
+          setArchiveStatus(coverageStatus === 'partial'
+            ? 'partial'
+            : coverageStatus === 'empty' ? 'empty' : results.length > 0 ? 'ready' : 'empty');
         }
       } catch (error) {
         if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
@@ -1297,6 +1284,7 @@ export const CelestialNavigator: React.FC = () => {
               <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-yellow-400/70" />
               {archiveStatus === 'loading' && 'Available (searching…)'}
               {archiveStatus === 'error' && 'Available (unavailable)'}
+              {archiveStatus === 'partial' && `Available (${archiveExposures.length} · partial)`}
               {(archiveStatus === 'ready' || archiveStatus === 'empty') && `Available (${archiveExposures.length})`}
             </Button>
             <Button
@@ -1668,6 +1656,7 @@ export const CelestialNavigator: React.FC = () => {
             <span className="text-[10px] text-muted-foreground">
               {archiveStatus === 'loading' && 'Searching IRSA…'}
               {archiveStatus === 'ready' && '[IRSA Live (spherex_qr2 + spherex_qr3)]'}
+              {archiveStatus === 'partial' && 'Some IRSA releases unavailable · showing returned coverage'}
               {archiveStatus === 'empty' && 'No released exposure intersects this cutout'}
               {archiveStatus === 'error' && 'IRSA search unavailable · retry after network access returns'}
             </span>
