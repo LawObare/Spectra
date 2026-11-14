@@ -78,23 +78,6 @@ const BANDS = [
   { id: 'D6', name: 'D6 (4.7 µm)', wavelengthUm: 4.71, resPower: 130 },
 ];
 
-// Deterministic Mulberry32 + Box-Muller Gaussian PRNG (replaces linear modulo lattice pattern)
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function sampleBoxMullerGaussian(rng: () => number, sigma: number): number {
-  const u1 = Math.max(1e-7, rng());
-  const u2 = rng();
-  return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2) * sigma;
-}
-
 function getPlaneMaxNExp(plane: Uint16Array | null | undefined): number {
   if (!plane || plane.length === 0) return 0;
   let max = 0;
@@ -129,6 +112,86 @@ function pickObservedCell(
 }
 
 const CANVAS_PIXEL_DIM = 29; // Standard 29x29 cutout stamp (~180" FoV at 6.2"/px)
+
+export interface DecodedSectionTensor {
+  fluxData: Float32Array[][];
+  varData: Float32Array[][];
+  flagsData: Uint32Array[][];
+  nExpData: Uint16Array[][];
+  width: number;
+  height: number;
+  epochs: number;
+  isSimulated: boolean;
+  sourceBadge: string;
+  wcs?: { crval: [number, number]; cdelt: [number, number]; crpix: [number, number] };
+  mjdRanges?: number[][][];
+  exposureIds?: string[][] | string[];
+}
+
+const MAX_DECODED_TENSOR_CACHE = 8;
+const DECODED_TENSOR_LRU = new Map<string, { parsed: DecodedSectionTensor; sourceBadge: string }>();
+
+function getSectionTensorCacheKey(section: InstalledSection): string {
+  return `${section.section_id}:${section.updated_at || section.size_bytes}`;
+}
+
+function getCachedDecodedTensor(
+  key: string
+): { parsed: DecodedSectionTensor; sourceBadge: string } | null {
+  const hit = DECODED_TENSOR_LRU.get(key);
+  if (!hit) return null;
+  DECODED_TENSOR_LRU.delete(key);
+  DECODED_TENSOR_LRU.set(key, hit);
+  return hit;
+}
+
+function setCachedDecodedTensor(
+  key: string,
+  value: { parsed: DecodedSectionTensor; sourceBadge: string }
+): void {
+  if (DECODED_TENSOR_LRU.has(key)) {
+    DECODED_TENSOR_LRU.delete(key);
+  } else if (DECODED_TENSOR_LRU.size >= MAX_DECODED_TENSOR_CACHE) {
+    const oldestKey = DECODED_TENSOR_LRU.keys().next().value;
+    if (oldestKey !== undefined) {
+      DECODED_TENSOR_LRU.delete(oldestKey);
+    }
+  }
+  DECODED_TENSOR_LRU.set(key, value);
+}
+
+const ComparatorHoverHud: React.FC<{
+  setterRef: React.MutableRefObject<((info: HoverPixelInfo | null) => void) | null>;
+}> = React.memo(({ setterRef }) => {
+  const [hoverPixel, setHoverPixel] = useState<HoverPixelInfo | null>(null);
+
+  useEffect(() => {
+    setterRef.current = setHoverPixel;
+    return () => {
+      if (setterRef.current === setHoverPixel) {
+        setterRef.current = null;
+      }
+    };
+  }, [setterRef]);
+
+  return (
+    <div>
+      {hoverPixel ? (
+        <span>
+          Cursor: <span className="text-white">[{hoverPixel.x}, {hoverPixel.y}]</span> |{' '}
+          Flux: <span className="text-sky-400">{hoverPixel.flux.toFixed(2)} MJy/sr</span> |{' '}
+          SNR: <span className="text-emerald-400">{hoverPixel.snr.toFixed(1)}</span> |{' '}
+          FLAGS:{' '}
+          <span className={hoverPixel.flags ? 'text-amber-400' : 'text-neutral-400'}>
+            0x{hoverPixel.flags.toString(16).padStart(3, '0')} ({hoverPixel.flagNames.join(', ')})
+          </span>
+        </span>
+      ) : (
+        <span>Hover over canvas to inspect pixel flux, SNR, and HDU 2 flags.</span>
+      )}
+    </div>
+  );
+});
 
 export interface TimeDomainComparatorProps {
   onOpenCatalog?: () => void;
@@ -220,7 +283,10 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [activeBandIndex, setActiveBandIndex] = useState<number>(4); // Default to Band D5 (index 4)
   const activeBandRef = useRef<number>(activeBandIndex);
   activeBandRef.current = activeBandIndex;
-  const [hoverPixel, setHoverPixel] = useState<HoverPixelInfo | null>(null);
+  const hoverHudSetterRef = useRef<((info: HoverPixelInfo | null) => void) | null>(null);
+  const handlePixelHover = useCallback((info: HoverPixelInfo | null) => {
+    hoverHudSetterRef.current?.(info);
+  }, []);
   const [measuringMotion, setMeasuringMotion] = useState<boolean>(false);
   const [motionPoints, setMotionPoints] = useState<Array<{ x: number; y: number; epoch: number }>>([]);
   const [motionResult, setMotionResult] = useState<{
@@ -235,26 +301,15 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [triageConfidence, setTriageConfidence] = useState<number>(85);
   const [triageSubmitted, setTriageSubmitted] = useState<boolean>(false);
   const [isSubmittingClassification, setIsSubmittingClassification] = useState<boolean>(false);
-  const [loadedTensor, setLoadedTensor] = useState<{
-    fluxData: Float32Array[][];
-    varData: Float32Array[][];
-    flagsData: Uint32Array[][];
-    nExpData: Uint16Array[][];
-    width: number;
-    height: number;
-    epochs: number;
-    isSimulated: boolean;
-    sourceBadge: string;
-    wcs?: { crval: [number, number]; cdelt: [number, number]; crpix: [number, number] };
-    mjdRanges?: number[][][];
-    exposureIds?: string[][] | string[];
-  } | null>(null);
+  const [loadedTensor, setLoadedTensor] = useState<DecodedSectionTensor | null>(null);
   const [dataStatus, setDataStatus] = useState<'loading' | 'error' | 'ready' | 'uninstalled'>('loading');
   const [dataMessage, setDataMessage] = useState('Checking installed cutout sections…');
   const [dataProgress, setDataProgress] = useState(0);
   const [loadedCutoutCount, setLoadedCutoutCount] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const { installedSections } = useInstalledSectionState();
+  const installedSectionsRef = useRef(installedSections);
+  installedSectionsRef.current = installedSections;
   const { downloadingMeta } = useDownloadingSummary();
   const [activeInstalledSection, setActiveInstalledSection] = useState<InstalledSection | null>(null);
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
@@ -452,125 +507,17 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     return () => clearInterval(interval);
   }, [isPlaying, activeEpochIndex, playbackSpeedMs, setEpochIndex, surveyPasses.length]);
 
-  // Legacy procedural model is retained for explicit offline workflows; the live viewer never renders it.
-  const scienceTensors = useMemo(() => {
-    const epochsCount = DISCRETE_SURVEY_PASSES.length;
-    const bandsCount = BANDS.length;
-    const totalPixels = CANVAS_PIXEL_DIM * CANVAS_PIXEL_DIM;
-
-    const fluxData: Float32Array[][] = [];
-    const varData: Float32Array[][] = [];
-    const flagsData: Uint32Array[][] = [];
-    const nExpData: Uint16Array[][] = [];
-
-    const centerPx = (CANVAS_PIXEL_DIM - 1) / 2;
-    const pixelScale = 6.2; // arcsec/pixel
-    const zodiBgPerBand = [0.028, 0.032, 0.030, 0.055, 0.125, 0.210];
-    const rng = mulberry32(Math.abs(Math.round(urlRa * 1000 + urlDec * 1000)) || 1337);
-
-    // FWHM = 1.2 px (~7.44" at 6.2"/px) => sigma = FWHM / (2 * sqrt(2 * ln 2)) = 1.2 / 2.35482 ≈ 0.51 px
-    const fwhmPx = 1.2;
-    const sigmaPx = fwhmPx / 2.35482;
-    const twoSigmaSq = 2 * sigmaPx * sigmaPx;
-
-    for (let e = 0; e < epochsCount; e++) {
-      fluxData[e] = [];
-      varData[e] = [];
-      flagsData[e] = [];
-      nExpData[e] = [];
-
-      const epochMjd = DISCRETE_SURVEY_PASSES[e].mjd;
-      const deltaYears = (epochMjd - DISCRETE_SURVEY_PASSES[0].mjd) / 365.25;
-
-      for (let b = 0; b < bandsCount; b++) {
-        const fluxPlane = new Float32Array(totalPixels);
-        const varPlane = new Float32Array(totalPixels);
-        const flagsPlane = new Uint32Array(totalPixels);
-        const nExpPlane = new Uint16Array(totalPixels);
-
-        const baseNoise = 0.35 + b * 0.08;
-        const baseVar = baseNoise * baseNoise;
-        const noiseSigma = 0.015 + b * 0.004;
-        const zodiBg = zodiBgPerBand[b] || 0.04;
-
-        let targetX = centerPx;
-        let targetY = centerPx;
-        let peakFlux = 8.0;
-        let isUndetected = false;
-        let isSaturated = false;
-        let passExposures = 18;
-
-        if (activeBenchmark?.id === 'barnard') {
-          targetY = centerPx + (10.39 * deltaYears) / pixelScale;
-          peakFlux = [25.0, 32.0, 20.0, 12.0, 7.0, 4.5][b] || 12.0;
-          if (b <= 1) isSaturated = true;
-          passExposures = [24, 23, 18, 25, 22, 18][b] || 20;
-        } else if (activeBenchmark?.id === 'wise0855') {
-          targetX = centerPx - (8.15 * deltaYears) / pixelScale;
-          if (b <= 2) {
-            isUndetected = true;
-            peakFlux = 0.02;
-          } else {
-            peakFlux = b >= 4 ? 1.85 : 0.45;
-          }
-          passExposures = [22, 33, 24, 22, 33, 22][b] || 22;
-        } else if (activeBenchmark?.id === 'eps_indi_b') {
-          targetX = centerPx + (3.98 * deltaYears) / pixelScale;
-          targetY = centerPx + (-2.47 * deltaYears) / pixelScale;
-          peakFlux = [6.5, 4.2, 3.8, 5.0, 7.2, 5.8][b] || 5.5;
-          passExposures = [26, 64, 52, 25, 51, 48][b] || 30;
-        } else if (activeBenchmark?.id === 'rw_aur') {
-          const dimming = e === 0 ? 1.0 : 0.24;
-          peakFlux = ([18.0, 16.5, 14.0, 12.5, 11.0, 9.5][b] || 12.0) * dimming;
-          passExposures = 19;
-        } else if (activeBenchmark?.id === 'r_dra') {
-          const cycle = [1.0, 0.22, 0.88][e] || 0.6;
-          peakFlux = ([12.0, 15.0, 17.5, 14.0, 11.5, 9.0][b] || 12.0) * cycle;
-          passExposures = [69, 76, 50, 67, 75, 46][b] || 55;
-        }
-
-        for (let y = 0; y < CANVAS_PIXEL_DIM; y++) {
-          for (let x = 0; x < CANVAS_PIXEL_DIM; x++) {
-            const idx = y * CANVAS_PIXEL_DIM + x;
-
-            // Outer border reference pixels -> Bit 5 REFERENCE
-            if (x === 0 || x === CANVAS_PIXEL_DIM - 1 || y === 0 || y === CANVAS_PIXEL_DIM - 1) {
-              flagsPlane[idx] |= 32;
-            }
-
-            // Box-Muller Gaussian sky + read noise (free of modulo lattice stripes)
-            const gaussNoise = sampleBoxMullerGaussian(rng, noiseSigma);
-            const dx = x - targetX;
-            const dy = y - targetY;
-            const distSq = dx * dx + dy * dy;
-            const psfFlux = isUndetected ? 0.0 : peakFlux * Math.exp(-distSq / twoSigmaSq);
-            const flux = zodiBg + psfFlux + gaussNoise;
-
-            fluxPlane[idx] = flux;
-            // Spatially varying variance: read/zodi variance + Poisson photon shot noise
-            const flatJitter = 1.0 + 0.05 * Math.sin(0.41 * x + 0.29 * y);
-            varPlane[idx] = Math.max(
-              0.005,
-              (baseVar * flatJitter) / Math.max(1, Math.floor(passExposures / 6)) +
-                0.018 * Math.max(0, flux)
-            );
-            nExpPlane[idx] = isUndetected ? 0 : passExposures;
-
-            if (!isUndetected && isSaturated && distSq < 0.8) {
-              flagsPlane[idx] |= 2;
-            }
-          }
-        }
-
-        fluxData[e][b] = fluxPlane;
-        varData[e][b] = varPlane;
-        flagsData[e][b] = flagsPlane;
-        nExpData[e][b] = nExpPlane;
-      }
-    }
-
-    return { fluxData, varData, flagsData, nExpData, isSimulated: true };
-  }, [activeBenchmark, urlRa, urlDec]);
+  // Legacy procedural generator removed from mount path because live view requires a decoded tensor.
+  const scienceTensors = useMemo(
+    () => ({
+      fluxData: [] as Float32Array[][],
+      varData: [] as Float32Array[][],
+      flagsData: [] as Uint32Array[][],
+      nExpData: [] as Uint16Array[][],
+      isSimulated: true,
+    }),
+    []
+  );
 
   // Load binary tensor from pre-cached .f32 bundle OR live backend /api/cutout pipeline
   useEffect(() => {
@@ -659,14 +606,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     };
 
     const loadCutoutTensor = async () => {
-      setDataStatus('loading');
-      setDataProgress(0);
-      setLoadedCutoutCount(0);
-      setDataMessage('Checking installed cutout sections…');
-      setLoadedTensor(null);
-      setEpochIndex(0);
       const applyLoadedTensor = (
-        parsed: ReturnType<typeof mapDecodedTensor>,
+        parsed: DecodedSectionTensor,
         badge: string
       ) => {
         if (cancelled) return;
@@ -683,15 +624,35 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         setEpochIndex(firstCell.epochIndex);
       };
 
+      const quickMatch = findMatchingSection(installedSectionsRef.current, urlRa, urlDec, urlFov || 300);
+      const quickCacheKey = quickMatch ? getSectionTensorCacheKey(quickMatch) : null;
+      const quickCached = quickCacheKey ? getCachedDecodedTensor(quickCacheKey) : null;
+      if (quickMatch && quickCached) {
+        setActiveInstalledSection(quickMatch);
+        applyLoadedTensor(quickCached.parsed, quickCached.sourceBadge);
+      } else {
+        setDataStatus('loading');
+        setDataProgress(0);
+        setLoadedCutoutCount(0);
+        setDataMessage('Checking installed cutout sections…');
+        setLoadedTensor(null);
+        setEpochIndex(0);
+      }
+
       try {
         // 1. Check installed sections first so tabs never re-query IRSA unnecessarily
         let sections: InstalledSection[] = [];
+        let fetchedSectionsOk = false;
         try {
           sections = await fetchInstalledSections(requestController.signal);
+          fetchedSectionsOk = true;
         } catch {
-          // If backend list is unreachable, fall back cleanly
+          // If backend list is unreachable, preserve an already-cached view or fall back cleanly
         }
         if (cancelled) return;
+        if (quickMatch && quickCached && !fetchedSectionsOk) {
+          return;
+        }
 
         let matchedSection = findMatchingSection(sections, urlRa, urlDec, urlFov || 300);
 
@@ -729,9 +690,19 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
         if (matchedSection) {
           setActiveInstalledSection(matchedSection);
+          const sectionCacheKey = getSectionTensorCacheKey(matchedSection);
+          if (quickCached && quickCacheKey === sectionCacheKey) {
+            return;
+          }
+          const memHit = getCachedDecodedTensor(sectionCacheKey);
+          if (memHit) {
+            applyLoadedTensor(memHit.parsed, memHit.sourceBadge);
+            return;
+          }
           setDataMessage(`Loading installed section "${matchedSection.label}"…`);
           setDataProgress(0.4);
-          const secRes = await fetch(`/api/sections/${matchedSection.section_id}/tensor`, {
+          const versionParam = encodeURIComponent(String(matchedSection.updated_at || matchedSection.size_bytes));
+          const secRes = await fetch(`/api/sections/${matchedSection.section_id}/tensor?v=${versionParam}`, {
             signal: requestController.signal,
           });
           if (secRes.ok) {
@@ -743,11 +714,13 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               ? parsed.sourceBadge
               : `[Installed] ${parsed.sourceBadge}`;
             parsed.sourceBadge = installedBadge;
+            setCachedDecodedTensor(sectionCacheKey, { parsed, sourceBadge: installedBadge });
             applyLoadedTensor(parsed, installedBadge);
             return;
           }
         } else if (!cancelled) {
           setActiveInstalledSection(null);
+          setLoadedTensor(null);
         }
 
         // 2. Do NOT auto-query IRSA on tab switch unless the user explicitly clicked Query Live
@@ -1376,7 +1349,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               rgbBandsData={activeRgbPreset === 'custom' ? null : null}
               isFrameZero={safeEpochIndex === referenceEpochIndex}
               gaiaPin={gaiaReticle}
-              onPixelHover={setHoverPixel}
+              onPixelHover={handlePixelHover}
               onPixelClick={handlePixelClick}
               smooth={isSmoothRendering}
               className="h-full w-full"
@@ -1530,21 +1503,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
           {/* Live Hover HUD Strip */}
           <div className="mt-3 flex items-center justify-between border-t border-neutral-800/80 pt-2 font-mono tabular-nums text-xs text-neutral-400">
-            <div>
-              {hoverPixel ? (
-                <span>
-                  Cursor: <span className="text-white">[{hoverPixel.x}, {hoverPixel.y}]</span> |{' '}
-                  Flux: <span className="text-sky-400">{hoverPixel.flux.toFixed(2)} MJy/sr</span> |{' '}
-                  SNR: <span className="text-emerald-400">{hoverPixel.snr.toFixed(1)}</span> |{' '}
-                  FLAGS:{' '}
-                  <span className={hoverPixel.flags ? 'text-amber-400' : 'text-neutral-400'}>
-                    0x{hoverPixel.flags.toString(16).padStart(3, '0')} ({hoverPixel.flagNames.join(', ')})
-                  </span>
-                </span>
-              ) : (
-                <span>Hover over canvas to inspect pixel flux, SNR, and HDU 2 flags.</span>
-              )}
-            </div>
+            <ComparatorHoverHud setterRef={hoverHudSetterRef} />
 
             <div className="text-[11px] text-neutral-500">
               Pixel scale: <span className="text-white">6.2&quot;/px</span> | Native TAN North-Up
