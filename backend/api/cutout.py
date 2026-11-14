@@ -371,6 +371,26 @@ async def get_cutout_tensor(task_id: str) -> Response:
     )
 
 
+@router.get("/cutout/{task_id}/partial-tensor")
+async def get_partial_cutout_tensor(task_id: str) -> Response:
+    """Return the first valid real cutout snapshot while the task continues."""
+    if task_id not in task_states:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    cached = await tensor_cache.get(f"partial:{task_id}")
+    if cached is None:
+        raise HTTPException(status_code=202, detail="No valid partial cutout is ready yet")
+    tensor_bytes, metadata = cached
+    return Response(
+        content=tensor_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "X-Partial": "true",
+            "X-Compression": (metadata or {}).get("compression", "none"),
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
 def _pack_plane(flux, variance, flags, n_exp) -> bytes:
     """Pack 14 bytes/pixel little-endian: F32, F32, U32, U16."""
     n = flux.size
@@ -447,6 +467,127 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
         # Load the requested IRSA release and build epochs from its actual exposures.
         loaded_live_irsa = False
         live_error = None
+        candidate_exps: list[dict[str, Any]] = []
+        partial_publish_lock = asyncio.Lock()
+        partial_reference_wavelengths: dict[str, float] = {}
+        partial_reprojected: list[Any] = []
+        partial_reprojected_ids: set[tuple[str, str]] = set()
+
+        def candidate_identity(exposure: dict[str, Any]) -> tuple[str, str]:
+            return (str(exposure.get("collection") or ""), str(exposure["exposure_id"]))
+
+        def candidate_from_exposure(exposure: dict[str, Any]) -> dict[str, Any] | None:
+            cutout_mef = exposure.get("cutout") or {}
+            img = cutout_mef.get("hdu1_image")
+            header = cutout_mef.get("hdu1_header")
+            band = str(exposure.get("band") or "UNKNOWN").upper()
+            variance = cutout_mef.get("hdu3_variance")
+            flags = cutout_mef.get("hdu2_flags")
+            wave_tab = cutout_mef.get("hdu6_wave_tab")
+            if (
+                img is None
+                or header is None
+                or variance is None
+                or flags is None
+                or wave_tab is None
+                or band not in {f"D{i}" for i in range(1, 7)}
+            ):
+                return None
+            return {
+                "flux": img,
+                "variance": variance,
+                "flags": flags,
+                "cutout_header": header,
+                "wave_tab": wave_tab,
+                "band": band,
+                "epoch": str(exposure["epoch"]),
+                "mjd": float(exposure["mjd"]),
+                "exposure_id": str(exposure["exposure_id"]),
+                "collection": exposure.get("collection"),
+            }
+
+        async def publish_partial_cutout(exposure: dict[str, Any]) -> None:
+            candidate = candidate_from_exposure(exposure)
+            if candidate is None:
+                return
+            async with partial_publish_lock:
+                candidate_exps.append(candidate)
+                matched_res = await asyncio.to_thread(
+                    filter_wavelength_matched_exposures,
+                    candidate_exps,
+                    ra,
+                    dec,
+                    adaptive_window=adaptive_window,
+                    reference_wavelengths=partial_reference_wavelengths,
+                )
+                for band, provenance in matched_res.band_provenance.items():
+                    partial_reference_wavelengths.setdefault(
+                        band, provenance.reference_wavelength_um
+                    )
+                if not matched_res.matched_exposures:
+                    return
+                new_matches = [
+                    item
+                    for item in matched_res.matched_exposures
+                    if candidate_identity(item) not in partial_reprojected_ids
+                ]
+                if not new_matches:
+                    return
+                master_wcs, _, shape_out = build_master_wcs(
+                    ra, dec, min(fov_arcsec, 180)
+                )
+                async with _reprojection_semaphore:
+                    worker = asyncio.create_task(
+                        asyncio.to_thread(
+                            reproject_exposures_sync,
+                            new_matches,
+                            master_wcs,
+                            shape_out,
+                        )
+                    )
+                    try:
+                        reproj_list = await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        await asyncio.shield(worker)
+                        raise
+                partial_reprojected.extend(reproj_list)
+                partial_reprojected_ids.update(candidate_identity(item) for item in new_matches)
+                collections = sorted({source for source, _ in partial_reprojected_ids if source})
+                release = " + ".join(collections) or "spherex_qr2"
+                coadd = coadd_inverse_variance(
+                    partial_reprojected,
+                    master_wcs=master_wcs,
+                    shape_out=shape_out,
+                    source_badge=f"[IRSA Live ({release})]",
+                    release=release,
+                    fill_unobserved=np.nan,
+                )
+                coadd.metadata.update(
+                    {
+                        "is_simulated": False,
+                        "source_badge": f"[IRSA Live ({release})]",
+                        "exposure_count": len(partial_reprojected),
+                        "partial": True,
+                    }
+                )
+                partial_revision = int(
+                    task_states.get(task_id, {}).get("partial_revision", 0)
+                ) + 1
+                coadd.metadata["partial_revision"] = partial_revision
+                await tensor_cache.set(
+                    f"partial:{task_id}", coadd.to_bytes(compression="none"), coadd.metadata
+                )
+                task_states.setdefault(task_id, {}).update(
+                    {
+                        "partial_revision": partial_revision,
+                        "partial_exposure_count": len(partial_reprojected),
+                        "message": (
+                            f"Showing {len(partial_reprojected)} wavelength-matched cutouts; "
+                            "fetching the remaining observations"
+                        ),
+                    }
+                )
+
         if not (task_data.get("synth_a") or task_data.get("synth_b")):
             try:
                 ingest_res = await ingest_exposures_for_target(
@@ -455,39 +596,8 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                     fov_arcsec=fov_arcsec,
                     adaptive_window=adaptive_window,
                     progress_hook=update_stage,
+                    exposure_hook=publish_partial_cutout,
                 )
-                candidate_exps = []
-                for exposure in ingest_res.get("exposures", []):
-                    cutout_mef = exposure.get("cutout") or {}
-                    img = cutout_mef.get("hdu1_image")
-                    header = cutout_mef.get("hdu1_header")
-                    band = str(exposure.get("band") or "UNKNOWN").upper()
-                    variance = cutout_mef.get("hdu3_variance")
-                    flags = cutout_mef.get("hdu2_flags")
-                    wave_tab = cutout_mef.get("hdu6_wave_tab")
-                    if (
-                        img is None
-                        or header is None
-                        or variance is None
-                        or flags is None
-                        or wave_tab is None
-                        or band not in {f"D{i}" for i in range(1, 7)}
-                    ):
-                        continue
-                    candidate_exps.append(
-                        {
-                            "flux": img,
-                            "variance": variance,
-                            "flags": flags,
-                            "cutout_header": header,
-                            "wave_tab": wave_tab,
-                            "band": band,
-                            "epoch": str(exposure["epoch"]),
-                            "mjd": float(exposure["mjd"]),
-                            "exposure_id": str(exposure["exposure_id"]),
-                            "collection": exposure.get("collection"),
-                        }
-                    )
 
                 if candidate_exps:
                     await update_stage(
