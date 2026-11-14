@@ -174,6 +174,7 @@ class CalibratedSpectrum:
     flux_jy: list[float]
     variance_jy2: list[float]
     flags: list[int]
+    channel_coverage: list[bool]
     mjd_per_channel: list[float]
     mjd_span: list[float]
     is_simultaneous: bool
@@ -274,14 +275,15 @@ def bin_observations_to_102_channels(
     buckets: list[list[ChannelPoint]] = [[] for _ in range(n_chan)]
 
     for obs in observations:
-        idx = int(np.argmin(np.abs(grid_waves - obs.wavelength_um)))
-        buckets[idx].append(obs)
+        idx = _channel_for_observation(obs, grid_waves)
+        if idx is not None:
+            buckets[idx].append(obs)
 
     for i in range(n_chan):
         pts = buckets[i]
         if not pts:
-            # Channel not covered: mark with Bit 10 (1024 = NO_COVERAGE)
-            flags_arr[i] = 1024
+            # MISSING_DATA is the documented SPHEREx bit 9 (512); bit 10 is HOT.
+            flags_arr[i] = 512
             continue
 
         w_sum = 0.0
@@ -304,6 +306,148 @@ def bin_observations_to_102_channels(
         mjd_arr[i] = float(np.mean(mjd_list)) if mjd_list else 60750.0
 
     return flux_arr, var_arr, flags_arr, mjd_arr
+
+
+def _channel_for_observation(obs: ChannelPoint, grid_waves: np.ndarray) -> int | None:
+    if not len(grid_waves):
+        return None
+    idx = int(np.argmin(np.abs(grid_waves - obs.wavelength_um)))
+    band_bounds = BAND_WAVELENGTH_BOUNDS.get(obs.band)
+    if band_bounds is None:
+        return None
+    neighbor_steps = []
+    if idx > 0 and grid_waves[idx - 1] >= band_bounds[0]:
+        neighbor_steps.append(abs(float(grid_waves[idx] - grid_waves[idx - 1])))
+    if idx + 1 < len(grid_waves) and grid_waves[idx + 1] <= band_bounds[1]:
+        neighbor_steps.append(abs(float(grid_waves[idx + 1] - grid_waves[idx])))
+    half_channel = 0.5 * min(neighbor_steps) if neighbor_steps else 0.0
+    if abs(float(grid_waves[idx]) - obs.wavelength_um) > max(obs.bandwidth_um / 2.0, half_channel):
+        return None
+    return idx
+
+
+async def extract_live_observations(
+    ra: float,
+    dec: float,
+    progress_hook: Any = None,
+) -> tuple[list[ChannelPoint], list[str], list[str]]:
+    """Fetch real IRSA exposures and extract PSF-weighted wavelength samples."""
+    try:
+        from backend.science.ingest import ingest_exposures_for_target
+        from backend.science.wave_match import get_exposure_wavelength, restore_detector_coordinates
+    except ImportError:
+        from science.ingest import ingest_exposures_for_target  # type: ignore
+        from science.wave_match import get_exposure_wavelength, restore_detector_coordinates  # type: ignore
+
+    from astropy.wcs import WCS
+
+    ingestion = await ingest_exposures_for_target(
+        ra=ra,
+        dec=dec,
+        fov_arcsec=60,
+        adaptive_window=False,
+        progress_hook=progress_hook,
+        spectrum_mode=True,
+    )
+    exposures = ingestion.get("exposures", [])
+    if not exposures:
+        raise ValueError(ingestion.get("error") or "IRSA returned no exposures for this position")
+
+    observations: list[ChannelPoint] = []
+    releases: set[str] = set()
+    used_ids: list[str] = []
+    for item in exposures:
+        cutout = item.get("cutout") or {}
+        header = cutout.get("hdu1_header")
+        image = cutout.get("hdu1_image")
+        variance = cutout.get("hdu3_variance")
+        flags = cutout.get("hdu2_flags")
+        psf_cube = cutout.get("hdu5_psf")
+        wave_tab = cutout.get("hdu6_wave_tab")
+        if any(value is None for value in (header, image, variance, flags, psf_cube)):
+            continue
+        if not isinstance(wave_tab, dict) or not {"X", "Y", "VALUES"}.issubset(wave_tab):
+            continue
+
+        try:
+            x_source, y_source = WCS(header).celestial.world_to_pixel_values(ra, dec)
+            x_source, y_source = float(x_source), float(y_source)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Skipping exposure with unusable sky WCS: %s", exc)
+            continue
+        center_x, center_y = round(x_source), round(y_source)
+        radius = 4
+        x0, x1 = center_x - radius, center_x + radius + 1
+        y0, y1 = center_y - radius, center_y + radius + 1
+        if x0 < 0 or y0 < 0 or y1 > image.shape[0] or x1 > image.shape[1]:
+            continue
+
+        exposure_for_wave = {
+            **item,
+            "cutout_header": header,
+            "wave_tab": wave_tab,
+        }
+        detector_position = restore_detector_coordinates(exposure_for_wave, ra, dec)
+        if detector_position is None:
+            continue
+        wavelength, bandwidth = get_exposure_wavelength(
+            exposure_for_wave, detector_position[0], detector_position[1]
+        )
+        if not (0.75 <= wavelength <= 5.0 and bandwidth > 0):
+            continue
+
+        try:
+            detector = str(item.get("band") or "").upper()
+            if psf_cube.ndim != 3 or psf_cube.shape[0] < 121:
+                continue
+            # PSF HDU has 121 spatial zones in y-major order, 11 x 11 across detector.
+            zone_x = min(10, max(0, int(detector_position[0] / 2040.0 * 11)))
+            zone_y = min(10, max(0, int(detector_position[1] / 2040.0 * 11)))
+            psf_hi = np.asarray(psf_cube[zone_y * 11 + zone_x], dtype=np.float64)
+            if psf_hi.shape != (101, 101):
+                continue
+            shift_x = round((x_source - center_x) * 10)
+            shift_y = round((y_source - center_y) * 10)
+            shifted_psf = np.zeros_like(psf_hi)
+            src_y0, src_y1 = max(0, -shift_y), min(101, 101 - shift_y)
+            src_x0, src_x1 = max(0, -shift_x), min(101, 101 - shift_x)
+            shifted_psf[src_y0 + shift_y:src_y1 + shift_y, src_x0 + shift_x:src_x1 + shift_x] = psf_hi[src_y0:src_y1, src_x0:src_x1]
+            psf_hi = shifted_psf
+            # Integrate the 10x oversampled PSF into the same 9x9 native-pixel ROI.
+            psf_roi = psf_hi[5:95, 5:95].reshape(9, 10, 9, 10).sum(axis=(1, 3))
+            image_roi = np.asarray(image[y0:y1, x0:x1], dtype=np.float64)
+            variance_roi = np.asarray(variance[y0:y1, x0:x1], dtype=np.float64)
+            flags_roi = np.asarray(flags[y0:y1, x0:x1], dtype=np.uint32)
+            yy, xx = np.indices((9, 9))
+            background_mask = (xx - 4) ** 2 + (yy - 4) ** 2 >= 9
+            background = float(np.nanmedian(image_roi[background_mask]))
+            image_roi = image_roi - background
+            flux_jy, variance_jy2, flags_combined = extract_forced_psf_photometry(
+                image_roi, variance_roi, flags_roi, psf_roi
+            )
+        except (ValueError, IndexError, FloatingPointError):
+            continue
+
+        collection = str(item.get("collection") or "spherex_qr2")
+        exposure_id = str(item.get("exposure_id") or "unknown")
+        observations.append(
+            ChannelPoint(
+                wavelength_um=float(wavelength),
+                bandwidth_um=float(bandwidth),
+                flux_jy=flux_jy,
+                variance_jy2=variance_jy2,
+                flag=flags_combined,
+                mjd=float(item["mjd"]),
+                exposure_id=exposure_id,
+                band=detector,
+            )
+        )
+        releases.add(collection)
+        used_ids.append(exposure_id)
+
+    if not observations:
+        raise ValueError("IRSA exposures were found, but none produced usable WCS-WAVE PSF measurements")
+    return observations, sorted(releases), used_ids
 
 
 def fit_chebyshev_continuum(
@@ -471,6 +615,11 @@ def extract_102_channel_spectrum(
 
     if custom_observations and len(custom_observations) > 0:
         flux, variance, flg, mjds = bin_observations_to_102_channels(custom_observations, grid_waves)
+        coverage = [False] * len(grid_waves)
+        for observation in custom_observations:
+            channel_index = _channel_for_observation(observation, grid_waves)
+            if channel_index is not None:
+                coverage[channel_index] = True
         mjd_valid = [p.mjd for p in custom_observations]
         mjd_span = [float(min(mjd_valid)), float(max(mjd_valid))] if mjd_valid else [60789.85, 60789.85]
         is_simultaneous = (mjd_span[1] - mjd_span[0]) <= 1.0
@@ -482,6 +631,7 @@ def extract_102_channel_spectrum(
         )
         target_name = benchmark["name"]
         source_badge = "[NASA Benchmark (Pre-cached)]"
+        coverage = [True] * len(grid_waves)
     else:
         # Default arbitrary field star: standard stellar blackbody/photosphere
         base_f = 0.02
@@ -493,6 +643,7 @@ def extract_102_channel_spectrum(
         is_simultaneous = False
         target_name = f"SPX J{ra:.4f}{dec:+.4f}"
         source_badge = "[Community Product]"
+        coverage = [True] * len(grid_waves)
 
     cont_flux = None
     tau = None
@@ -510,6 +661,7 @@ def extract_102_channel_spectrum(
         flux_jy=[float(v) for v in np.round(flux, 6)],
         variance_jy2=[float(v) for v in np.round(variance, 12)],
         flags=[int(v) for v in flg],
+        channel_coverage=coverage,
         mjd_per_channel=[float(v) for v in np.round(mjds, 2)],
         mjd_span=[float(v) for v in np.round(mjd_span, 2)],
         is_simultaneous=is_simultaneous,
