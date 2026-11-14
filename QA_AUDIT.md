@@ -379,7 +379,17 @@ Directly solves the "Cold Drop" and educates volunteers before using the tools (
   - *Coverage Matrix* (Survey Pass × Spectral Band with band-matched differencing guard active)
 - **In-Situ Candidate Triage Banner:** Classification submissions display an immediate confirmation toast with telemetry archiving verification, eliminating the disorienting tab redirect.
 
-### 11.6 Verification Verdict
-- `cd web-client && npm run build`: **PASS (13.14s, 0 errors, 0 warnings)**
+### 11.6 Production-Grade Replacement for 'Hunt Mode': Synchronized Source Catalog Table
+- **Architectural Decision:** Explicitly rejected gamified "Hunt Mode / Swipe Assembly Lines" and "Flight Dockets" as playful gimmicks that degrade an institutional NASA software platform.
+- **The Production Standard (Modeled on IRSA Firefly & MAST):** Built the authoritative **SPHEREx Astronomical Source Catalog Drawer** (`CandidateCatalogDrawer.tsx`):
+  - **Zero Jargon:** All headers translated to clean, human English (*Target & Designation*, *Object Type*, *Sky Position*, *Speed Across Sky*, *Infrared Profile*, *Status*).
+  - **24 Calibrated All-Sky Targets:** Spans the fastest-moving stars, freezing sub-brown dwarfs, variable stars, and deep space starburst galaxies.
+  - **1-Click Workspace Synchronization:** Clicking any target in the catalog immediately slews and loads that field into the active tab (Tab 1 Aladin Lite or Tab 2 WebGL2 Comparator) with its optimal band and preset, highlighting the active row.
+  - **In-Situ Access in Tab 2:** Added a subtle `[Switch Target (24) ▼]` trigger in the comparator header for instant target selection without guessing coordinates.
+  - **Astronomical Interoperability:** Includes an authentic `Export Catalog (CSV)` button for offline verification in Python / Astropy.
+
+### 11.7 Verification Verdict
+- `cd web-client && npm run build`: **PASS (14.55s, 0 errors, 0 warnings)**
+- Zero emojis verified.
 - Zero broken links, zero leaked keys, zero cross-role file violations.
 
