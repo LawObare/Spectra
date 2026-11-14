@@ -953,7 +953,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
   const benchmarkReticle = gaiaReticle;
 
-  // Handle pixel clicks with Sub-Pixel Auto-Centroid Snapping (SPECIFICATION.md §4.2, QA_AUDIT.md §9.4)
+  // Handle pixel clicks with Sub-Pixel Auto-Centroid Snapping (SPECIFICATION.md §4.2, docs/audits/QA_AUDIT.md §9.4)
   const handlePixelClick = useCallback(
     (info: HoverPixelInfo) => {
       // Sub-pixel centroid peak snapping (5x5 neighborhood) to eliminate human clicking jitter

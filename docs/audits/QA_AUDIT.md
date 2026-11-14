@@ -1,7 +1,7 @@
 # Spectra Architecture, Usability & Mission Feasibility Audit (`QA_AUDIT.md`)
 
 > **Authoritative Technical QA Report, Product Teardown & Strategic Action Plan.**  
-> Evaluated against the **2026 NASA Space Apps Challenge** prompt ([`planet-x-SPHEREX.md`](planet-x-SPHEREX.md)), the **SPHEREx Mission Architecture** ([`spherex.md`](spherex.md)), and historical citizen science benchmarks (*Backyard Worlds: Planet 9*, *Planet Hunters*).
+> Evaluated against the **2026 NASA Space Apps Challenge** prompt ([`planet-x-SPHEREX.md`](../reference/planet-x-SPHEREX.md)), the **SPHEREx Mission Architecture** ([`spherex.md`](../reference/spherex.md)), and historical citizen science benchmarks (*Backyard Worlds: Planet 9*, *Planet Hunters*).
 
 ---
 
@@ -245,7 +245,7 @@ flowchart LR
 ## 9. QA Execution Log: Defect Remediation & Benchmark Matrix
 
 ### 9.1 Verified Bug Fix: Sexagesimal Comma Ingestion
-- **Defect:** In [`planet-x-SPHEREX.md`](planet-x-SPHEREX.md), WISE 0855 coordinates are given as `Right Ascension 08h55m10.831s, declination -7d14m42.53s`. When pasted into the universal search bar, [`parseCoordinateInput()`](file:///home/lawobare/Desktop/Spectra/web-client/src/components/GlobalCommandHeader.tsx#L308-L345) returned `null` because `\s*` rejected the comma.
+- **Defect:** In [`planet-x-SPHEREX.md`](../reference/planet-x-SPHEREX.md), WISE 0855 coordinates are given as `Right Ascension 08h55m10.831s, declination -7d14m42.53s`. When pasted into the universal search bar, [`parseCoordinateInput()`](file:///home/lawobare/Desktop/Spectra/web-client/src/components/GlobalCommandHeader.tsx#L308-L345) returned `null` because `\s*` rejected the comma.
 - **Remediation:** Updated regex to `[\s,]+\s*` between RA and Dec.
 - **Verification:** Verified in [`GlobalCommandHeader.tsx`](file:///home/lawobare/Desktop/Spectra/web-client/src/components/GlobalCommandHeader.tsx); passes `08h55m10.831s, -7d14m42.53s`, `08:55:10.831, -07:14:42.53`, and decimal strings.
 
