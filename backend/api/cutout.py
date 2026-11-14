@@ -54,6 +54,7 @@ tensor_cache = LRUCache()
 task_states: dict[str, dict[str, Any]] = {}
 _worker_started = False
 _worker_lock = asyncio.Lock()
+_worker_task: asyncio.Task[None] | None = None
 
 
 def _new_task_id() -> str:
@@ -112,10 +113,10 @@ async def _enqueue_cutout_task(
 
 
 async def _ensure_worker() -> None:
-    global _worker_started
+    global _worker_started, _worker_task
     async with _worker_lock:
-        if not _worker_started:
-            asyncio.create_task(_queue_worker())
+        if _worker_task is None or _worker_task.done():
+            _worker_task = asyncio.create_task(_queue_worker())
             _worker_started = True
 
 
@@ -124,6 +125,12 @@ async def _queue_worker() -> None:
         task = await cutout_queue.get()
         try:
             await process_cutout_task(task)
+        except Exception as exc:
+            task_id = str(task.get("task_id", "unknown"))
+            task_states.setdefault(task_id, {}).update(
+                {"status": "error", "progress": 0.0, "stage": "error", "message": str(exc)}
+            )
+            logger.exception("Cutout worker failed for task %s", task_id)
         finally:
             cutout_queue.task_done()
 
