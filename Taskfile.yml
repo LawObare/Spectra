@@ -20,9 +20,15 @@ tasks:
   db:up:
     desc: "Start local Supabase Postgres and apply schema + benchmark seeds"
     cmds:
-      - supabase start
-      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/schema.sql
-      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/seed_benchmarks.sql
+      - |
+        if command -v supabase >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
+          supabase start
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/schema.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/seed_benchmarks.sql
+        else
+          echo "[NOTICE] Local Supabase/psql not in PATH; skipping local DB container."
+          echo "         FastAPI backend will run with pooler / offline fallback."
+        fi
 
   types:sync:
     desc: "Generate strict TypeScript types from FastAPI OpenAPI schema"
@@ -43,8 +49,7 @@ tasks:
 
   dev:
     desc: "Start the complete Spectra stack concurrently"
-    deps: [db:up]
-    cmds:
-      - npx concurrently -n "BACKEND,WEB" -c "green,cyan" \
-          "task backend:dev" \
-          "task web:dev"
+    deps:
+      - db:up
+      - backend:dev
+      - web:dev
