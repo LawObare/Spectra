@@ -358,6 +358,7 @@ async def fetch_cutout_from_irsa(
     window_half_width: float = 1.0 / 41.0,  # 1/R_b for D1-D3
     collection: str = DEFAULT_COLLECTION,
     s3_uri: str | None = None,
+    include_psf: bool = False,
 ) -> dict[str, Any]:
     """Fetch server-side MEF cutout from IRSA Cutout Service.
 
@@ -409,7 +410,7 @@ async def fetch_cutout_from_irsa(
                         break
                 else:
                     cutout_data = _parse_irsa_mef_cutout(
-                        response.content, collection=collection, include_psf=False
+                        response.content, collection=collection, include_psf=include_psf
                     )
                     required_hdus = (
                         "hdu1_image",
@@ -451,7 +452,7 @@ async def fetch_cutout_from_irsa(
         try:
             async with ARCHIVE_IO_SEMAPHORE:
                 cutout_data = await _run_thread_to_completion(
-                    _fetch_cutout_from_s3, s3_uri, ra, dec, size_deg, collection, False
+                    _fetch_cutout_from_s3, s3_uri, ra, dec, size_deg, collection, include_psf
                 )
             required_hdus = (
                 "hdu1_image",
@@ -687,6 +688,7 @@ def _fetch_cutout_from_s3(
         "hdu3_variance": None,
         "hdu4_zodi": None,
         "hdu5_psf": None,
+        "hdu5_header": None,
         "hdu6_wave_tab": None,
         "hdu1_header": None,
         "metadata": {"collection": collection, "wcs": "TAN/SIP"},
@@ -756,6 +758,7 @@ def _fetch_cutout_from_s3(
                 try:
                     if output_key == "hdu5_psf":
                         result[output_key] = _copy_psf_data(hdu.data)
+                        result["hdu5_header"] = hdu.header.copy()
                     else:
                         result[output_key] = _read_fits_image_section(
                             hdu, y0, y1, x0, x1, image_shape, dtype
@@ -795,6 +798,7 @@ def _parse_irsa_mef_cutout(
         "hdu3_variance": None,  # 32-bit float VARIANCE
         "hdu4_zodi": None,  # 32-bit float ZODI background
         "hdu5_psf": None,  # PSF image or structured PSF table
+        "hdu5_header": None,
         "hdu6_wave_tab": None,  # Binary Table WCS-WAVE
         "hdu1_header": None,
         "metadata": {
@@ -833,6 +837,7 @@ def _parse_irsa_mef_cutout(
                     or (idx == 5 and out["hdu5_psf"] is None and hdu.data is not None)
                 ):
                     out["hdu5_psf"] = _copy_psf_data(hdu.data)
+                    out["hdu5_header"] = hdu.header.copy()
                 elif extname in ("WCS-WAVE", "WAVE-TAB") or (
                     idx == 6 and out["hdu6_wave_tab"] is None and hdu.data is not None
                 ):
@@ -941,6 +946,7 @@ async def ingest_exposures_for_target(
     bands: list[int] | None = None,
     adaptive_window: bool = False,
     progress_hook: Callable[[str, float, str], Awaitable[None]] | None = None,
+    spectrum_mode: bool = False,
 ) -> dict[str, Any]:
     """Full ingestion pipeline for a target position.
 
@@ -1031,21 +1037,27 @@ async def ingest_exposures_for_target(
             grouped.setdefault(epoch, []).append(exposure)
             previous_mjd = mjd
 
-        # Fetch one real exposure nearest the temporal median for each pass and
-        # detector. This keeps a coordinate request bounded while preserving
-        # actual release epochs and detector provenance in the tensor.
-        selected: list[dict[str, Any]] = []
-        for pass_exposures in grouped.values():
-            bands_for_pass: dict[str, list[dict[str, Any]]] = {}
-            for exposure in pass_exposures:
-                band = str(exposure.get("band") or "UNKNOWN").upper()
-                if band in {f"D{i}" for i in range(1, 7)}:
-                    bands_for_pass.setdefault(band, []).append(exposure)
-            for band_exposures in bands_for_pass.values():
-                median_mjd = float(np.median([float(exp["mjd"]) for exp in band_exposures]))
-                selected.append(
-                    min(band_exposures, key=lambda exp: abs(float(exp["mjd"]) - median_mjd))
-                )
+        # Time-domain requests keep one exposure per pass and detector. A
+        # spectrum needs every exposure because the LVF maps each detector
+        # position to a different wavelength sample.
+        if spectrum_mode:
+            selected = [
+                exp for exp in exposures
+                if str(exp.get("band", "")).upper() in {f"D{i}" for i in range(1, 7)}
+            ]
+        else:
+            selected = []
+            for pass_exposures in grouped.values():
+                bands_for_pass: dict[str, list[dict[str, Any]]] = {}
+                for exposure in pass_exposures:
+                    band = str(exposure.get("band") or "UNKNOWN").upper()
+                    if band in {f"D{i}" for i in range(1, 7)}:
+                        bands_for_pass.setdefault(band, []).append(exposure)
+                for band_exposures in bands_for_pass.values():
+                    median_mjd = float(np.median([float(exp["mjd"]) for exp in band_exposures]))
+                    selected.append(
+                        min(band_exposures, key=lambda exp: abs(float(exp["mjd"]) - median_mjd))
+                    )
 
         if not selected:
             result["error"] = "IRSA returned no exposures with a recognized detector band and MJD"
@@ -1079,6 +1091,7 @@ async def ingest_exposures_for_target(
                 adaptive_window=adaptive_window,
                 collection=str(exposure["collection"]),
                 s3_uri=exposure.get("s3_uri"),
+                include_psf=spectrum_mode,
             )
             logger.info(
                 "Exposure fetch collection=%s id=%s usable=%s duration_s=%.3f",
