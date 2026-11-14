@@ -408,12 +408,36 @@ const InstalledSectionThumbnailCanvas: React.FC<{
   colorPalette?: ComparatorColorPalette;
   className?: string;
 }> = React.memo(({ section, colorPalette = 'standard_rgb', className = 'h-16 w-16' }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cacheKey = getSectionTensorCacheKey(section);
+  const [isVisible, setIsVisible] = useState<boolean>(
+    () => Boolean(getCachedDecodedTensor(cacheKey)) || typeof IntersectionObserver === 'undefined'
+  );
   const [entry, setEntry] = useState<{ parsed: DecodedSectionTensor; sourceBadge: string } | null>(
     () => getCachedDecodedTensor(cacheKey)
   );
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (isVisible) return;
+    const node = containerRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setIsVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '120px' }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isVisible]);
 
   useEffect(() => {
     const syncHit = getCachedDecodedTensor(cacheKey);
@@ -422,6 +446,7 @@ const InstalledSectionThumbnailCanvas: React.FC<{
       setFailed(false);
       return;
     }
+    if (!isVisible) return;
     let cancelled = false;
     setEntry(null);
     setFailed(false);
@@ -437,7 +462,7 @@ const InstalledSectionThumbnailCanvas: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, section]);
+  }, [cacheKey, section, isVisible]);
 
   const previewBandInfo = useMemo(() => {
     if (!entry) return null;
@@ -543,6 +568,7 @@ const InstalledSectionThumbnailCanvas: React.FC<{
 
   return (
     <div
+      ref={containerRef}
       className={`relative overflow-hidden rounded-lg border border-slate-700/80 bg-slate-950 ${className}`}
     >
       {entry ? (
@@ -632,6 +658,137 @@ const InstalledSectionPreviewCard: React.FC<{
         </div>
       </div>
     </button>
+  );
+});
+
+const InstalledCutoutsModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  sections: InstalledSection[];
+  activeSectionId: string | null;
+  colorPalette: ComparatorColorPalette;
+  onSelect: (section: InstalledSection) => void;
+}> = React.memo(({ isOpen, onClose, sections, activeSectionId, colorPalette, onSelect }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSearchQuery('');
+    const focusTimer = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  const filteredSections = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return sections;
+    return sections.filter((sec) => {
+      const raStr = sec.ra.toFixed(4);
+      const decStr = `${sec.dec >= 0 ? '+' : ''}${sec.dec.toFixed(4)}`;
+      return (
+        sec.label.toLowerCase().includes(q) ||
+        sec.section_id.toLowerCase().includes(q) ||
+        raStr.includes(q) ||
+        decStr.includes(q) ||
+        sec.dec.toFixed(4).includes(q)
+      );
+    });
+  }, [sections, searchQuery]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="installed-cutouts-modal-title"
+      onClick={onClose}
+    >
+      <div
+        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-slate-950 text-slate-100 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950 px-5 py-3.5">
+          <div>
+            <h2 id="installed-cutouts-modal-title" className="text-sm font-semibold text-white">
+              Browse Installed Cutouts ({sections.length})
+            </h2>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              Preview calibrated SPHEREx cutout stamps and select one to open in the Time-Domain Comparator.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close installed cutouts browser"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-base text-slate-300 hover:border-neutral-700 hover:text-white"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/80 bg-slate-900/60 px-5 py-3">
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search installed cutouts by name, ID, or RA/Dec…"
+            aria-label="Search installed cutouts by name, ID, or RA/Dec"
+            className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 font-mono text-[11px] text-slate-300 hover:text-white"
+            >
+              Clear
+            </button>
+          )}
+          <span className="font-mono text-[11px] text-slate-400">
+            Showing {filteredSections.length} of {sections.length}
+          </span>
+        </div>
+
+        <div className="max-h-[65vh] overflow-y-auto p-4">
+          {sections.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
+              No cutout sections are installed yet. Use Sky Navigator or &ldquo;Install &amp; Load Section Here&rdquo; to install a region.
+            </div>
+          ) : filteredSections.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
+              No installed cutouts matched &ldquo;{searchQuery}&rdquo;.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {filteredSections.map((sec) => (
+                <InstalledSectionPreviewCard
+                  key={sec.section_id}
+                  section={sec}
+                  colorPalette={colorPalette}
+                  isActive={activeSectionId === sec.section_id}
+                  onSelect={(selected) => {
+                    onSelect(selected);
+                    onClose();
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 });
 
@@ -804,7 +961,10 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const prevMatchingDownloadRef = useRef<boolean>(false);
   const [canvasZoom, setCanvasZoom] = useState<'fit' | '1x' | '2x' | '4x'>('fit');
   const [isSmoothRendering, setIsSmoothRendering] = useState(true);
-  const [showSectionGallery, setShowSectionGallery] = useState<boolean>(true);
+  const [isCutoutBrowserOpen, setIsCutoutBrowserOpen] = useState<boolean>(false);
+  const handleCloseCutoutBrowser = useCallback(() => {
+    setIsCutoutBrowserOpen(false);
+  }, []);
 
   const currentCoordKey = `${urlRa.toFixed(5)},${urlDec.toFixed(5)},${Math.round(urlFov || 300)}`;
 
@@ -1664,9 +1824,16 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             </p>
           )}
           {(!isShowingProgress || readyInstalledSections.length > 0) && (
-            <div className="mt-6 space-y-6">
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => setIsCutoutBrowserOpen(true)}
+                className="rounded-lg border border-emerald-500/70 bg-emerald-950/70 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-900/70 transition-colors"
+              >
+                Browse Installed Cutouts ({readyInstalledSections.length})
+              </button>
               {!isShowingProgress && (
-                <div className="flex flex-wrap gap-3">
+                <>
                   <button
                     type="button"
                     disabled={isInstallingHere}
@@ -1692,42 +1859,22 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                   >
                     Select in Sky Navigator
                   </button>
-                </div>
+                </>
               )}
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                    Installed Sections ({readyInstalledSections.length})
-                  </h2>
-                  <span className="text-[11px] text-slate-500">
-                    Instant reuse across Time-Domain, Spectrum &amp; Ice Studio
-                  </span>
-                </div>
-                {readyInstalledSections.length === 0 ? (
-                  <p className="mt-3 text-xs text-slate-400">
-                    No sections installed yet. Use Sky Navigator to browse footprints and click &ldquo;Install Cutout Section&rdquo;, or install this coordinate above.
-                  </p>
-                ) : (
-                  <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-                    {readyInstalledSections.map((sec) => (
-                      <InstalledSectionPreviewCard
-                        key={sec.section_id}
-                        section={sec}
-                        colorPalette={colorPalette}
-                        isActive={activeInstalledSection?.section_id === sec.section_id}
-                        onSelect={handleSelectInstalledSection}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           )}
           <p className="mt-6 text-xs text-slate-500">
             Installed cutout sections stay saved locally on disk so switching tabs never re-queries IRSA unnecessarily.
           </p>
         </section>
+        <InstalledCutoutsModal
+          isOpen={isCutoutBrowserOpen}
+          onClose={handleCloseCutoutBrowser}
+          sections={readyInstalledSections}
+          activeSectionId={activeInstalledSection?.section_id || null}
+          colorPalette={colorPalette}
+          onSelect={handleSelectInstalledSection}
+        />
       </main>
     );
   }
@@ -1757,27 +1904,14 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 </svg>
               </button>
             )}
-            {readyInstalledSections.length > 0 && (
-              <select
-                aria-label="Switch installed section"
-                value={activeInstalledSection?.section_id || ''}
-                onChange={(e) => {
-                  const chosen = readyInstalledSections.find((s) => s.section_id === e.target.value);
-                  if (chosen) handleSelectInstalledSection(chosen);
-                }}
-                className="max-w-[200px] rounded-full border border-emerald-600/50 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 focus:outline-none"
-                title="Switch directly to any installed cutout section without querying IRSA"
-              >
-                {!activeInstalledSection && (
-                  <option value="">Installed ({readyInstalledSections.length})</option>
-                )}
-                {readyInstalledSections.map((sec) => (
-                  <option key={sec.section_id} value={sec.section_id}>
-                    {sec.label} ({sec.epochs} ep)
-                  </option>
-                ))}
-              </select>
-            )}
+            <button
+              type="button"
+              onClick={() => setIsCutoutBrowserOpen(true)}
+              className="rounded-full border border-emerald-600/50 bg-emerald-950/60 hover:bg-emerald-900/60 hover:border-emerald-500/70 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 transition-colors"
+              title="Browse installed cutouts with image previews before selecting"
+            >
+              Browse Installed Cutouts ({readyInstalledSections.length})
+            </button>
             <span className="rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
               {store.sourceBadge}
             </span>
@@ -2312,44 +2446,6 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       {/* RIGHT PANEL (35%): Analysis Deck & Wavelength-Matched Matrix              */}
       {/* ========================================================================= */}
       <div className="flex w-full lg:w-[38%] xl:w-[35%] shrink-0 lg:shrink lg:min-h-0 flex-col lg:overflow-y-auto border-t lg:border-t-0 lg:border-l border-neutral-800 bg-neutral-950 p-3 sm:p-4 text-xs space-y-4">
-        {/* Installed Cutout Sections Gallery */}
-        {readyInstalledSections.length > 0 && (
-          <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-3.5 shadow-sm backdrop-blur">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <h3 className="font-semibold text-white text-xs tracking-wide uppercase">
-                  Installed Cutout Sections ({readyInstalledSections.length})
-                </h3>
-                <p className="mt-0.5 text-[10px] text-neutral-400">
-                  Preview calibrated cutouts before switching targets
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSectionGallery((prev) => !prev)}
-                aria-expanded={showSectionGallery}
-                className="shrink-0 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[10px] text-neutral-300 hover:border-neutral-700 hover:text-white transition-colors"
-              >
-                {showSectionGallery ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            {showSectionGallery && (
-              <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {readyInstalledSections.map((sec) => (
-                  <InstalledSectionPreviewCard
-                    key={sec.section_id}
-                    section={sec}
-                    colorPalette={colorPalette}
-                    compact
-                    isActive={activeInstalledSection?.section_id === sec.section_id}
-                    onSelect={handleSelectInstalledSection}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
         {/* Render Mode Switcher */}
         <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
           <div className="mb-2.5 flex items-center justify-between">
@@ -2857,6 +2953,14 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           )}
         </section>
       </div>
+      <InstalledCutoutsModal
+        isOpen={isCutoutBrowserOpen}
+        onClose={handleCloseCutoutBrowser}
+        sections={readyInstalledSections}
+        activeSectionId={activeInstalledSection?.section_id || null}
+        colorPalette={colorPalette}
+        onSelect={handleSelectInstalledSection}
+      />
     </div>
   );
 };
