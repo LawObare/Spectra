@@ -6,8 +6,10 @@ zero-auth observer sessions, and binary tensor streaming.
 """
 
 import asyncio
+import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from typing import Any
 
 try:
@@ -17,6 +19,8 @@ try:
     from backend.api.export import router as export_router
     from backend.api.forum import router as forum_router
     from backend.api.resolve import router as resolve_router
+    from backend.api.sections import ensure_benchmarks_preinstalled
+    from backend.api.sections import router as sections_router
     from backend.api.spectrum import router as spectrum_router
 except ImportError:
     from api.classify import router as classify_router  # type: ignore
@@ -25,6 +29,8 @@ except ImportError:
     from api.export import router as export_router  # type: ignore
     from api.forum import router as forum_router  # type: ignore
     from api.resolve import router as resolve_router  # type: ignore
+    from api.sections import ensure_benchmarks_preinstalled  # type: ignore
+    from api.sections import router as sections_router  # type: ignore
     from api.spectrum import router as spectrum_router  # type: ignore
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,10 +50,32 @@ if sys.platform != "win32":
     except ImportError:
         pass
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    try:
+        try:
+            from backend.db.pool import close_pool, create_pool
+        except ImportError:
+            from db.pool import close_pool, create_pool  # type: ignore
+
+        pool = await create_pool(min_size=1, max_size=2)
+        try:
+            await ensure_benchmarks_preinstalled(pool)
+        finally:
+            await close_pool(pool)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Skipping startup benchmark seed: %s", exc)
+    yield
+
+
 app = FastAPI(
     title="Spectra Mission Science Engine",
     description="Unified FastAPI Backend for SPHEREx Time-Domain & Hyperspectral Exploration",
     version="1.0.0",
+    lifespan=_lifespan,
 )
 
 # CORS Middleware (SPECIFICATION.md §10.4.8)
@@ -55,7 +83,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("ALLOWED_ORIGINS", "*").split(","),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=[
         "Origin",
         "Content-Type",
@@ -73,6 +101,7 @@ app.include_router(coverage_router)
 app.include_router(cutout_router)
 app.include_router(classify_router)
 app.include_router(spectrum_router)
+app.include_router(sections_router)
 app.include_router(forum_router)
 app.include_router(export_router)
 
