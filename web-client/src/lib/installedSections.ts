@@ -352,61 +352,122 @@ function pumpInstallQueue() {
   }
 }
 
+interface StaticBenchmarkManifest {
+  sections: InstalledSection[];
+  spectra?: Record<string, Record<string, unknown>>;
+}
+
+let cachedStaticManifest: StaticBenchmarkManifest | null = null;
+let inflightStaticManifest: Promise<StaticBenchmarkManifest | null> | null = null;
+
+async function loadStaticBenchmarkManifest(
+  signal?: AbortSignal
+): Promise<StaticBenchmarkManifest | null> {
+  if (cachedStaticManifest) return cachedStaticManifest;
+  if (inflightStaticManifest) return inflightStaticManifest;
+
+  inflightStaticManifest = (async () => {
+    try {
+      const res = await fetch('/benchmarks/installed_sections.json', { signal });
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (!res.ok || contentType.includes('text/html')) return null;
+      const data = (await res.json()) as StaticBenchmarkManifest;
+      if (!data || !Array.isArray(data.sections)) return null;
+      cachedStaticManifest = data;
+      return data;
+    } catch {
+      return null;
+    } finally {
+      inflightStaticManifest = null;
+    }
+  })();
+
+  return inflightStaticManifest;
+}
+
+export async function fetchStaticBenchmarkSections(
+  signal?: AbortSignal
+): Promise<InstalledSection[]> {
+  const manifest = await loadStaticBenchmarkManifest(signal);
+  return Array.isArray(manifest?.sections) ? manifest.sections : [];
+}
+
+export async function fetchStaticSectionSpectrum(
+  sectionId: string,
+  signal?: AbortSignal
+): Promise<Record<string, unknown> | null> {
+  const manifest = await loadStaticBenchmarkManifest(signal);
+  const spec = manifest?.spectra?.[sectionId];
+  return spec ? { ...spec } : null;
+}
+
 export async function fetchInstalledSections(signal?: AbortSignal): Promise<InstalledSection[]> {
+  let list: InstalledSection[] = [];
   try {
     const res = await fetch('/api/sections', { signal });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { sections?: InstalledSection[] };
-    const list = Array.isArray(data.sections) ? data.sections : [];
-    hasLoadedInitialSections = true;
-    setSnapshot((prev) =>
-      installedSectionListsEqual(prev.installedSections, list)
-        ? prev
-        : { ...prev, installedSections: list }
-    );
-
-    // Re-attach to any in-flight backend install (e.g., after page reload) without restarting it
-    list.forEach((sec) => {
-      if (sec.status !== 'installing' || !sec.task_id) return;
-      const existing = snapshot.downloadingSections.find(
-        (d) =>
-          d.section_id === sec.section_id ||
-          (Math.abs(d.ra - sec.ra) < 0.002 &&
-            Math.abs(d.dec - sec.dec) < 0.002 &&
-            Math.abs(d.fov_arcsec - sec.fov_arcsec) <= 1)
-      );
-      if (existing) {
-        if (existing.queueState !== 'queued' && !activeTaskStreamKeys.has(existing.key)) {
-          void trackTaskProgressAndFinalize(existing.key, sec.section_id, sec.task_id);
-        }
-        return;
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (res.ok && !contentType.includes('text/html')) {
+      const data = (await res.json()) as { sections?: InstalledSection[] };
+      if (Array.isArray(data.sections)) {
+        list = data.sections;
       }
-      const key = downloadKeyFor(sec.ra, sec.dec, sec.fov_arcsec);
-      setSnapshot((prev) => ({
-        ...prev,
-        downloadingSections: [
-          ...prev.downloadingSections,
-          {
-            key,
-            section_id: sec.section_id,
-            task_id: sec.task_id || undefined,
-            label: sec.label,
-            ra: sec.ra,
-            dec: sec.dec,
-            fov_arcsec: sec.fov_arcsec,
-            progress: 0.2,
-            message: 'Resuming archive download…',
-            queueState: 'installing',
-          },
-        ],
-      }));
-      void trackTaskProgressAndFinalize(key, sec.section_id, sec.task_id);
-    });
-
-    return list;
-  } catch {
-    return [];
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return [];
+    }
   }
+
+  if (list.length === 0) {
+    list = await fetchStaticBenchmarkSections(signal);
+  }
+
+  hasLoadedInitialSections = true;
+  setSnapshot((prev) =>
+    installedSectionListsEqual(prev.installedSections, list)
+      ? prev
+      : { ...prev, installedSections: list }
+  );
+
+  // Re-attach to any in-flight backend install (e.g., after page reload) without restarting it
+  list.forEach((sec) => {
+    if (sec.status !== 'installing' || !sec.task_id) return;
+    const existing = snapshot.downloadingSections.find(
+      (d) =>
+        d.section_id === sec.section_id ||
+        (Math.abs(d.ra - sec.ra) < 0.002 &&
+          Math.abs(d.dec - sec.dec) < 0.002 &&
+          Math.abs(d.fov_arcsec - sec.fov_arcsec) <= 1)
+    );
+    if (existing) {
+      if (existing.queueState !== 'queued' && !activeTaskStreamKeys.has(existing.key)) {
+        void trackTaskProgressAndFinalize(existing.key, sec.section_id, sec.task_id);
+      }
+      return;
+    }
+    const key = downloadKeyFor(sec.ra, sec.dec, sec.fov_arcsec);
+    setSnapshot((prev) => ({
+      ...prev,
+      downloadingSections: [
+        ...prev.downloadingSections,
+        {
+          key,
+          section_id: sec.section_id,
+          task_id: sec.task_id || undefined,
+          label: sec.label,
+          ra: sec.ra,
+          dec: sec.dec,
+          fov_arcsec: sec.fov_arcsec,
+          progress: 0.2,
+          message: 'Resuming archive download…',
+          queueState: 'installing',
+        },
+      ],
+    }));
+    void trackTaskProgressAndFinalize(key, sec.section_id, sec.task_id);
+  });
+
+  return list;
 }
 
 export async function startSectionInstall(params: {
