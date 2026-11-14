@@ -115,6 +115,7 @@ export interface TelemetryState {
   setCutoutLoading: (loading: boolean, error?: string | null) => void;
   setActiveSpectrum: (spectrum: SpectralChannel[]) => void;
   setSpectrumLoading: (loading: boolean) => void;
+  setSpectralBlinkSynced: (synced: boolean) => void;
   resetView: () => void;
 }
 
@@ -149,7 +150,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   probeSkyPosition: null,
   activeSpectrum: [],
   isSpectrumLoading: false,
-  isSpectralBlinkSynced: true,
+  isSpectralBlinkSynced: false,
   normalizeContinuum: false,
   manualRedshiftZ: 0.0,
   activeFeatureRulers: ['H2O', 'CO2'],
@@ -254,6 +255,8 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   setActiveSpectrum: (activeSpectrum) => set({ activeSpectrum }),
 
   setSpectrumLoading: (isSpectrumLoading) => set({ isSpectrumLoading }),
+
+  setSpectralBlinkSynced: (isSpectralBlinkSynced) => set({ isSpectralBlinkSynced }),
 
   resetView: () =>
     set({
