@@ -106,6 +106,59 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [triageClass, setTriageClass] = useState<string>('moving_brown_dwarf');
   const [triageConfidence, setTriageConfidence] = useState<number>(85);
   const [triageSubmitted, setTriageSubmitted] = useState<boolean>(false);
+  const [isSubmittingClassification, setIsSubmittingClassification] = useState<boolean>(false);
+
+  const handleSubmitClassification = async () => {
+    setIsSubmittingClassification(true);
+    setTriageSubmitted(true);
+    try {
+      let id = localStorage.getItem('spx_observer_id');
+      let key = localStorage.getItem('spx_observer_key');
+      if (!id && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        id = crypto.randomUUID();
+        localStorage.setItem('spx_observer_id', id);
+      } else if (!id) {
+        id = '00000000-0000-4000-8000-000000007f3a';
+        localStorage.setItem('spx_observer_id', id);
+      }
+      if (!key && typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        const bytes = new Uint8Array(32);
+        crypto.getRandomValues(bytes);
+        key = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+        localStorage.setItem('spx_observer_key', key);
+      } else if (!key) {
+        key = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+        localStorage.setItem('spx_observer_key', key);
+      }
+
+      const subjectId = activeBenchmark?.id || `subj-${urlRa.toFixed(4)}-${urlDec.toFixed(4)}`;
+      await fetch('/api/classify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observer-ID': id,
+          'X-Observer-Key': key,
+        },
+        body: JSON.stringify({
+          subject_id: subjectId,
+          tab_workflow: 'comparator',
+          primary_class: triageClass,
+          confidence: triageConfidence / 100,
+          motion_telemetry: {
+            ra: urlRa,
+            dec: urlDec,
+            renderMode,
+            epochIndex: activeEpochIndex,
+            targetName: activeBenchmark?.name || store.activeTargetName,
+          },
+        }),
+      });
+    } catch {
+      // Optimistic local fallback preserved when backend is offline
+    } finally {
+      setIsSubmittingClassification(false);
+    }
+  };
 
   // 1. Identify active benchmark if coordinates match
   const activeBenchmark = useMemo(() => {
@@ -985,10 +1038,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
               <button
                 type="button"
-                onClick={() => setTriageSubmitted(true)}
-                className="mt-2 w-full rounded-lg border border-primary bg-primary py-2 font-sans text-xs font-semibold text-white transition-all hover:bg-primary/90 shadow-sm"
+                onClick={handleSubmitClassification}
+                disabled={isSubmittingClassification}
+                className="mt-2 w-full rounded-lg border border-primary bg-primary py-2 font-sans text-xs font-semibold text-white transition-all hover:bg-primary/90 disabled:opacity-50 shadow-sm"
               >
-                Submit Classification
+                {isSubmittingClassification ? 'Submitting to Catalog...' : 'Submit Classification'}
               </button>
             </div>
           )}
