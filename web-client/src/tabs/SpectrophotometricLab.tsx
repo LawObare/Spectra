@@ -63,77 +63,6 @@ function flagTooltip(flag: number): string {
   return names.length ? names.join(' | ') : `FLAGS=0x${flag.toString(16)}`;
 }
 
-function hash01(seed: number): number {
-  const x = Math.sin(seed) * 43758.5453123;
-  return x - Math.floor(x);
-}
-
-/** Deterministic 102-channel spectrum for any target/pixel/epoch (WCS-WAVE-like). */
-function generateSpectrum(params: {
-  ra: number;
-  dec: number;
-  targetName: string | null;
-  px: number;
-  py: number;
-  epochIndex: number;
-  mjdBase?: number;
-}): SpectralChannel[] {
-  const { ra, dec, targetName, px, py, epochIndex } = params;
-  const seed = Math.abs(Math.sin(ra * 0.17 + dec * 0.31 + px * 0.07 + py * 0.11));
-  const name = (targetName || '').toLowerCase();
-  const isWise = name.includes('wise 0855') || Math.abs(ra - 133.73712) < 0.2;
-  const isBarnard = name.includes('barnard') || Math.abs(ra - 269.44639) < 0.2;
-  const isRwAur = name.includes('rw aur') || Math.abs(ra - 76.95647) < 0.2;
-  const isRDraconis = name.includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
-  const isEpsInd = name.includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
-  const mjd = (params.mjdBase ?? 60810) + epochIndex * 183 + hash01(px + py * 13) * 2;
-
-  const channels: SpectralChannel[] = [];
-  for (let i = 0; i < 102; i++) {
-    const frac = i / 101;
-    const lambdaUm = 0.75 + frac * 4.25;
-    const det = detectorFor(lambdaUm);
-    let flux = 10 * Math.exp(-0.35 * (lambdaUm - 1.2));
-    if (isWise) {
-      flux = lambdaUm < 3.4 ? 0.2 + 0.08 * hash01(i + 1) : 14 * Math.exp(-Math.pow((lambdaUm - 4.45) / 0.55, 2));
-    } else if (isBarnard) {
-      flux = 22 * Math.exp(-0.28 * (lambdaUm - 1.05));
-      flux *= 1 - 0.18 * Math.exp(-Math.pow((lambdaUm - 1.4) / 0.08, 2));
-      flux *= 1 - 0.22 * Math.exp(-Math.pow((lambdaUm - 1.9) / 0.1, 2));
-    } else if (isRwAur) {
-      const dim = 1 - 0.35 * Math.max(0, Math.sin(epochIndex * 1.7 + seed));
-      flux = (12 + 2 * lambdaUm) * dim;
-    } else if (isRDraconis) {
-      const phase = ((mjd % 245) / 245) * Math.PI * 2;
-      const pulse = 0.55 + 0.45 * Math.sin(phase);
-      flux = (14 + 4 * Math.exp(-Math.pow((lambdaUm - 2.6) / 0.7, 2))) * pulse;
-      flux *= 1 - 0.25 * Math.exp(-Math.pow((lambdaUm - 2.7) / 0.14, 2));
-    } else if (isEpsInd) {
-      const t1 = 16 * Math.exp(-Math.pow((lambdaUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((lambdaUm - 1.25) / 0.06, 2)));
-      const t6 = 9 * Math.exp(-Math.pow((lambdaUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((lambdaUm - 1.62) / 0.07, 2)));
-      flux = 0.62 * t1 + 0.38 * t6;
-    } else {
-      flux *= 1 - 0.18 * Math.exp(-Math.pow((lambdaUm - 1.42) / 0.09, 2));
-      flux *= 1 - 0.22 * Math.exp(-Math.pow((lambdaUm - 2.72) / 0.14, 2));
-    }
-    const noise = (hash01(i * 12.9898 + ra + epochIndex * 7.3) - 0.5) * 0.35;
-    flux = Math.max(0.001, flux + noise);
-    const sigma = Math.max(0.02, 0.06 * flux + 0.12);
-    let flag = 0;
-    if (isBarnard && (det === 'D1' || det === 'D2') && hash01(i + px * 3) > 0.88) flag |= 1 << 1; // OVERFLOW
-    if (hash01(i * 3.1 + py) > 0.985) flag |= 1 << 0; // TRANSIENT
-    channels.push({
-      channel: i + 1,
-      detector: det,
-      wavelengthUm: Number(lambdaUm.toFixed(4)),
-      fluxMjySr: Number(flux.toFixed(5)),
-      uncertainty: Number(sigma.toFixed(5)),
-      flag,
-    });
-  }
-  return channels;
-}
-
 /** Solve 2-component NNLS: min_{a,b>=0} sum(((y - a*t1 - b*t2)/s)^2). */
 function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: number; b: number; chi2Red: number } {
   let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0;
@@ -193,9 +122,12 @@ function planckCosmo(z: number): { lookbackGyr: number; dCMpc: number } {
   return { lookbackGyr, dCMpc: dc };
 }
 
-function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { grid: PzPoint[]; bestZ: number } {
+function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { grid: PzPoint[]; bestZ: number | null } {
   const valid = lambdas.map((wave, i) => ({ wave, flux: flux[i], sigma: sigma[i] }))
     .filter((point) => Number.isFinite(point.wave) && Number.isFinite(point.flux) && Number.isFinite(point.sigma));
+  if (valid.length < 5) {
+    return { grid: [], bestZ: null };
+  }
   const grid: PzPoint[] = [];
   let best: PzPoint | null = null;
   for (let zi = 0; zi <= 250; zi++) {
@@ -232,7 +164,7 @@ export const SpectrophotometricLab: React.FC = () => {
   } = useTelemetryStore();
   const { setZ, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
   const { installedSections } = useInstalledSectionState();
-  const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Synthetic Injection Mode]');
+  const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Loading Archive Spectrum…]');
   const [spectrumStatus, setSpectrumStatus] = useState('');
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
 
@@ -262,7 +194,7 @@ export const SpectrophotometricLab: React.FC = () => {
     const fetchLiveSpectrum = async () => {
       setSpectrumLoading(true);
       setActiveSpectrum([]);
-      setSpectrumSourceBadge('[Synthetic Injection Mode]');
+      setSpectrumSourceBadge('[Loading Archive Spectrum…]');
       try {
         const position = probeSkyPosition ?? { ra, dec };
         const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
@@ -292,6 +224,7 @@ export const SpectrophotometricLab: React.FC = () => {
           data = await secRes.json();
         } else {
           if (forceLiveCoordKey !== coordKey) {
+            setSpectrumSourceBadge('[No Archive Data]');
             setSpectrumStatus('No installed section at this coordinate — pick an installed section or click Query Live');
             return;
           }
@@ -338,7 +271,8 @@ export const SpectrophotometricLab: React.FC = () => {
         }
       } catch (err) {
         if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
-          setSpectrumStatus(err instanceof Error ? err.message : 'Spectrum extraction unavailable — showing synthetic preview');
+          setSpectrumSourceBadge('[Spectrum Unavailable]');
+          setSpectrumStatus(err instanceof Error ? err.message : 'Archive spectrum extraction unavailable');
         }
       } finally {
         if (!cancelled) setSpectrumLoading(false);
@@ -384,24 +318,20 @@ export const SpectrophotometricLab: React.FC = () => {
 
   const epochIndex = isSpectralBlinkSynced ? activeEpochIndex : 0;
   const mjd = useMemo(() => {
-    const ep = loadedCutout?.epochs?.[epochIndex];
-    return (ep as any)?.mjd ?? 60810 + epochIndex * 183;
+    const ep = loadedCutout?.epochs?.[epochIndex] as { mjd?: number } | undefined;
+    return typeof ep?.mjd === 'number' && ep.mjd > 0 ? ep.mjd : null;
   }, [loadedCutout, epochIndex]);
 
-  const spectrum = useMemo(() => {
-    if (activeSpectrum && activeSpectrum.length >= 102) return activeSpectrum.slice(0, 102);
-    return generateSpectrum({
-      ra, dec, targetName: activeTargetName,
-      px: probedPixel?.x ?? 24, py: probedPixel?.y ?? 24,
-      epochIndex, mjdBase: 60810,
-    });
-  }, [activeSpectrum, ra, dec, activeTargetName, probedPixel?.x, probedPixel?.y, epochIndex]);
+  const spectrum = useMemo(
+    () => (activeSpectrum && activeSpectrum.length >= 102 ? activeSpectrum.slice(0, 102) : []),
+    [activeSpectrum]
+  );
   useEffect(() => { spectrumRef.current = spectrum; }, [spectrum]);
 
   useEffect(() => {
     let cancelled = false;
     const fetchSimilar = async () => {
-      if (!spectrum || spectrum.length < 10 || spectrumSourceBadge.includes('Synthetic')) {
+      if (!spectrum || spectrum.length < 102) {
         setSimilarMatches([]);
         setSimilarStatus('Install a section or query live spectrum for SIMD matching');
         return;
@@ -462,13 +392,12 @@ export const SpectrophotometricLab: React.FC = () => {
   const isRDraconis = (activeTargetName || '').toLowerCase().includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
   const isEpsInd = (activeTargetName || '').toLowerCase().includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
 
-  const perChannelMjd = useMemo(() => {
-    if (spectrum.some((channel) => Number.isFinite(channel.mjd))) return spectrum.map((channel) => channel.mjd ?? Number.NaN);
-    // R Draconis: spectral assembly is non-simultaneous across survey passes/epochs.
-    if (!isRDraconis) return spectrum.map(() => mjd);
-    return spectrum.map((c, i) => mjd + ((c.channel * 7 + i * 3) % 120) - 60);
-  }, [isRDraconis, spectrum, mjd]);
-  useEffect(() => { colorByMjdRef.current = colorByMjd && isRDraconis; }, [colorByMjd, isRDraconis]);
+  const perChannelMjd = useMemo(
+    () => spectrum.map((channel) => (typeof channel.mjd === 'number' && channel.mjd > 0 ? channel.mjd : Number.NaN)),
+    [spectrum]
+  );
+  const hasFiniteMjds = useMemo(() => perChannelMjd.some(Number.isFinite), [perChannelMjd]);
+  useEffect(() => { colorByMjdRef.current = colorByMjd && isRDraconis && hasFiniteMjds; }, [colorByMjd, isRDraconis, hasFiniteMjds]);
   useEffect(() => { specMjdRef.current = perChannelMjd; }, [perChannelMjd]);
   useEffect(() => {
     const arr = perChannelMjd.filter(Number.isFinite);
@@ -484,7 +413,7 @@ export const SpectrophotometricLab: React.FC = () => {
 
   // Epsilon Indi B NNLS unmixing
   const unmix = useMemo(() => {
-    if (!isEpsInd) return null;
+    if (!isEpsInd || spectrum.filter((c) => Number.isFinite(c.fluxMjySr)).length < 2) return null;
     const y = spectrum.map((c) => c.fluxMjySr);
     const s = spectrum.map((c) => c.uncertainty);
     const t1 = spectrum.map((c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2))));
@@ -658,9 +587,9 @@ export const SpectrophotometricLab: React.FC = () => {
   }, [setManualRedshiftZ, setZ]);
 
   const pointColors = useMemo(() => {
-    if (!isRDraconis || !colorByMjd) return null;
-    return perChannelMjd;
-  }, [isRDraconis, colorByMjd, perChannelMjd]);
+    if (!isRDraconis || !colorByMjd || !hasFiniteMjds) return null;
+    return perChannelMjd.filter(Number.isFinite);
+  }, [isRDraconis, colorByMjd, hasFiniteMjds, perChannelMjd]);
 
   return (
     <div className="flex h-full min-h-[720px] bg-neutral-950 text-neutral-100">
@@ -669,7 +598,7 @@ export const SpectrophotometricLab: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold tracking-wide text-white">Tab 3 — Spectrophotometric Lab</h2>
             <span className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-300">102 channels · 0.75–5.00 µm · λ vs Fν (MJy/sr)</span>
-            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${spectrumSourceBadge.includes('Synthetic') ? 'bg-amber-950/60 text-amber-300' : spectrumSourceBadge.startsWith('[Installed]') ? 'bg-emerald-950/60 text-emerald-300' : 'bg-sky-950/60 text-sky-300'}`}>{spectrumSourceBadge}</span>
+            <span className={`rounded px-2 py-0.5 font-mono text-[10px] ${spectrumSourceBadge.startsWith('[Installed]') ? 'bg-emerald-950/60 text-emerald-300' : spectrumSourceBadge.startsWith('[IRSA Live') ? 'bg-sky-950/60 text-sky-300' : 'bg-amber-950/60 text-amber-300'}`}>{spectrumSourceBadge}</span>
             {readyInstalledSections.length > 0 && (
               <select
                 aria-label="Installed section for spectrum"
@@ -738,16 +667,23 @@ export const SpectrophotometricLab: React.FC = () => {
             <span><span className="inline-block h-0 w-0 border-x-[4px] border-b-[7px] border-x-transparent border-b-amber-400 align-middle" /> Bit 1 OVERFLOW</span>
             <span>uPlot canvas, 102 points (&lt;1.5 ms/frame updates)</span>
           </div>
-          {isRDraconis && (
+          {isRDraconis && hasFiniteMjds && (
             <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-neutral-300">
               <input type="checkbox" checked={colorByMjd} onChange={(e) => setColorByMjd(e.target.checked)} />
-              Color points by observation MJD (R Draconis, [Non-Simultaneous Spectrum], MJD {mjd.toFixed(2)})
+              Color points by observation MJD (R Draconis, [Non-Simultaneous Spectrum]{mjd !== null ? `, MJD ${mjd.toFixed(2)}` : ''})
             </label>
           )}
         </div>
 
         <div className="relative min-h-0 flex-1 p-3">
           <div ref={chartRef} className="h-[420px] w-full rounded border border-neutral-800 bg-neutral-950" aria-label="102-channel hyperspectral plot" />
+          {spectrum.length === 0 && (
+            <div className="pointer-events-none absolute inset-3 flex h-[420px] items-center justify-center">
+              <div className="rounded border border-neutral-800 bg-neutral-900/90 px-4 py-2 text-center text-xs text-neutral-300">
+                {spectrumStatus || 'No archive spectrum loaded for this coordinate'}
+              </div>
+            </div>
+          )}
           {flagTip && (
             <div className="pointer-events-none fixed z-50 max-w-xs rounded border border-amber-500/50 bg-neutral-900 px-2 py-1 text-[11px] text-amber-200 shadow" style={{ left: flagTip.x + 10, top: flagTip.y + 10 }}>
               {flagTip.text}
@@ -782,10 +718,14 @@ export const SpectrophotometricLab: React.FC = () => {
           <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-300">Automated Galaxy Photo-z Solver (Planck 2018: H0=67.4, Ωm=0.315, ΩΛ=0.685)</h3>
           <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
             <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3 text-[11px]">
-              <div>Best-fit redshift: <span className="font-mono font-semibold text-sky-300">z = {photoZ.bestZ.toFixed(2)}</span> (grid Δz=0.01, z∈[0,2.5])</div>
-              {(() => { const b = photoZ.grid[Math.round(photoZ.bestZ * 100)] || photoZ.grid[0]; return (
-                <div className="mt-1 text-neutral-300">Lookback time: <span className="font-mono text-white">{b.lookbackGyr.toFixed(2)} Gyr</span> · Comoving distance D_C: <span className="font-mono text-white">{b.dCMpc.toFixed(0)} Mpc</span></div>
-              ); })()}
+              <div>Best-fit redshift: <span className="font-mono font-semibold text-sky-300">{photoZ.bestZ !== null ? `z = ${photoZ.bestZ.toFixed(2)}` : '—'}</span> (grid Δz=0.01, z∈[0,2.5])</div>
+              {(() => {
+                const best = photoZ.bestZ;
+                const b = best !== null ? (photoZ.grid[Math.round(best * 100)] || photoZ.grid[0]) : null;
+                return (
+                  <div className="mt-1 text-neutral-300">Lookback time: <span className="font-mono text-white">{b ? `${b.lookbackGyr.toFixed(2)} Gyr` : '—'}</span> · Comoving distance D_C: <span className="font-mono text-white">{b ? `${b.dCMpc.toFixed(0)} Mpc` : '—'}</span></div>
+                );
+              })()}
               <svg viewBox="0 0 320 90" className="mt-2 h-[90px] w-full rounded bg-neutral-950">
                 {photoZ.grid.map((p, i) => {
                   if (i % 2) return null;
@@ -793,7 +733,9 @@ export const SpectrophotometricLab: React.FC = () => {
                   const y = 88 - p.p * 84;
                   return <circle key={p.z} cx={x} cy={y} r={1.2} fill="#38bdf8" />;
                 })}
-                <line x1={(photoZ.bestZ/2.5)*318+1} y1={0} x2={(photoZ.bestZ/2.5)*318+1} y2={90} stroke="#f59e0b" strokeDasharray="3 2" />
+                {photoZ.bestZ !== null && (
+                  <line x1={(photoZ.bestZ/2.5)*318+1} y1={0} x2={(photoZ.bestZ/2.5)*318+1} y2={90} stroke="#f59e0b" strokeDasharray="3 2" />
+                )}
                 <text x="4" y="12" fill="#a3a3a3" fontSize="9">P(z)</text>
                 <text x="280" y="86" fill="#a3a3a3" fontSize="9">z</text>
               </svg>
@@ -835,11 +777,19 @@ export const SpectrophotometricLab: React.FC = () => {
                 const t1 = spectrum.map((c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2))));
                 const t6 = spectrum.map((c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2))));
                 const comp = spectrum.map((_, i) => unmix.a * t1[i] + unmix.b * t6[i]);
-                const vals = [...spectrum.map(c=>c.fluxMjySr), ...comp];
-                const max = Math.max(...vals, 1); const min = Math.min(...vals, 0);
+                const vals = [...spectrum.map(c=>c.fluxMjySr), ...comp].filter(Number.isFinite);
+                const max = vals.length ? Math.max(...vals, 1) : 1; const min = vals.length ? Math.min(...vals, 0) : 0;
                 const sx = (l: number) => ((l - 0.75) / 4.25) * 318 + 1;
                 const sy = (v: number) => 118 - ((v - min) / Math.max(max - min, 1e-6)) * 114;
-                const path = (arr: number[]) => arr.map((v,i)=>`${i?'L':'M'}${sx(spectrum[i].wavelengthUm)},${sy(v)}`).join(' ');
+                const path = (arr: number[]) => {
+                  let penDown = false;
+                  return arr.map((v, i) => {
+                    if (!Number.isFinite(v)) { penDown = false; return ''; }
+                    const cmd = penDown ? 'L' : 'M';
+                    penDown = true;
+                    return `${cmd}${sx(spectrum[i].wavelengthUm)},${sy(v)}`;
+                  }).filter(Boolean).join(' ');
+                };
                 return (<>
                   <path d={path(spectrum.map(c=>c.fluxMjySr))} fill="none" stroke="#fff" strokeWidth="1.2" />
                   <path d={path(comp)} fill="none" stroke="#22c55e" strokeWidth="1.2" strokeDasharray="4 2" />
@@ -886,7 +836,7 @@ export const SpectrophotometricLab: React.FC = () => {
 
         <div className="mt-4 rounded border border-neutral-800 bg-neutral-950/40 p-3 text-[11px] text-neutral-400">
           <div className="font-semibold text-neutral-300">Pixel → Spectrum link (Tab 2 contract)</div>
-          <div className="mt-1">Reads <span className="font-mono">useTelemetryStore.probedPixel</span> / <span className="font-mono">activeSpectrum</span> (set by Tab 2 on pixel click). When no 102-ch spectrum is loaded, generates a deterministic 102-channel preview for the current target, pixel, and epoch.</div>
+          <div className="mt-1">Reads <span className="font-mono">useTelemetryStore.probedPixel</span> / <span className="font-mono">activeSpectrum</span> (set by Tab 2 on pixel click) and extracts directly from installed SPHEREx sections or live IRSA HDU 5/6 exposures.</div>
         </div>
       </aside>
     </div>
