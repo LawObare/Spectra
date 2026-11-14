@@ -510,7 +510,6 @@ export const CelestialNavigator: React.FC = () => {
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
   // Sky viewport FoV is separate from fovArcsec, which is the spectral cutout size.
   const [displayFovDeg, setDisplayFovDeg] = useState<number>(DEFAULT_SKY_FOV_DEG);
-  const [detailFitsStatus, setDetailFitsStatus] = useState<'wide' | 'loading' | 'ready' | 'unavailable'>('wide');
   const [hipsReady, setHipsReady] = useState<boolean>(false);
   const [hipsError, setHipsError] = useState<boolean>(false);
   const [aladinReady, setAladinReady] = useState<boolean>(false);
@@ -933,7 +932,6 @@ export const CelestialNavigator: React.FC = () => {
                 instance.removeImageLayer(detailLayer.name);
                 URL.revokeObjectURL(detailLayer.url);
                 detailFitsLayerRef.current = null;
-                setDetailFitsStatus('wide');
               }
             }
             lastInternalCoordRef.current = { ra: normRa, dec: normDec };
@@ -1395,7 +1393,6 @@ export const CelestialNavigator: React.FC = () => {
 
     if (displayFovDeg > DETAIL_FITS_FOV_DEG) {
       removeCurrentDetailLayer();
-      setDetailFitsStatus('wide');
       return;
     }
 
@@ -1411,7 +1408,6 @@ export const CelestialNavigator: React.FC = () => {
         !Number.isFinite(raCenter) || !Number.isFinite(decCenter) ||
         !Number.isFinite(fovDeg) || fovDeg <= 0 || !Number.isFinite(aspectRatio)
       ) {
-        setDetailFitsStatus('unavailable');
         return;
       }
 
@@ -1436,7 +1432,6 @@ export const CelestialNavigator: React.FC = () => {
       });
       const controller = new AbortController();
       detailFitsAbortControllerRef.current = controller;
-      setDetailFitsStatus('loading');
 
       try {
         const response = await fetch(
@@ -1464,14 +1459,12 @@ export const CelestialNavigator: React.FC = () => {
           }
           removeCurrentDetailLayer();
           detailFitsLayerRef.current = { name: layerName, url: fitsUrl };
-          setDetailFitsStatus('ready');
         };
         const onFitsError = (error: unknown) => {
           discardLayer();
           if (requestId !== detailFitsRequestIdRef.current) return;
           removeCurrentDetailLayer();
           console.warn('2MASS Ks FITS detail failed to load:', error);
-          setDetailFitsStatus('unavailable');
         };
 
         aladin.displayFITS(
@@ -1486,7 +1479,6 @@ export const CelestialNavigator: React.FC = () => {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
           console.warn('2MASS Ks FITS detail request failed:', error);
           removeCurrentDetailLayer();
-          setDetailFitsStatus('unavailable');
         }
       }
     }, 350);
@@ -1905,38 +1897,6 @@ export const CelestialNavigator: React.FC = () => {
             <span>Gaia DR3: {gaiaStatus}</span>
             <span className="text-neutral-700">|</span>
             <span>SkyBot: {skybotStatus}</span>
-          </div>
-
-          {/* Top-Left Astrometric Compass / Status */}
-          <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-xl border border-neutral-800 bg-neutral-950/92 px-3 py-2 shadow-sm">
-            <svg className="h-7 w-7 text-primary" viewBox="0 0 32 32" fill="none">
-              <circle cx="16" cy="16" r="13" stroke="#262626" strokeWidth="1" />
-              <path d="M16 5L16 20" stroke="#288BFF" strokeWidth="1.5" />
-              <path d="M13.5 8.5L16 4.5L18.5 8.5" stroke="#288BFF" strokeWidth="1.5" />
-              <path d="M6 16L16 16" stroke="#A3A3A3" strokeWidth="1.2" />
-              <text x="14" y="3.8" fill="#FFFFFF" fontSize="5" fontFamily="monospace">
-                N
-              </text>
-              <text x="1" y="17.5" fill="#A3A3A3" fontSize="5" fontFamily="monospace">
-                E
-              </text>
-            </svg>
-            <div className="flex flex-col">
-              <span className="font-mono text-[10px] text-white">
-                {detailFitsStatus === 'ready'
-                  ? '2MASS Ks FITS close detail'
-                  : `Aladin Lite v3 WebGL2 · ${PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'All-Sky Survey'}`}
-              </span>
-              <span className="font-mono text-[10px] text-neutral-400">
-                {detailFitsStatus === 'ready'
-                  ? 'CDS HiPS2FITS · 2.16 µm archival context · not SPHEREx data'
-                  : detailFitsStatus === 'loading'
-                    ? 'Loading 2MASS Ks FITS detail… · Drag to pan · Scroll to zoom'
-                    : detailFitsStatus === 'unavailable'
-                      ? `2MASS FITS unavailable · showing ${PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.label || 'selected survey'} HiPS`
-                      : PHOTOGRAPHIC_SURVEYS.find((s) => s.id === activeSurvey)?.badge || 'Multi-Resolution HiPS Pyramid'} · Drag to pan · Scroll to zoom
-              </span>
-            </div>
           </div>
 
           {/* Bottom-Right Calibrated Angular Scale Bar */}
