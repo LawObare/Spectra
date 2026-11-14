@@ -56,8 +56,33 @@ function emitChange() {
 }
 
 function setSnapshot(updater: (prev: SectionStoreSnapshot) => SectionStoreSnapshot) {
-  snapshot = updater(snapshot);
+  const next = updater(snapshot);
+  if (next === snapshot) return;
+  snapshot = next;
   emitChange();
+}
+
+function installedSectionListsEqual(a: InstalledSection[], b: InstalledSection[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.section_id !== y.section_id ||
+      x.status !== y.status ||
+      x.task_id !== y.task_id ||
+      x.epochs !== y.epochs ||
+      x.bands !== y.bands ||
+      x.size_bytes !== y.size_bytes ||
+      x.updated_at !== y.updated_at ||
+      x.error_message !== y.error_message ||
+      x.label !== y.label ||
+      x.fov_arcsec !== y.fov_arcsec
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function downloadKeyFor(ra: number, dec: number, fovArcsec: number): string {
@@ -65,12 +90,29 @@ function downloadKeyFor(ra: number, dec: number, fovArcsec: number): string {
 }
 
 function updateDownloadingEntry(key: string, patch: Partial<DownloadingSection>) {
-  setSnapshot((prev) => ({
-    ...prev,
-    downloadingSections: prev.downloadingSections.map((item) =>
-      item.key === key ? { ...item, ...patch } : item
-    ),
-  }));
+  setSnapshot((prev) => {
+    const idx = prev.downloadingSections.findIndex((item) => item.key === key);
+    if (idx === -1) return prev;
+    const current = prev.downloadingSections[idx];
+    const nextItem = { ...current, ...patch };
+    const progressChanged =
+      Math.round((current.progress || 0) * 100) !== Math.round((nextItem.progress || 0) * 100);
+    const otherChanged =
+      current.message !== nextItem.message ||
+      current.queueState !== nextItem.queueState ||
+      current.section_id !== nextItem.section_id ||
+      current.task_id !== nextItem.task_id ||
+      current.label !== nextItem.label;
+    if (!progressChanged && !otherChanged) {
+      return prev;
+    }
+    const nextList = prev.downloadingSections.slice();
+    nextList[idx] = nextItem;
+    return {
+      ...prev,
+      downloadingSections: nextList,
+    };
+  });
 }
 
 function removeDownloadingEntry(key: string) {
@@ -107,13 +149,15 @@ async function trackTaskProgressAndFinalize(
             if (!line.startsWith('data:')) continue;
             try {
               const evt = JSON.parse(line.slice(5).trim());
+              const patch: Partial<DownloadingSection> = {};
               if (typeof evt.progress === 'number') {
-                updateDownloadingEntry(key, {
-                  progress: Math.max(0.05, Math.min(0.96, evt.progress)),
-                });
+                patch.progress = Math.max(0.05, Math.min(0.96, evt.progress));
               }
               if (evt.message) {
-                updateDownloadingEntry(key, { message: String(evt.message) });
+                patch.message = String(evt.message);
+              }
+              if (Object.keys(patch).length > 0) {
+                updateDownloadingEntry(key, patch);
               }
               if (evt.status === 'error') {
                 throw new Error(String(evt.message || 'Install error'));
@@ -246,7 +290,11 @@ export async function fetchInstalledSections(signal?: AbortSignal): Promise<Inst
     const data = (await res.json()) as { sections?: InstalledSection[] };
     const list = Array.isArray(data.sections) ? data.sections : [];
     hasLoadedInitialSections = true;
-    setSnapshot((prev) => ({ ...prev, installedSections: list }));
+    setSnapshot((prev) =>
+      installedSectionListsEqual(prev.installedSections, list)
+        ? prev
+        : { ...prev, installedSections: list }
+    );
 
     // Re-attach to any in-flight backend install (e.g., after page reload) without restarting it
     list.forEach((sec) => {
