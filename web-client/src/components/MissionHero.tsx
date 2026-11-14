@@ -124,7 +124,7 @@ export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation })
               Target Census
             </span>
             <span className="text-base sm:text-lg font-bold text-white leading-tight">
-              450M Galaxies + 100M★
+              450M Galaxies + 100M Stars
             </span>
             <span className="text-[11px] text-neutral-400 mt-1">
               Milky Way & Interstellar Ices

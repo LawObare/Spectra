@@ -763,8 +763,14 @@ export const TimeDomainComparator: React.FC = () => {
           </div>
 
           <div className="mt-2 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-[#38BDF8]">● Band D1 (Optical/NIR)</span>
-            <span className="text-[#F59E0B]">● Band D5 (Thermal IR)</span>
+            <span className="flex items-center gap-1.5 text-[#38BDF8]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#38BDF8]" />
+              <span>Band D1 (Optical/NIR)</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-[#F59E0B]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#F59E0B]" />
+              <span>Band D5 (Thermal IR)</span>
+            </span>
             {activeBenchmark?.id === 'rw_aur' && (
               <span className="text-[#22C55E]">Dimming: &gt;1.5 mag</span>
             )}
