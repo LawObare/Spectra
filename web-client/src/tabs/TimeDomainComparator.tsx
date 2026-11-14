@@ -161,6 +161,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [dataStatus, setDataStatus] = useState<'loading' | 'error' | 'ready'>('loading');
   const [dataMessage, setDataMessage] = useState('Contacting the SPHEREx archive…');
   const [dataProgress, setDataProgress] = useState(0);
+  const [loadedCutoutCount, setLoadedCutoutCount] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
 
   const handleSubmitClassification = async () => {
@@ -441,6 +442,13 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         worker.postMessage({ buffer: buf }, [buf]);
       });
 
+    const getDecoderWorker = () => {
+      if (!decoderWorker) {
+        decoderWorker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), { type: 'module' });
+      }
+      return decoderWorker;
+    };
+
     const mapDecodedTensor = (decoded: TensorWorkerResponse) => {
       const hdr: TensorHeader = decoded.header;
       const [epochs, bands, h, w] = hdr.shape;
@@ -502,6 +510,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     const loadCutoutTensor = async () => {
       setDataStatus('loading');
       setDataProgress(0);
+      setLoadedCutoutCount(0);
       setDataMessage('Querying IRSA for real SPHEREx exposures…');
       setLoadedTensor(null);
       setEpochIndex(0);
@@ -532,6 +541,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         const progressDecoder = new TextDecoder();
         let pendingEvents = '';
         let taskComplete = false;
+        let seenPartialRevision = 0;
+        let hasRenderedPartial = false;
         while (!cancelled && !taskComplete) {
           const { value, done } = await progressReader.read();
           if (done) break;
@@ -542,6 +553,42 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             const dataLine = eventText.split(/\r?\n/).find((line) => line.startsWith('data:'));
             if (!dataLine) continue;
             const progress = JSON.parse(dataLine.slice(5).trim());
+            const partialRevision = Number(progress.partial_revision || 0);
+            if (partialRevision > seenPartialRevision) {
+              const partialRes = await fetch(`/api/cutout/${task_id}/partial-tensor`, {
+                signal: requestController.signal,
+              });
+              if (partialRes.ok) {
+                const partialDecoded = await decodeBinaryTensorBuffer(
+                  await partialRes.arrayBuffer(),
+                  getDecoderWorker(),
+                );
+                const partialTensor = mapDecodedTensor(partialDecoded);
+                if (!partialTensor.isSimulated && !cancelled) {
+                  setLoadedTensor(partialTensor);
+                  useTelemetryStore.setState({ sourceBadge: partialTensor.sourceBadge });
+                  setLoadedCutoutCount(Number(progress.partial_exposure_count || 1));
+                  if (!hasRenderedPartial) {
+                    const firstObservedCell = partialTensor.nExpData
+                      .flatMap((epochPlanes, epochIndex) =>
+                        epochPlanes.map((plane, bandIndex) => ({ plane, epochIndex, bandIndex })),
+                      )
+                      .find(({ plane }) => plane.some((count) => count > 0));
+                    if (firstObservedCell) {
+                      setEpochIndex(firstObservedCell.epochIndex);
+                      setActiveBandIndex(firstObservedCell.bandIndex);
+                    }
+                    hasRenderedPartial = true;
+                  }
+                  setDataMessage(
+                    `Showing ${Number(progress.partial_exposure_count || 1)} matched cutouts; fetching the remaining observations.`,
+                  );
+                  seenPartialRevision = partialRevision;
+                }
+              } else if (partialRes.status !== 202) {
+                throw new Error(`Partial cutout request failed (${partialRes.status})`);
+              }
+            }
             if (progress.status === 'error') {
               throw new Error(progress.message || 'IRSA could not return usable exposures.');
             }
@@ -561,9 +608,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         if (!taskComplete) throw new Error('IRSA progress stream ended before the task completed.');
         const tensorRes = await fetch(`/api/cutout/${task_id}/tensor`, { signal: requestController.signal });
         if (!tensorRes.ok) throw new Error(`IRSA tensor request failed (${tensorRes.status})`);
-        decoderWorker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), { type: 'module' });
-        const decoded = await decodeBinaryTensorBuffer(await tensorRes.arrayBuffer(), decoderWorker);
-        decoderWorker.terminate();
+        const decoded = await decodeBinaryTensorBuffer(await tensorRes.arrayBuffer(), getDecoderWorker());
+        decoderWorker?.terminate();
         decoderWorker = null;
         const parsed = mapDecodedTensor(decoded);
         if (parsed.isSimulated) {
@@ -869,6 +915,47 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             </button>
           </div>
         </div>
+
+        {dataStatus !== 'ready' && (
+          <div
+            className={`border-b px-4 py-2 ${dataStatus === 'error' ? 'border-amber-900 bg-amber-950/60' : 'border-cyan-950 bg-slate-950'}`}
+            role={dataStatus === 'error' ? 'alert' : 'status'}
+          >
+            <div className="mb-1 flex items-center justify-between gap-4 text-[11px]">
+              <span className={dataStatus === 'error' ? 'text-amber-200' : 'text-cyan-200'}>
+                {dataStatus === 'loading'
+                  ? `${loadedCutoutCount} cutouts displayed · remaining observations loading`
+                  : 'Showing partial observations · archive load did not finish'}
+              </span>
+              <span className="shrink-0 font-mono text-neutral-400">{Math.round(dataProgress * 100)}%</span>
+            </div>
+            <div
+              className="h-1 overflow-hidden rounded bg-slate-800"
+              role="progressbar"
+              aria-label="Remaining SPHEREx cutouts loading"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(dataProgress * 100)}
+            >
+              <div
+                className="h-full rounded bg-cyan-400 transition-[width] duration-300 ease-out"
+                style={{ width: `${Math.max(1, dataProgress * 100)}%` }}
+              />
+            </div>
+            {dataStatus === 'error' && (
+              <div className="mt-1 flex items-center justify-between gap-4 text-[10px]">
+                <span className="truncate text-amber-300">{dataMessage}</span>
+                <button
+                  type="button"
+                  className="shrink-0 text-amber-100 underline"
+                  onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Central WebGL2 Canvas Viewport (Expansive & Fluid) */}
         <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black p-4">
