@@ -8,7 +8,7 @@
 ## 1. Single Source of Truth
 
 - **The Law of the Repo:** [`SPECIFICATION.md`](SPECIFICATION.md) (v3.0.0-PROD) is the authoritative, immutable specification.
-- **No Guessing / No Hallucinating:** Never guess conventions, architecture, database schemas, or coordinates. All mathematical formulas, WCS reprojection steps, 12-bit FLAGS masks, and component contracts are already defined in `SPECIFICATION.md`.
+- **No Guessing / No Hallucinating:** Never guess conventions, architecture, database schemas, or coordinates. All mathematical formulas, WCS reprojection steps, 32-bit FLAGS masks, and component contracts are already defined in `SPECIFICATION.md`.
 - **Grounding Discipline:** Adhere to the `grounding-before-coding` skill:
   - Before writing code, inspect real implementations.
   - Quote `file:line` evidence for any load-bearing claim.
@@ -87,10 +87,69 @@ To conserve token budgets and maximize engineering throughput across model sessi
 
 ---
 
-## 6. Pre-Commit Verification Checklist
+## 6. Multi-Agent Swarm Protocol (6-Engineer Team Isolation)
 
-Before claiming any task or phase is complete, the agent must verify:
-- [ ] Code strictly matches the interfaces in [`SPECIFICATION.md`](SPECIFICATION.md).
-- [ ] `task dev` launches without compilation errors across Python and React.
+You are 1 of 6 concurrent AI coding agents operating on `LawObare/Spectra`. Uncoordinated edits, invented interfaces, or out-of-scope file modifications will break sibling agents' builds. Follow these rules without exception:
+
+### 6.1 1-to-1 Developer-to-Role Bijection, Zero Cross-Role Poaching & Branch Isolation
+1. **The 1-to-1 Developer-to-Role Bijection Rule (No Two Devs on the Same Role):**
+   - Each of the 6 roles (`E1`–`E6`) is locked **1-to-1** to **strictly one human developer's GitHub username and Git email** in [`tasks.md` §0.1](tasks.md). Two developers may **never** share, split, or simultaneously work the same role (`E1`–`E6`), and one developer may **never** claim two roles.
+   - **Mandatory Pre-Flight Identity Check:** Before reading or writing code for Issue `#<N>`, you **must** run:
+     ```bash
+     gh api user --jq .login && git config user.email
+     gh issue list --label <role-label-of-issue-N> --json number,assignees
+     ```
+   - Verify your operator's GitHub username/email against the Role Lock Roster in [`tasks.md` §0.1](tasks.md) and the GitHub assignees for that `role:E*` label. If another developer (`@other_user`) is already registered to that role in [`tasks.md`](tasks.md) or assigned to issues under that `role:E*` label on GitHub, **refuse and halt immediately**:
+     > *"STOP: Role `<E_k>` (`<role:E_k-*>`) is already locked to `@<existing_owner>`. Under the 1-to-1 Developer-to-Role Bijection Rule (`AGENTS.md` §6.1 & `tasks.md` §0.1), two developers cannot take the same role."*
+2. **The Zero Cross-Role Poaching Rule ([`tasks.md`](tasks.md) is Law):**
+   - Every GitHub Issue (`#1`–`#30`) has **strictly one owner role (`E1`–`E6`)** assigned by domain relevance in [`tasks.md`](tasks.md):
+     - **`E1` (`role:E1-astro`):** `#3, #9, #10, #11, #19, #24` (6 issues)
+     - **`E2` (`role:E2-backend`):** `#5, #7, #8, #12, #22` (5 issues)
+     - **`E3` (`role:E3-webgl`):** `#17, #18, #27` (3 issues)
+     - **`E4` (`role:E4-frontend`):** `#14, #15, #16, #23, #28` (5 issues)
+     - **`E5` (`role:E5-datasci`):** `#20, #21, #25, #26` (4 issues)
+     - **`E6` (`role:E6-devops`):** `#1, #2, #4, #6, #13, #29, #30` (7 issues)
+   - **Mandatory Agent Refusal:** Before writing any code, verify your human operator's role (`E1`–`E6`) against [`tasks.md`](tasks.md). If prompted to implement an issue or modify files owned by another developer's role, **refuse and halt immediately**:
+     > *"STOP: Issue `#<N>` (`<path>`) is locked to Role `<Owner>` in `tasks.md`. Under the Zero Cross-Role Poaching Rule (`AGENTS.md` §6.1), I cannot execute another developer's assigned job."*
+3. **Bind to Exactly One GitHub Issue (`#1`–`#30`):** Before reading or writing code, run `gh issue view <N>` to load your assigned issue's Specification Anchors, Target Files, and Acceptance Criteria.
+4. **Never Cross Issue Boundaries:** Do not implement features belonging to another issue or phase.
+5. **Never Commit to `main`:** Always create and work on an isolated branch:
+   ```bash
+   git checkout main && git pull --ff-only
+   git checkout -b feat/issue-<N>-<short-slug>
+   ```
+
+### 6.2 Strict File Write-Fences (Blast-Radius Control)
+Each agent role has an **Exclusive Write Territory** matching [`tasks.md`](tasks.md). You are **forbidden** from modifying files outside your role's territory:
+
+| Agent Role Label | Assigned Issues | Allowed Write Paths | Forbidden Paths (Read-Only) |
+|---|---|---|---|
+| `role:E1-astro` | `#3, #9, #10, #11, #19, #24` | `backend/science/{wave_match,reproject,centroid,wave,injector}.py`, `backend/api/spectrum.py`, `scripts/spike_s3_*`, `backend/tests/test_science_*` | `backend/db/*`, `backend/science/{ingest,similarity}.py`, `web-client/*` |
+| `role:E2-backend` | `#5, #7, #8, #12, #22` | `backend/main.py`, `backend/db/*`, `backend/cache/*`, `backend/science/ingest.py`, `backend/api/{resolve,cutout,auth,classify}.py`, `backend/tests/{test_sql,test_api_*,test_science_ingest}.py` | `backend/science/{wave_match,reproject,centroid,wave,injector,similarity}.py`, `backend/ml/*`, `web-client/*` |
+| `role:E3-webgl` | `#17, #18, #27` | `web-client/src/shaders/*`, `web-client/src/workers/*`, `web-client/src/tabs/TimeDomainComparator.tsx`, `web-client/src/components/WebGLComparatorCanvas.tsx`, `web-client/src/admin/{AdminLayout,TrainingDynamics,ActivationInspector,DecisionBoundaries}.tsx`, `web-client/src/admin/hooks/useAdminTelemetry.ts` | `backend/*`, `web-client/src/store/*` |
+| `role:E4-frontend` | `#14, #15, #16, #23, #28` | `web-client/src/App.tsx`, `web-client/src/store/*`, `web-client/src/hooks/*`, `web-client/src/components/*`, `web-client/src/tabs/{CelestialNavigator,ObservationDiscussions}.tsx`, `web-client/src/admin/{HardNegativeTriage,DataProductExports}.tsx`, `backend/api/{forum,export}.py` | `backend/science/*`, `web-client/src/shaders/*`, `web-client/src/tabs/{TimeDomainComparator,SpectrophotometricLab,MolecularIceStudio}.tsx` |
+| `role:E5-datasci` | `#20, #21, #25, #26` | `web-client/src/tabs/SpectrophotometricLab.tsx`, `web-client/src/tabs/MolecularIceStudio.tsx`, `backend/science/similarity.py`, `backend/ml/*`, `backend/admin_ws.py`, `backend/data/*.json` | `backend/api/*`, `backend/db/*`, `web-client/src/store/*`, `web-client/src/admin/*` |
+| `role:E6-devops` | `#1, #2, #4, #6, #13, #29, #30` | `scripts/*`, `benchmarks/*`, `.github/workflows/*`, `Dockerfile`, `start.sh`, `Taskfile.yml`, `web-client/public/benchmarks/*`, `backend/db/seed_benchmarks.sql` | Application feature code in `backend/api/*`, `backend/science/*`, `web-client/src/tabs/*` |
+
+- **Shared File Lock Rule:** Once Issue `#4` (Scaffold) and Issue `#14` (Zustand Store & URL Hooks) are merged, `backend/pyproject.toml`, `backend/uv.lock`, `web-client/package.json`, `web-client/src/store/useTelemetryStore.ts`, and `web-client/src/hooks/useSpectraUrlState.ts` are **FROZEN**.
+- **No Unapproved Package Installs:** Never run `uv add <pkg>` or `npm install <pkg>` after Issue `#4`. Modifying lockfiles on feature branches guarantees merge conflicts across all 6 agents.
+
+### 6.3 Immutable Wire & Memory Contracts (Zero Naming Drift)
+1. **Binary Tensor Stream (`GET /api/cutout/{task_id}/tensor`):**
+   - Bytes `0..3`: Little-endian `uint32` byte length $L$ of UTF-8 JSON header.
+   - Bytes `4..(4+L-1)`: UTF-8 JSON header (`shape: [N_epochs, N_bands, H, W]`, `crval`, `cdelt`, `mjd_ranges`, `exposure_ids`, `release`, `source_badge`, `compression`).
+   - Binary planes in exact order: `FLUX` (`float32`), `VARIANCE` (`float32`), `FLAGS` (`uint32`), `N_EXPOSURES` (`uint16`) = **14 bytes/pixel**.
+2. **URL Query Keys (`nuqs`):** Strictly `tab`, `ra`, `dec`, `fov`, `cadence`, `mode`, `preset`, `z`, `px`, `py`, `embed`.
+3. **Zero-Auth Headers:** Strictly `X-Observer-ID` (UUIDv4) and `X-Observer-Key` (32-byte hex secret). Zero `@supabase/supabase-js` or Supabase anon keys in browser bundles.
+
+---
+
+## 7. Pre-Commit & Pre-PR Verification Checklist
+
+Before claiming any issue is complete or opening a PR (`gh pr create`), the agent must verify:
+- [ ] Code strictly matches the interfaces in [`SPECIFICATION.md`](SPECIFICATION.md) and all acceptance criteria in `gh issue view <N>`.
+- [ ] Backend checks pass: `cd backend && uv run ruff check . && uv run pytest`.
+- [ ] Frontend build passes: `cd web-client && npm run build`.
+- [ ] Blast-radius check passes (`git status --short` and `git diff --stat main`): zero untracked scratch files, zero lockfile churn, and zero edits outside the issue's target files.
 - [ ] No hardcoded passwords, tokens, or JWT walls blocking access.
-- [ ] Changes are committed with conventional commit messages (`feat:`, `fix:`, `docs:`, `refactor:`).
+- [ ] Changes are committed with conventional commit messages (`feat(phase-1): ... (#<N>)`) and PR body includes `Closes #<N>`.
