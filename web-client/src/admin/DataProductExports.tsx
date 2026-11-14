@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from '../components/ui';
 import { cn } from '../lib/utils';
 
@@ -166,6 +166,22 @@ export const DataProductExports: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'exporters' | 'reliability' | 'calibration'>('exporters');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [copiedCurl, setCopiedCurl] = useState<string | null>(null);
+  const [liveSummary, setLiveSummary] = useState<Record<string, { count: number; verified_count: number }> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/admin/export/summary')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.products) {
+          setLiveSummary(data.products);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Trigger export download from FastAPI backend
   const handleDownload = async (productId: string, format: string) => {
@@ -278,7 +294,7 @@ export const DataProductExports: React.FC = () => {
                         Deliverable #{prod.deliverable_num}
                       </Badge>
                       <span className="font-mono text-[11px] text-muted-foreground">
-                        {prod.recordCount} records · {prod.estBytes}
+                        {liveSummary?.[prod.id]?.count ?? prod.recordCount} records · {prod.estBytes}
                       </span>
                     </div>
                     <CardTitle className="text-sm font-semibold text-foreground mt-2">

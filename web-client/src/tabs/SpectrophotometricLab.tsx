@@ -255,6 +255,11 @@ export const SpectrophotometricLab: React.FC = () => {
 
   const [colorByMjd, setColorByMjd] = useState(false);
   const [flagTip, setFlagTip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [similarMatches, setSimilarMatches] = useState<
+    Array<{ id?: string; name: string; spectral_class: string; similarity: number; flux_curve: number[] }>
+  >([]);
+  const [isFindingSimilar, setIsFindingSimilar] = useState(false);
+
   const zRef = useRef(manualRedshiftZ);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -280,6 +285,36 @@ export const SpectrophotometricLab: React.FC = () => {
     });
   }, [activeSpectrum, ra, dec, activeTargetName, probedPixel?.x, probedPixel?.y, epochIndex]);
   useEffect(() => { spectrumRef.current = spectrum; }, [spectrum]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSimilar = async () => {
+      if (!spectrum || spectrum.length < 10) return;
+      setIsFindingSimilar(true);
+      try {
+        const fluxArr = spectrum.map((c) => c.fluxMjySr);
+        const res = await fetch('/api/subjects/similar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spectrum: fluxArr }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled && Array.isArray(data.matches)) {
+            setSimilarMatches(data.matches);
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      } finally {
+        if (!cancelled) setIsFindingSimilar(false);
+      }
+    };
+    fetchSimilar();
+    return () => {
+      cancelled = true;
+    };
+  }, [spectrum]);
 
   const isRDraconis = (activeTargetName || '').toLowerCase().includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
   const isEpsInd = (activeTargetName || '').toLowerCase().includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
@@ -602,6 +637,38 @@ export const SpectrophotometricLab: React.FC = () => {
         ) : (
           <p className="mt-2 text-[11px] text-neutral-500">Unmixing panel activates for Epsilon Indi B (Epoch 2025.5: 331.09566°, -56.80031°). Select that benchmark/coordinate to see T1+T6 de-blend, weights a/b, residual χ²_red, and the illustrative badge.</p>
         )}
+
+        {/* Spectral Similarity Matches (POST /api/subjects/similar) */}
+        <div className="mt-4 rounded border border-neutral-800 bg-neutral-900/40 p-3 text-[11px]">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold uppercase tracking-wide text-neutral-300">
+              SIMD Spectral Match (10k Templates)
+            </span>
+            {isFindingSimilar && (
+              <span className="font-mono text-[10px] text-sky-400">Scanning...</span>
+            )}
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {similarMatches.length > 0 ? (
+              similarMatches.slice(0, 4).map((m, idx) => (
+                <div
+                  key={m.id || idx}
+                  className="flex items-center justify-between rounded bg-neutral-950/60 px-2 py-1"
+                >
+                  <div className="truncate mr-2">
+                    <span className="font-medium text-white">{m.name}</span>
+                    <span className="ml-1 text-[10px] text-neutral-400">({m.spectral_class})</span>
+                  </div>
+                  <span className="font-mono font-semibold text-emerald-400 shrink-0">
+                    {(m.similarity * 100).toFixed(1)}%
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="text-neutral-500 text-[10px]">Evaluating SIMD cosine similarity...</div>
+            )}
+          </div>
+        </div>
 
         <div className="mt-4 rounded border border-neutral-800 bg-neutral-950/40 p-3 text-[11px] text-neutral-400">
           <div className="font-semibold text-neutral-300">Pixel → Spectrum link (Tab 2 contract)</div>
