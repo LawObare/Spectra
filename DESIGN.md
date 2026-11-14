@@ -55,21 +55,21 @@ No framework indigo/violet defaults, no gradients, no colored neon drop-shadows 
 
 ---
 
-## 5. Layout Wireframe: Immersed Sky Viewport (`Tab 1`)
+## 5. Layout Wireframe: Immersed Stitched Photographic Sky Viewport (`Tab 1`)
 
-Tab 1 is an **immersed, edge-to-edge flat window looking directly into space** (gnomonic/stereographic tangent projection `TAN`/`STG`), never an external 3D sphere floating in a box:
+Tab 1 is an **immersed, edge-to-edge flat window looking directly into space** (gnomonic/stereographic tangent projection `TAN`/`STG`), never an external 3D sphere floating in a box. It stitches real astronomical photographic plates (DESI Legacy Survey DR10 for resolved galaxies down to $24\,\text{mag}$, unWISE NEO7 infrared, IRSA 2MASS, and AllWISE) rather than looping over procedural dots, with SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints (`D1`–`D6`) and WCS telemetry cleanly overlaid:
 
 ```
 +----------------------------------------------------------------------------------------------------+
-| Spectra  QR2 · Community Product   [Search RA/Dec or object... ⌘K]  Targets: [Barnard's] [WISE...] |
+| Spectra  QR2 · Community Product   [Search RA/Dec or object... ⌘K]  Survey: [DESI LS DR10 v] [All] |
 +----------------------------------------------------------------------------------------------------+
 | 269.60°                            269.45°                            269.30°            [ + ]     |
-|                                                                                          [ − ]     |
-|     ·          *                 ·                    *       ·                          [Reset]   |
-|                  ·       +4.80° ───────────────────────────────                                    |
-|         *                                 │                                                        |
-|                                       ┌───┴───┐  Barnard's Star                                    |
-|     ·                 ·            ───│   +   │───  μ = 10.39"/yr N      *                         |
+| [Real Photographic Plates: M31/M51 Spiral Arms, Dust Lanes, Real Galaxies]               [ − ]     |
+|     ·          *                 ·                    *       ·                          [18°]     |
+|                  ·       +4.80° ───────────────────────────────                          [6°]      |
+|         *                                 │                                              [1.2°]    |
+|                                       ┌───┴───┐  SPHEREx Footprint: D4 (2.4–3.8 µm)                |
+|     ·                 ·            ───│   +   │───  λ = 3.12 µm · Pass 1 MJD 60810.2               |
 |                                       └───┬───┘                                                    |
 |          *               +4.70° ──────────┼────────────────────                  ·                 |
 |                                         180" FoV                                                   |
@@ -77,7 +77,7 @@ Tab 1 is an **immersed, edge-to-edge flat window looking directly into space** (
 |                                                        ·                                           |
 |                                                                                  |────── 15.0' ────|
 +----------------------------------------------------------------------------------------------------+
-| Center: 269.44639° +4.76676° (17h57m47.1s +04d46m00s) | Field: 12.0° | Passes: 4 | [Open cutout]   |
+| Cursor J2000: 269.44639° +4.76676° | 17h 57m 47.1s +04° 46' 00" | WCS-WAVE λ=3.120 µm | [Extract]  |
 +----------------------------------------------------------------------------------------------------+
 ```
 
