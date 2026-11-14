@@ -130,10 +130,11 @@ interface IrsaExposure {
 }
 
 function parseIrsaSiaResponse(payload: unknown): IrsaExposure[] {
-  if (!payload || typeof payload !== 'object') return [];
+  if (!payload || typeof payload !== 'object') throw new Error('IRSA returned an invalid coverage response.');
   const table = payload as { metadata?: Array<{ name?: string }>; data?: unknown[] };
+  if (!Array.isArray(table.data)) throw new Error('IRSA coverage response is missing its results table.');
   const metadata = table.metadata || [];
-  const rows = Array.isArray(table.data) ? table.data : [];
+  const rows = table.data;
 
   return rows.flatMap((row, index) => {
     const values = Array.isArray(row)
@@ -453,19 +454,25 @@ export const CelestialNavigator: React.FC = () => {
       setArchiveStatus('loading');
       const radiusDeg = Math.max(displayFovDeg / Math.SQRT2, fovArcsec / 7200, 30 / 3600);
       const params = new URLSearchParams({
-        COLLECTION: 'spherex_qr2',
         POS: `CIRCLE ${ra} ${dec} ${radiusDeg}`,
         CALIB: '2',
         MAXREC: '500',
         RESPONSEFORMAT: 'JSON',
       });
+      params.append('COLLECTION', 'spherex_qr2');
+      params.append('COLLECTION', 'spherex_qr3');
 
       try {
         const response = await fetch(`https://irsa.ipac.caltech.edu/SIA?${params}`, {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`IRSA SIA returned ${response.status}`);
-        const results = parseIrsaSiaResponse(await response.json());
+        const payload = await response.json();
+        const results = parseIrsaSiaResponse(payload);
+        const rows = (payload as { data: unknown[] }).data;
+        if (rows.length > 0 && results.length === 0) {
+          throw new Error('IRSA returned exposures without usable HTTPS data URLs.');
+        }
         if (active) {
           setArchiveExposures(results);
           setArchiveStatus(results.length > 0 ? 'ready' : 'empty');
@@ -1288,7 +1295,9 @@ export const CelestialNavigator: React.FC = () => {
               aria-pressed={showAvailableCoverage}
             >
               <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-yellow-400/70" />
-              Available ({archiveExposures.length})
+              {archiveStatus === 'loading' && 'Available (searching…)'}
+              {archiveStatus === 'error' && 'Available (unavailable)'}
+              {(archiveStatus === 'ready' || archiveStatus === 'empty') && `Available (${archiveExposures.length})`}
             </Button>
             <Button
               variant={showCachedCoverage ? 'secondary' : 'ghost'}
@@ -1654,11 +1663,11 @@ export const CelestialNavigator: React.FC = () => {
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1.5">
             <span className="text-[11px] font-medium text-foreground">
-              IRSA SPHEREx QR2 Archive ({archiveExposures.length})
+              IRSA SPHEREx QR2 + QR3 Archive ({archiveExposures.length})
             </span>
             <span className="text-[10px] text-muted-foreground">
               {archiveStatus === 'loading' && 'Searching IRSA…'}
-              {archiveStatus === 'ready' && '[IRSA Live (spherex_qr2)]'}
+              {archiveStatus === 'ready' && '[IRSA Live (spherex_qr2 + spherex_qr3)]'}
               {archiveStatus === 'empty' && 'No released exposure intersects this cutout'}
               {archiveStatus === 'error' && 'IRSA search unavailable · retry after network access returns'}
             </span>
