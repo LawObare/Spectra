@@ -12,6 +12,7 @@ interface GraphNode {
   kind: NodeKind;
   x: number;
   y: number;
+  z?: number;
   meta: Record<string, any>;
 }
 
@@ -58,9 +59,25 @@ export const DecisionBoundaries: React.FC = () => {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
+  const [autoOrbit, setAutoOrbit] = useState<boolean>(true);
+  const [rotation, setRotation] = useState<{ yaw: number; pitch: number }>({
+    yaw: -0.52,
+    pitch: 0.32,
+  });
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef<{ active: boolean; x: number; y: number; moved: boolean }>({ active: false, x: 0, y: 0, moved: false });
+
+  useEffect(() => {
+    if (viewMode !== '3d' || !autoOrbit) return;
+    const id = window.setInterval(() => {
+      if (!dragRef.current.active) {
+        setRotation((r) => ({ ...r, yaw: r.yaw + 0.006 }));
+      }
+    }, 33);
+    return () => clearInterval(id);
+  }, [viewMode, autoOrbit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,13 +147,41 @@ export const DecisionBoundaries: React.FC = () => {
       .sort((a, b) => b.edge.weight - a.edge.weight);
   }, [selectedNodeId, graph, nodeMap]);
 
-  // Project normalized graph coords [-1, 1] into canvas pixel coordinates
-  const projectNode = (n: GraphNode, width: number, height: number) => {
+  // Project normalized graph coords [-1, 1]^3 into canvas pixel coordinates + perspective depth
+  const projectCoords = (nx: number, ny: number, nz: number, width: number, height: number) => {
     const scale = Math.min(width, height) * 0.41 * zoom;
+    if (viewMode === '2d') {
+      return {
+        cx: width * 0.5 + pan.x + nx * scale,
+        cy: height * 0.5 + pan.y + ny * scale,
+        depth: 0,
+        pScale: 1,
+      };
+    }
+
+    const cosY = Math.cos(rotation.yaw);
+    const sinY = Math.sin(rotation.yaw);
+    const cosP = Math.cos(rotation.pitch);
+    const sinP = Math.sin(rotation.pitch);
+
+    const x1 = nx * cosY - nz * sinY;
+    const z1 = nx * sinY + nz * cosY;
+    const y2 = ny * cosP - z1 * sinP;
+    const z2 = ny * sinP + z1 * cosP;
+
+    const fov = 2.8;
+    const pScale = fov / Math.max(0.9, fov + z2);
     return {
-      cx: width * 0.5 + pan.x + n.x * scale,
-      cy: height * 0.5 + pan.y + n.y * scale,
+      cx: width * 0.5 + pan.x + x1 * scale * pScale,
+      cy: height * 0.5 + pan.y + y2 * scale * pScale,
+      depth: z2,
+      pScale,
     };
+  };
+
+  const projectNode = (n: GraphNode, width: number, height: number) => {
+    const nz = typeof n.z === 'number' ? n.z : 0;
+    return projectCoords(n.x, n.y, nz, width, height);
   };
 
   useEffect(() => {
@@ -156,27 +201,65 @@ export const DecisionBoundaries: React.FC = () => {
     // Background radial glow
     ctx.fillStyle = '#070b13';
     ctx.fillRect(0, 0, width, height);
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
-    ctx.lineWidth = 1;
-    for (const r of [0.35, 0.65, 0.92]) {
-      ctx.beginPath();
-      ctx.arc(width * 0.5 + pan.x, height * 0.5 + pan.y, Math.min(width, height) * 0.41 * r * zoom, 0, Math.PI * 2);
-      ctx.stroke();
+
+    if (viewMode === '3d') {
+      const steps = 64;
+      for (const r of [0.42, 0.78, 1.08]) {
+        // XZ equatorial orbital ring
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i <= steps; i++) {
+          const theta = (i / steps) * Math.PI * 2;
+          const pt = projectCoords(Math.cos(theta) * r, 0, Math.sin(theta) * r, width, height);
+          if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+          else ctx.lineTo(pt.cx, pt.cy);
+        }
+        ctx.stroke();
+
+        // XY meridional reference ring
+        if (r === 0.78) {
+          ctx.strokeStyle = 'rgba(139, 92, 246, 0.10)';
+          ctx.beginPath();
+          for (let i = 0; i <= steps; i++) {
+            const theta = (i / steps) * Math.PI * 2;
+            const pt = projectCoords(Math.cos(theta) * r, Math.sin(theta) * r, 0, width, height);
+            if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+            else ctx.lineTo(pt.cx, pt.cy);
+          }
+          ctx.stroke();
+        }
+      }
+    } else {
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+      ctx.lineWidth = 1;
+      for (const r of [0.35, 0.65, 0.92]) {
+        ctx.beginPath();
+        ctx.arc(width * 0.5 + pan.x, height * 0.5 + pan.y, Math.min(width, height) * 0.41 * r * zoom, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     const focusId = hoveredNodeId || selectedNodeId;
-    const coords = new Map<string, { cx: number; cy: number }>();
+    const coords = new Map<string, { cx: number; cy: number; depth: number; pScale: number }>();
     for (const n of visibleNodes) {
       coords.set(n.id, projectNode(n, width, height));
     }
 
+    // Depth-sort edges (average depth back-to-front)
+    const sortedEdges = [...visibleEdges].sort((ea, eb) => {
+      const da = ((coords.get(ea.source)?.depth ?? 0) + (coords.get(ea.target)?.depth ?? 0)) * 0.5;
+      const db = ((coords.get(eb.source)?.depth ?? 0) + (coords.get(eb.target)?.depth ?? 0)) * 0.5;
+      return db - da;
+    });
+
     // Draw edges
-    for (const e of visibleEdges) {
+    for (const e of sortedEdges) {
       const a = coords.get(e.source);
       const b = coords.get(e.target);
       if (!a || !b) continue;
       const isFocused = !focusId || e.source === focusId || e.target === focusId;
-      ctx.globalAlpha = focusId ? (isFocused ? 0.95 : 0.14) : 0.72;
+      ctx.globalAlpha = focusId ? (isFocused ? 0.95 : 0.14) : 0.70;
       ctx.strokeStyle = EDGE_COLORS[e.relation] || '#64748b';
       ctx.lineWidth = Math.max(1, e.weight * 3.0);
       ctx.beginPath();
@@ -194,14 +277,24 @@ export const DecisionBoundaries: React.FC = () => {
     }
     ctx.globalAlpha = 1;
 
+    // Depth-sort nodes back-to-front so foreground nodes overlap distant ones cleanly
+    const sortedNodes = [...visibleNodes].sort(
+      (na, nb) => (coords.get(nb.id)?.depth ?? 0) - (coords.get(na.id)?.depth ?? 0)
+    );
+
     // Draw nodes
-    for (const n of visibleNodes) {
+    for (const n of sortedNodes) {
       const p = coords.get(n.id);
       if (!p) continue;
       const style = NODE_COLORS[n.kind];
       const isSelected = n.id === selectedNodeId;
       const isHover = n.id === hoveredNodeId;
-      const r = n.kind === 'class' ? 12 : n.kind === 'target' ? 9.5 : 8.5;
+      const baseR = n.kind === 'class' ? 12 : n.kind === 'target' ? 9.5 : 8.5;
+      const r = Math.max(4.5, baseR * p.pScale);
+      const depthFade = viewMode === '3d' ? Math.max(0.42, Math.min(1, 0.88 - p.depth * 0.25)) : 1;
+
+      ctx.save();
+      ctx.globalAlpha = isSelected || isHover ? 1 : depthFade;
 
       if (isSelected || isHover) {
         ctx.beginPath();
@@ -235,8 +328,45 @@ export const DecisionBoundaries: React.FC = () => {
       ctx.font = n.kind === 'class' ? 'bold 11px system-ui, sans-serif' : '10px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(n.label, p.cx, p.cy + r + 13);
+      ctx.restore();
     }
-  }, [visibleNodes, visibleEdges, selectedNodeId, hoveredNodeId, zoom, pan]);
+
+    // 3D PC1/PC2/PC3 Axis Compass in bottom-right corner
+    if (viewMode === '3d' && width > 180 && height > 140) {
+      const originX = width - 56;
+      const originY = height - 52;
+      const axisLen = 28;
+      const cosY = Math.cos(rotation.yaw);
+      const sinY = Math.sin(rotation.yaw);
+      const cosP = Math.cos(rotation.pitch);
+      const sinP = Math.sin(rotation.pitch);
+
+      const axes: Array<{ label: string; vec: [number, number, number]; color: string }> = [
+        { label: 'PC1', vec: [1, 0, 0], color: '#38bdf8' },
+        { label: 'PC2', vec: [0, 1, 0], color: '#34d399' },
+        { label: 'PC3', vec: [0, 0, 1], color: '#f59e0b' },
+      ];
+      for (const ax of axes) {
+        const [vx, vy, vz] = ax.vec;
+        const x1 = vx * cosY - vz * sinY;
+        const z1 = vx * sinY + vz * cosY;
+        const y2 = vy * cosP - z1 * sinP;
+        const ex = originX + x1 * axisLen;
+        const ey = originY + y2 * axisLen;
+        ctx.strokeStyle = ax.color;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(originX, originY);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+
+        ctx.fillStyle = ax.color;
+        ctx.font = 'bold 9px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(ax.label, originX + x1 * (axisLen + 11), originY + y2 * (axisLen + 11) + 3);
+      }
+    }
+  }, [visibleNodes, visibleEdges, selectedNodeId, hoveredNodeId, zoom, pan, viewMode, rotation]);
 
   const hitTestNode = (clientX: number, clientY: number): GraphNode | null => {
     const canvas = canvasRef.current;
@@ -244,9 +374,12 @@ export const DecisionBoundaries: React.FC = () => {
     const rect = canvas.getBoundingClientRect();
     const mx = clientX - rect.left;
     const my = clientY - rect.top;
-    for (const n of visibleNodes) {
-      const { cx, cy } = projectNode(n, rect.width, rect.height);
-      if (Math.hypot(mx - cx, my - cy) <= 15) return n;
+    // Test closest (foreground) nodes first
+    const projected = visibleNodes
+      .map((n) => ({ n, p: projectNode(n, rect.width, rect.height) }))
+      .sort((a, b) => a.p.depth - b.p.depth);
+    for (const { n, p } of projected) {
+      if (Math.hypot(mx - p.cx, my - p.cy) <= Math.max(12, 15 * p.pScale)) return n;
     }
     return null;
   };
@@ -305,6 +438,38 @@ export const DecisionBoundaries: React.FC = () => {
             </button>
           </div>
 
+          <div className="flex rounded border border-border bg-secondary/40 p-0.5 font-mono text-[11px]">
+            <button
+              onClick={() => setViewMode('3d')}
+              className={cn(
+                'px-2.5 py-1 rounded transition-colors',
+                viewMode === '3d' ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              3D Galaxy Orbit
+            </button>
+            <button
+              onClick={() => setViewMode('2d')}
+              className={cn(
+                'px-2.5 py-1 rounded transition-colors',
+                viewMode === '2d' ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              2D Map
+            </button>
+          </div>
+
+          {viewMode === '3d' && (
+            <Button
+              size="sm"
+              variant={autoOrbit ? 'default' : 'outline'}
+              className="h-7 text-xs font-mono"
+              onClick={() => setAutoOrbit((v) => !v)}
+            >
+              {autoOrbit ? 'Auto-Orbit: ON' : 'Auto-Orbit: OFF'}
+            </Button>
+          )}
+
           <div className="flex items-center gap-1.5 border border-border rounded px-2 py-1 bg-background">
             <span className="text-[10px] font-mono text-muted-foreground">min sim {minSimilarity.toFixed(2)}</span>
             <input
@@ -318,7 +483,16 @@ export const DecisionBoundaries: React.FC = () => {
             />
           </div>
 
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => {
+              setZoom(1);
+              setPan({ x: 0, y: 0 });
+              setRotation({ yaw: -0.52, pitch: 0.32 });
+            }}
+          >
             Reset View
           </Button>
         </div>
@@ -386,7 +560,15 @@ export const DecisionBoundaries: React.FC = () => {
                 if (Math.abs(dx) + Math.abs(dy) > 3) dragRef.current.moved = true;
                 dragRef.current.x = e.clientX;
                 dragRef.current.y = e.clientY;
-                setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+                setAutoOrbit(false);
+                if (viewMode === '3d' && !e.shiftKey) {
+                  setRotation((r) => ({
+                    yaw: r.yaw + dx * 0.008,
+                    pitch: Math.max(-1.2, Math.min(1.2, r.pitch + dy * 0.008)),
+                  }));
+                } else {
+                  setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+                }
               } else {
                 const hit = hitTestNode(e.clientX, e.clientY);
                 setHoveredNodeId(hit ? hit.id : null);
@@ -407,13 +589,16 @@ export const DecisionBoundaries: React.FC = () => {
           />
 
           {/* LEGEND OVERLAY */}
-          <div className="absolute bottom-3 left-3 rounded-md border border-border/80 bg-card/90 backdrop-blur px-3 py-2 text-[10px] flex flex-wrap gap-3">
+          <div className="absolute bottom-3 left-3 rounded-md border border-border/80 bg-card/90 backdrop-blur px-3 py-2 text-[10px] flex flex-wrap items-center gap-3">
             {(['target', 'class', 'feature', 'template'] as NodeKind[]).map((k) => (
               <span key={k} className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ backgroundColor: NODE_COLORS[k].fill }} />
                 {NODE_COLORS[k].label}
               </span>
             ))}
+            <span className="text-muted-foreground font-mono border-l border-border pl-2.5">
+              {viewMode === '3d' ? 'Drag: 360° 3D orbit · Shift+Drag: pan · Wheel: zoom' : 'Drag: pan · Wheel: zoom'}
+            </span>
           </div>
         </div>
 
