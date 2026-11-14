@@ -197,6 +197,67 @@ Because 6 agents work concurrently off `develop`, you must leave a dense, zero-f
 3. **Milestone Batch Promotion (`develop` $\rightarrow$ `main`):**
    - Only when all issues in a Phase Milestone (`Phase 0`, `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`) are closed on `develop` and verified end-to-end does the team promote the batch to `main`:
      ```bash
-     gh pr create --base main --head develop --title "release(phase-X): promote verified Phase X milestone batch to main"
+     gh pr create --base main --head develop --title "release(team-phase-X): promote verified Phase X milestone batch to main"
      gh pr merge --merge
      ```
+
+---
+
+## 8. Commit Hygiene & Mandatory Commit Message Templates
+
+Every human developer and AI coding agent must adhere to strict commit hygiene enforced by [`.gitmessage`](.gitmessage) and the automated [`.githooks/commit-msg`](.githooks/commit-msg) hook (`git config core.hooksPath .githooks`). Non-compliant commits are automatically rejected by Git.
+
+### 8.1 Hard Commit Hygiene Rules
+1. **Explicit File Staging Only (`git add <file1> <file2>`):** Never run blind `git add .` or `git add -A`. Explicitly stage only the target files within your role's write-fence (§6.2) so `.env` files, scratch scripts, or lockfile drift are never staged.
+2. **Atomic, Compiling Commits:** Every commit must leave the branch in a syntactically valid, passing state. Never commit debug `print()` / `console.log()` statements or commented-out code blocks.
+3. **Zero Trash / WIP Messages:** Single-word or vague messages (`wip`, `fix`, `update`, `changes`, `test`, `final`, `asdf`) and single-line code commits without a structured body are strictly forbidden and blocked by `.githooks/commit-msg`.
+4. **Subject Line Grammar (`<= 90 chars`):**
+   ```text
+   <type>(<role>-<scope>): <imperative present-tense summary> (#<issue-id>)
+   ```
+   - **`<type>`:** `feat` | `fix` | `perf` | `test` | `refactor` | `docs` | `chore` | `ci` | `release`
+   - **`<role>`:** `e1` | `e2` | `e3` | `e4` | `e5` | `e6` | `team`
+   - **`<scope>`:** `phase-0` | `phase-1` | `phase-2` | `phase-3` | `phase-4` | `science` | `api` | `db` | `webgl` | `ui` | `ml` | `devops` | `governance`
+   - **`(#<issue-id>)`:** Mandatory for all `e1`–`e6` commits (`#1`–`#30`).
+
+### 8.2 Mandatory Commit Message Templates
+
+#### Template A: Feature / Issue Implementation Commit (`feat`, `perf`, `test`)
+Use when committing verified implementation work on `feat/issue-<N>-<slug>`:
+```text
+feat(e1-phase-1): implement pre-reprojection HDU 6 WAVE-TAB wavelength matcher (#9)
+
+Spec-Anchor: SPECIFICATION.md §3.1, §4.1
+Role-Owner: E1 (role:E1-astro)
+Changes:
+- backend/science/wave_match.py: add filter_wavelength_matched_exposures(exposures, ra, dec, adaptive_window)
+- backend/tests/test_science_wave_match.py: verify R_b window filtering and adaptive widening
+Verification: uv run ruff check . && uv run pytest backend/tests/test_science_wave_match.py (6 passed in 0.42s)
+```
+
+#### Template B: Bugfix / Pre-Merge Code-Review Remediation Commit (`fix`, `refactor`)
+Use when addressing findings from the [`code-review`](.agents/skills/code-review/SKILL.md) skill or fixing a bug:
+```text
+fix(e2-api): enforce 15s Retry-After header on full cutout queue (#12)
+
+Spec-Anchor: SPECIFICATION.md §3.2 (Bounded Queue & HTTP 503 Backpressure)
+Role-Owner: E2 (role:E2-backend)
+Root-Cause: HTTP 503 response omitted Retry-After header flagged during Axis-2 Spec review
+Changes:
+- backend/api/cutout.py: attach headers={"Retry-After": "15"} on QueueFull exception
+- backend/tests/test_api_cutout.py: assert Retry-After header on 6th concurrent POST /api/cutout
+Verification: uv run ruff check . && uv run pytest backend/tests/test_api_cutout.py (8 passed)
+```
+
+#### Template C: Milestone Batch Promotion Commit (`release` — `develop` $\rightarrow$ `main`)
+Use when promoting a verified Phase Milestone batch from `develop` into `main`:
+```text
+release(team-phase-1): promote verified Phase 1 P0 milestone batch to main
+
+Milestone: Phase 1 — P0 Core NASA Challenge Foundation (Gate 1 Verified)
+Issues-Included: #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18
+Verification:
+- Backend: uv run ruff check . && uv run pytest (100% pass)
+- Frontend: npm run build (0 errors, zero leaked keys)
+- Gate-1 Smoke: All 5 NASA benchmarks + live RA/Dec verified in Tab 1 & Tab 2
+```

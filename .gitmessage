@@ -1,0 +1,14 @@
+# <type>(<role>-<scope>): <imperative summary in <=72 chars> (#<issue-id>)
+#
+# Spec-Anchor: SPECIFICATION.md §<X.Y>
+# Role-Owner: E<1-6> (role:E<1-6>-<domain>)
+# Changes:
+# - <path/to/file>: <concise factual change & exported symbols>
+# Verification: <exact pytest / ruff / npm run build status>
+#
+# --- COMMIT HYGIENE RULES (AGENTS.md §8) ---
+# 1. Allowed <type>: feat | fix | perf | test | refactor | docs | chore | ci | release
+# 2. Allowed <role>: e1 | e2 | e3 | e4 | e5 | e6 | team
+# 3. Allowed <scope>: phase-0 | phase-1 | phase-2 | phase-3 | phase-4 | science | api | db | webgl | ui | ml | devops | governance
+# 4. Subject line MUST end with (#<N>) referencing the locked GitHub Issue (except type=release/docs).
+# 5. Forbidden: "wip", "fix", "update", "temp", blind `git add .`, or single-line commits without body metadata.
