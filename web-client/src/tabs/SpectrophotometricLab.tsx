@@ -5,6 +5,7 @@ import { useTelemetryStore, type SpectralChannel } from '../store/useTelemetrySt
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import {
   fetchInstalledSections,
+  fetchStaticSectionSpectrum,
   findMatchingSection,
   useInstalledSectionState,
 } from '../lib/installedSections';
@@ -273,11 +274,21 @@ export const SpectrophotometricLab: React.FC = () => {
           if (isSpectralBlinkSynced) {
             qs.set('epoch', String(activeEpochIndex));
           }
-          const secRes = await fetch(`/api/sections/${matched.section_id}/spectrum?${qs.toString()}`, {
-            signal: controller.signal,
-          });
-          if (!secRes.ok) throw new Error(`HTTP ${secRes.status}`);
-          data = await secRes.json();
+          try {
+            const secRes = await fetch(`/api/sections/${matched.section_id}/spectrum?${qs.toString()}`, {
+              signal: controller.signal,
+            });
+            const secType = (secRes.headers.get('content-type') || '').toLowerCase();
+            if (secRes.ok && !secType.includes('text/html')) {
+              data = await secRes.json();
+            }
+          } catch (err) {
+            if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          }
+          if (!data) {
+            data = await fetchStaticSectionSpectrum(matched.section_id, controller.signal);
+          }
+          if (!data) throw new Error('Installed spectrum unavailable');
         } else {
           if (forceLiveCoordKey !== coordKey) {
             setSpectrumSourceBadge('[No Archive Data]');
