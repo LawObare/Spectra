@@ -72,7 +72,7 @@ export const PublicExplorerPortal: React.FC = () => {
   const [isMissionBriefingActive, setIsMissionBriefingActive] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
 
-  const handleLaunchWorkstationFromBriefing = (targetTab: string = 'comparator') => {
+  const handleLaunchWorkstationFromBriefing = (targetTab: string = 'navigator') => {
     setTab(targetTab as any);
     setIsMissionBriefingActive(false);
   };
@@ -228,7 +228,7 @@ const LandingMissionPage: React.FC = () => {
   const navigate = useNavigate();
   const { setCoordinates, setRgbPreset } = useTelemetryStore();
 
-  const handleLaunchWorkstation = (targetTab: string = 'comparator') => {
+  const handleLaunchWorkstation = (targetTab: string = 'navigator') => {
     navigate(`/explore?tab=${targetTab}`);
   };
 
