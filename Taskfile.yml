@@ -1,0 +1,47 @@
+version: '3'
+
+tasks:
+  default:
+    desc: "Display available commands"
+    cmds:
+      - task --list
+
+  setup:
+    desc: "Install all dependencies across Python and React in <10 seconds"
+    cmds:
+      - uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
+      - supabase --version || npm install -g supabase
+      - cd backend && uv sync
+      - cd web-client && npm install
+
+  db:up:
+    desc: "Start local Supabase Postgres and apply schema + benchmark seeds"
+    cmds:
+      - supabase start
+      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/schema.sql
+      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/seed_benchmarks.sql
+
+  types:sync:
+    desc: "Generate strict TypeScript types from FastAPI OpenAPI schema"
+    cmds:
+      - npx openapi-typescript http://127.0.0.1:7860/openapi.json -o ./web-client/src/types/api.d.ts
+
+  backend:dev:
+    desc: "Run the Unified FastAPI Science Engine with live reload via uv"
+    dir: backend
+    cmds:
+      - uv run uvicorn main:app --host 0.0.0.0 --port 7860 --reload
+
+  web:dev:
+    desc: "Run the React + Vite frontend client"
+    dir: web-client
+    cmds:
+      - npm run dev
+
+  dev:
+    desc: "Start the complete Spectra stack concurrently"
+    deps: [db:up]
+    cmds:
+      - npx concurrently -n "BACKEND,WEB" -c "green,cyan" \
+          "task backend:dev" \
+          "task web:dev"
