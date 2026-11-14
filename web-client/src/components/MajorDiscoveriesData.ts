@@ -24,6 +24,10 @@ export interface MajorDiscovery {
   launchTab: 'comparator' | 'spectral' | 'ice' | 'navigator';
   launchLabel: string;
   badge: '[NASA Benchmark (Pre-cached)]' | '[IRSA Live (spherex_qr2)]' | '[Synthetic Injection Mode]';
+  /** Card hero image served from web-client/public/images/discoveries/. */
+  imageSrc: string;
+  /** Institutional attribution rendered over the card image. */
+  imageCredit: string;
   narrative: string;
   scienceGoal: string;
   spectralBands: string;
@@ -36,6 +40,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   // ==========================================
   {
     id: 'barnard',
+    imageSrc: '/images/discoveries/barnard.jpg',
+    imageCredit: 'Steve Quirk — finder chart (Public domain)',
     name: "Barnard's Star",
     codename: 'GJ 699',
     title: 'The Cosmic Speed Demon',
@@ -58,6 +64,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'wise0855',
+    imageSrc: '/images/discoveries/wise0855.jpg',
+    imageCredit: 'NASA/ESA/STScI — Hubble WFC3 (CC BY-SA 4.0)',
     name: 'WISE 0855-0714',
     codename: 'WISE J085510.83-071442.5',
     title: 'The Frozen Brown Dwarf',
@@ -80,6 +88,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'eps_indi_b',
+    imageSrc: '/images/discoveries/eps_indi_b.jpg',
+    imageCredit: 'ESO (CC BY 4.0)',
     name: 'Epsilon Indi Ba+Bb',
     codename: 'HD 208313 B',
     title: 'The Invisible Binary Pair',
@@ -102,6 +112,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'trappist1',
+    imageSrc: '/images/discoveries/trappist1.jpg',
+    imageCredit: 'NASA/JPL-Caltech (Public domain)',
     name: 'TRAPPIST-1',
     codename: '2MASS J23062928-0502285',
     title: 'Seven Earth-Sized Worlds',
@@ -123,6 +135,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'proxima',
+    imageSrc: '/images/discoveries/proxima.jpg',
+    imageCredit: 'ESA/Hubble & NASA (CC BY 4.0)',
     name: 'Proxima Centauri',
     codename: 'Alpha Centauri C',
     title: 'Our Closest Stellar Neighbor',
@@ -148,6 +162,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   // ==========================================
   {
     id: 'm42_orion',
+    imageSrc: '/images/discoveries/m42_orion.jpg',
+    imageCredit: 'NASA/ESA/STScI (Public domain)',
     name: 'Orion Nebula & Trapezium',
     codename: 'M42 / NGC 1976',
     title: 'The Cosmic Water Ice Factory',
@@ -168,6 +184,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'elias29',
+    imageSrc: '/images/discoveries/elias29.jpg',
+    imageCredit: 'NASA/ESA/CSA/STScI — JWST (CC BY 4.0)',
     name: 'Elias 29 (Ophiuchus Protostar)',
     codename: 'ISO-Oph 29',
     title: 'Embedded Interstellar Ice Core',
@@ -188,6 +206,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'betelgeuse',
+    imageSrc: '/images/discoveries/betelgeuse.jpg',
+    imageCredit: 'ALMA (ESO/NAOJ/NRAO) (CC BY 4.0)',
     name: 'Betelgeuse',
     codename: 'Alpha Orionis',
     title: 'Ejected Molecular Dust Shells',
@@ -212,6 +232,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   // ==========================================
   {
     id: 'nep_tdf',
+    imageSrc: '/images/discoveries/nep_tdf.jpg',
+    imageCredit: 'NASA/STScI — JWST NEP TDF (Public domain)',
     name: 'SPHEREx / JWST NEP Deep Field',
     codename: 'North Ecliptic Pole TDF',
     title: 'The Time-Domain Cosmic Anchor',
@@ -232,6 +254,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'sep_df',
+    imageSrc: '/images/discoveries/sep_df.jpg',
+    imageCredit: 'NASA/ESO — Large Magellanic Cloud (Public domain)',
     name: 'SPHEREx SEP Deep Field',
     codename: 'South Ecliptic Pole DF',
     title: 'Southern Cosmic Inflation Field',
@@ -252,6 +276,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'cdfs',
+    imageSrc: '/images/discoveries/cdfs.jpg',
+    imageCredit: 'NASA/CXC/Penn State/B. Luo et al. (Public domain)',
     name: 'Chandra Deep Field South (GOODS-S)',
     codename: 'CDFS / GOODS-S',
     title: '450 Million Galaxies in 3D',
@@ -272,6 +298,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'sgra_star',
+    imageSrc: '/images/discoveries/sgra_star.jpg',
+    imageCredit: 'EHT Collaboration (CC BY 4.0)',
     name: 'Sagittarius A* & Galactic Center',
     codename: 'Sgr A*',
     title: 'The Supermassive Black Hole Heart',
@@ -296,6 +324,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   // ==========================================
   {
     id: 'm82_cigar',
+    imageSrc: '/images/discoveries/m82_cigar.jpg',
+    imageCredit: 'NASA/ESA/Hubble Heritage (Public domain)',
     name: 'Cigar Galaxy (M82)',
     codename: 'NGC 3034',
     title: 'The Infrared Starburst Superwind',
@@ -316,6 +346,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'm87_virgo',
+    imageSrc: '/images/discoveries/m87_virgo.jpg',
+    imageCredit: 'NASA/STScI (Public domain)',
     name: 'Virgo A (M87)',
     codename: 'NGC 4486',
     title: 'Supermassive Black Hole & Jet',
@@ -336,6 +368,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'm31_core',
+    imageSrc: '/images/discoveries/m31_core.jpg',
+    imageCredit: 'L. Viatour (CC BY-SA 2.5)',
     name: 'Andromeda Galaxy (M31)',
     codename: 'NGC 224',
     title: 'Our Giant Spiral Sister',
@@ -356,6 +390,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'm51_whirlpool',
+    imageSrc: '/images/discoveries/m51_whirlpool.jpg',
+    imageCredit: 'NASA/ESA (Public domain)',
     name: 'Whirlpool Galaxy (M51)',
     codename: 'NGC 5194 + NGC 5195',
     title: 'Interacting Grand-Design Spiral',
@@ -380,6 +416,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   // ==========================================
   {
     id: 'rw_aur',
+    imageSrc: '/images/discoveries/rw_aur.jpg',
+    imageCredit: 'ESO — protoplanetary disc impression (CC BY 4.0)',
     name: 'RW Aurigae',
     codename: 'HD 35899',
     title: 'The Flashing Infant Star',
@@ -402,6 +440,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'r_dra',
+    imageSrc: '/images/discoveries/r_dra.jpg',
+    imageCredit: 'DSS2/ESO — Mira-type AGB (CC BY 4.0)',
     name: 'R Draconis',
     codename: 'HD 149212',
     title: 'The Beating Giant Heart',
@@ -424,6 +464,8 @@ export const MAJOR_DISCOVERIES: MajorDiscovery[] = [
   },
   {
     id: 'm1_crab',
+    imageSrc: '/images/discoveries/m1_crab.jpg',
+    imageCredit: 'NASA/ESA/J. Hester & A. Loll (Public domain)',
     name: 'Crab Nebula & Pulsar',
     codename: 'M1 / NGC 1952',
     title: 'Historical Supernova Remnant',
