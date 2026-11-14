@@ -405,15 +405,16 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
     async def update_stage(stage: str, progress: float, message: str) -> None:
         nonlocal current_stage, stage_started_at
         now = time.monotonic()
-        if current_stage != "queued":
-            logger.info(
-                "Cutout task=%s stage=%s duration_s=%.3f",
-                task_id,
-                current_stage,
-                now - stage_started_at,
-            )
-        current_stage = stage
-        stage_started_at = now
+        if current_stage != stage:
+            if current_stage != "queued":
+                logger.info(
+                    "Cutout task=%s stage=%s duration_s=%.3f",
+                    task_id,
+                    current_stage,
+                    now - stage_started_at,
+                )
+            current_stage = stage
+            stage_started_at = now
         task_states.setdefault(task_id, {}).update(
             {"status": "processing", "stage": stage, "progress": progress, "message": message}
         )
