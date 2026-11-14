@@ -160,6 +160,40 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     }
   };
 
+  const handleNextCandidate = async () => {
+    setTriageSubmitted(false);
+    try {
+      const res = await fetch('/api/queue/next');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data.ra === 'number' && typeof data.dec === 'number') {
+          store.setCoordinates(
+            data.ra,
+            data.dec,
+            data.name || data.subject_id || `Candidate ${data.ra.toFixed(4)}, ${data.dec.toFixed(4)}`,
+            '[Active Learning Queue]'
+          );
+          return;
+        }
+      }
+    } catch {
+      // Graceful fallback to next catalog target
+    }
+    // Fallback: cycle to next mandatory NASA benchmark
+    const currentIdx = MANDATORY_BENCHMARKS.findIndex(
+      (b) => Math.abs(b.ra - urlRa) < 0.05 && Math.abs(b.dec - urlDec) < 0.05
+    );
+    const nextBenchmark = MANDATORY_BENCHMARKS[(currentIdx + 1) % MANDATORY_BENCHMARKS.length];
+    if (nextBenchmark) {
+      store.setCoordinates(
+        nextBenchmark.ra,
+        nextBenchmark.dec,
+        nextBenchmark.name,
+        '[NASA Benchmark (Pre-cached)]'
+      );
+    }
+  };
+
   // 1. Identify active benchmark if coordinates match
   const activeBenchmark = useMemo(() => {
     return MANDATORY_BENCHMARKS.find(
@@ -312,28 +346,116 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     return { fluxData, varData, flagsData };
   }, [activeBenchmark]);
 
+  // Load real pre-cached Float32 binary tensor for NASA Benchmark targets if available
+  const [loadedTensor, setLoadedTensor] = useState<{
+    fluxData: Float32Array[][];
+    varData: Float32Array[][];
+    flagsData: Uint32Array[][];
+    width: number;
+    height: number;
+    epochs: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeBenchmark) {
+      setLoadedTensor(null);
+      return;
+    }
+
+    const fetchBenchmarkTensor = async () => {
+      try {
+        const res = await fetch(`/benchmarks/${activeBenchmark.id}.f32`);
+        if (!res.ok) return;
+        const buf = await res.arrayBuffer();
+        if (cancelled || buf.byteLength < 4) return;
+
+        const dv = new DataView(buf);
+        const hdrLen = dv.getUint32(0, true);
+        if (buf.byteLength < 4 + hdrLen) return;
+
+        const hdrStr = new TextDecoder().decode(new Uint8Array(buf, 4, hdrLen));
+        const hdr = JSON.parse(hdrStr);
+        const [epochs, bands, h, w] = hdr.shape;
+        const planePixels = h * w;
+        const totalPixels = epochs * bands * planePixels;
+
+        const fluxOffset = 4 + hdrLen;
+        const varOffset = fluxOffset + totalPixels * 4;
+        const flagsOffset = varOffset + totalPixels * 4;
+
+        if (buf.byteLength < flagsOffset + totalPixels * 4) return;
+
+        const allFlux = new Float32Array(buf, fluxOffset, totalPixels);
+        const allVar = new Float32Array(buf, varOffset, totalPixels);
+        const allFlags = new Uint32Array(buf, flagsOffset, totalPixels);
+
+        const fluxData: Float32Array[][] = [];
+        const varData: Float32Array[][] = [];
+        const flagsData: Uint32Array[][] = [];
+
+        for (let e = 0; e < epochs; e++) {
+          fluxData[e] = [];
+          varData[e] = [];
+          flagsData[e] = [];
+          for (let b = 0; b < bands; b++) {
+            const startIdx = (e * bands + b) * planePixels;
+            fluxData[e][b] = allFlux.subarray(startIdx, startIdx + planePixels);
+            varData[e][b] = allVar.subarray(startIdx, startIdx + planePixels);
+            flagsData[e][b] = allFlags.subarray(startIdx, startIdx + planePixels);
+          }
+        }
+
+        if (!cancelled) {
+          setLoadedTensor({
+            fluxData,
+            varData,
+            flagsData,
+            width: w,
+            height: h,
+            epochs,
+          });
+        }
+      } catch (e) {
+        console.warn('Fallback to procedural simulation for benchmark:', e);
+      }
+    };
+
+    fetchBenchmarkTensor();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBenchmark]);
+
+  const activeTensors = loadedTensor || scienceTensors;
+  const currentWidth = loadedTensor ? loadedTensor.width : CANVAS_PIXEL_DIM;
+  const currentHeight = loadedTensor ? loadedTensor.height : CANVAS_PIXEL_DIM;
+  const totalEpochsCount = loadedTensor ? loadedTensor.epochs : DISCRETE_SURVEY_PASSES.length;
+
   // Active planes for current selection
-  const currentFluxPlane = scienceTensors.fluxData[activeEpochIndex]?.[activeBandIndex] || null;
-  const referenceFluxPlane = scienceTensors.fluxData[0]?.[activeBandIndex] || null;
-  const currentVarPlane = scienceTensors.varData[activeEpochIndex]?.[activeBandIndex] || null;
-  const referenceVarPlane = scienceTensors.varData[0]?.[activeBandIndex] || null;
-  const currentFlagsPlane = scienceTensors.flagsData[activeEpochIndex]?.[activeBandIndex] || null;
+  const safeEpochIndex = activeEpochIndex % totalEpochsCount;
+  const currentFluxPlane = activeTensors.fluxData[safeEpochIndex]?.[activeBandIndex] || null;
+  const referenceFluxPlane = activeTensors.fluxData[0]?.[activeBandIndex] || null;
+  const currentVarPlane = activeTensors.varData[safeEpochIndex]?.[activeBandIndex] || null;
+  const referenceVarPlane = activeTensors.varData[0]?.[activeBandIndex] || null;
+  const currentFlagsPlane = activeTensors.flagsData[safeEpochIndex]?.[activeBandIndex] || null;
 
   // 3-Band RGB False-Color Planes (D5 = Red, D3 = Green, D1 = Blue)
   const rgbPlanes = useMemo(() => {
+    const totalPx = currentWidth * currentHeight;
     return {
-      r: scienceTensors.fluxData[activeEpochIndex]?.[4] || new Float32Array(CANVAS_PIXEL_DIM * CANVAS_PIXEL_DIM),
-      g: scienceTensors.fluxData[activeEpochIndex]?.[2] || new Float32Array(CANVAS_PIXEL_DIM * CANVAS_PIXEL_DIM),
-      b: scienceTensors.fluxData[activeEpochIndex]?.[0] || new Float32Array(CANVAS_PIXEL_DIM * CANVAS_PIXEL_DIM),
+      r: activeTensors.fluxData[safeEpochIndex]?.[4] || new Float32Array(totalPx),
+      g: activeTensors.fluxData[safeEpochIndex]?.[2] || new Float32Array(totalPx),
+      b: activeTensors.fluxData[safeEpochIndex]?.[0] || new Float32Array(totalPx),
     };
-  }, [scienceTensors, activeEpochIndex]);
+  }, [activeTensors, safeEpochIndex, currentWidth, currentHeight]);
 
   // Gaia DR3 Centroid Reticle Calculation (SPECIFICATION.md §6.1.7 Item 2)
   const gaiaReticle = useMemo(() => {
     if (!activeBenchmark) return null;
-    const epochMjd = DISCRETE_SURVEY_PASSES[activeEpochIndex].mjd;
+    const epochMjd = DISCRETE_SURVEY_PASSES[safeEpochIndex].mjd;
     const deltaYears = (epochMjd - DISCRETE_SURVEY_PASSES[0].mjd) / 365.25;
-    const center = CANVAS_PIXEL_DIM / 2;
+    const center = currentWidth / 2;
 
     if (activeBenchmark.id === 'barnard') {
       const dy = -(10.39 * deltaYears) / 6.2;
@@ -365,7 +487,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       subpixelY: center,
       label: `${activeBenchmark.name} (stationary <0.3 px)`,
     };
-  }, [activeBenchmark, activeEpochIndex]);
+  }, [activeBenchmark, safeEpochIndex, currentWidth]);
 
   const benchmarkReticle = gaiaReticle;
 
@@ -380,9 +502,9 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         const radius = 2;
         for (let dy = -radius; dy <= radius; dy++) {
           for (let dx = -radius; dx <= radius; dx++) {
-            const px = Math.max(0, Math.min(CANVAS_PIXEL_DIM - 1, info.x + dx));
-            const py = Math.max(0, Math.min(CANVAS_PIXEL_DIM - 1, info.y + dy));
-            const f = currentFluxPlane[py * CANVAS_PIXEL_DIM + px] || 0;
+            const px = Math.max(0, Math.min(currentWidth - 1, info.x + dx));
+            const py = Math.max(0, Math.min(currentHeight - 1, info.y + dy));
+            const f = currentFluxPlane[py * currentWidth + px] || 0;
             if (f > maxFlux) {
               maxFlux = f;
               clickX = px;
@@ -436,17 +558,22 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const lightCurveData = useMemo(() => {
     return DISCRETE_SURVEY_PASSES.map((pass, eIdx) => {
       // Sample 3x3 center aperture flux in D1 and D5
-      const d1Plane = scienceTensors.fluxData[eIdx][0];
-      const d5Plane = scienceTensors.fluxData[eIdx][4];
-      const center = CANVAS_PIXEL_DIM / 2;
+      const ep = eIdx % totalEpochsCount;
+      const d1Plane = activeTensors.fluxData[ep]?.[0];
+      const d5Plane = activeTensors.fluxData[ep]?.[4];
+      const center = Math.floor(currentWidth / 2);
       let d1Sum = 0;
       let d5Sum = 0;
 
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
-          const idx = (center + dy) * CANVAS_PIXEL_DIM + (center + dx);
-          d1Sum += d1Plane[idx] || 0;
-          d5Sum += d5Plane[idx] || 0;
+          const px = center + dx;
+          const py = center + dy;
+          if (px >= 0 && px < currentWidth && py >= 0 && py < currentHeight) {
+            const idx = py * currentWidth + px;
+            d1Sum += d1Plane?.[idx] || 0;
+            d5Sum += d5Plane?.[idx] || 0;
+          }
         }
       }
 
@@ -457,7 +584,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         fluxD5: d5Sum / 9.0,
       };
     });
-  }, [scienceTensors]);
+  }, [activeTensors, totalEpochsCount, currentWidth, currentHeight]);
 
   const activePass = DISCRETE_SURVEY_PASSES[activeEpochIndex];
   const activeBand = BANDS[activeBandIndex];
@@ -528,8 +655,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               varianceData={currentVarPlane}
               refVarianceData={referenceVarPlane}
               flagsData={currentFlagsPlane}
-              width={CANVAS_PIXEL_DIM}
-              height={CANVAS_PIXEL_DIM}
+              width={currentWidth}
+              height={currentHeight}
               renderMode={renderMode}
               asinhParamA={asinhParamA}
               diffScale={0.8}
@@ -547,8 +674,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               <div
                 className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
                 style={{
-                  left: `${(benchmarkReticle.subpixelX / CANVAS_PIXEL_DIM) * 100}%`,
-                  top: `${(benchmarkReticle.subpixelY / CANVAS_PIXEL_DIM) * 100}%`,
+                  left: `${(benchmarkReticle.subpixelX / currentWidth) * 100}%`,
+                  top: `${(benchmarkReticle.subpixelY / currentHeight) * 100}%`,
                 }}
               >
                 <div className="relative h-10 w-10">
@@ -1000,7 +1127,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTriageSubmitted(false)}
+                  onClick={handleNextCandidate}
                   className="text-xs text-neutral-400 hover:text-white transition-colors"
                 >
                   Classify another object

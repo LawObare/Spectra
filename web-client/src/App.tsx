@@ -373,11 +373,42 @@ const LiveSpectrophotometricWorkbench: React.FC = () => {
  * Implements Beer-Lambert optical depth tau(lambda) = -ln(F_obs / F_cont) and N_ice = int tau(nu) dnu / A.
  */
 const LiveMolecularIceWorkbench: React.FC = () => {
-  const { ra, dec, activeTargetName } = useTelemetryStore();
+  const { ra, dec, activeTargetName, activeSpectrum } = useTelemetryStore();
   const { setTab } = useSpectraUrlState();
   const [h2oDepth, setH2oDepth] = useState<number>(0.85);
   const [co2Depth, setCo2Depth] = useState<number>(0.62);
   const [coDepth, setCoDepth] = useState<number>(0.34);
+
+  // Synchronize optical depths directly from active 102-channel extracted spectrum
+  useEffect(() => {
+    if (activeSpectrum && activeSpectrum.length >= 102) {
+      const findFlux = (targetLam: number) => {
+        let best = activeSpectrum[0];
+        for (const ch of activeSpectrum) {
+          if (Math.abs(ch.wavelengthUm - targetLam) < Math.abs(best.wavelengthUm - targetLam)) {
+            best = ch;
+          }
+        }
+        return Math.max(1e-4, best.fluxMjySr);
+      };
+
+      const fCont30 = (findFlux(2.8) + findFlux(3.6)) / 2;
+      const fH2O = findFlux(3.05);
+      const tauH2O = Math.max(0.05, Math.min(2.5, -Math.log(Math.max(1e-3, fH2O / fCont30))));
+
+      const fCont42 = (findFlux(3.9) + findFlux(4.4)) / 2;
+      const fCO2 = findFlux(4.27);
+      const tauCO2 = Math.max(0.05, Math.min(2.0, -Math.log(Math.max(1e-3, fCO2 / fCont42))));
+
+      const fCont46 = (findFlux(4.5) + findFlux(4.85)) / 2;
+      const fCO = findFlux(4.67);
+      const tauCO = Math.max(0.05, Math.min(1.5, -Math.log(Math.max(1e-3, fCO / fCont46))));
+
+      setH2oDepth(Number(tauH2O.toFixed(2)));
+      setCo2Depth(Number(tauCO2.toFixed(2)));
+      setCoDepth(Number(tauCO.toFixed(2)));
+    }
+  }, [activeSpectrum]);
 
   // Laboratory Band Strengths A (cm / molecule) — Gerakines et al. (1995), Hudgins et al. (1993)
   const iceBands = useMemo(() => {
