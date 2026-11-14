@@ -50,16 +50,16 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Real Photographic Astronomical Survey Configurations
-export type PhotographicSurveyId = 'ls-dr10' | 'unwise-neo7';
+type PhotographicSurveyId = 'ls-dr10' | 'unwise-neo7';
 
-export interface PhotographicSurveySpec {
+interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
   label: string;
   badge: string;
   description: string;
 }
 
-export const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
+const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
     id: 'unwise-neo7',
     label: 'unWISE Infrared',
@@ -110,7 +110,7 @@ function getZoomOctave(fovDeg: number): { plateSizeDeg: number; pixscale: number
 }
 
 // SPHEREx Level-2 Spectral Image Exposure Metadata (Modelled after IRSA spherex_qr2 MEF table)
-export interface SpherexSpectralExposure {
+interface SpherexSpectralExposure {
   obsId: string;
   passNumber: number;
   mjd: number;
