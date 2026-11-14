@@ -21,7 +21,7 @@ import { Badge, Button, Input, Select } from '../components/ui';
 import {
   fetchInstalledSections,
   findMatchingSection,
-  type InstalledSection,
+  useInstalledSectionState,
 } from '../lib/installedSections';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
@@ -638,7 +638,7 @@ export const MolecularIceStudio: React.FC = () => {
   const [annulusOuter, setAnnulusOuter] = useState(5.0);
   const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('tau');
   const [sourceMode, setSourceMode] = useState<'installed' | 'live' | 'synthetic'>('installed');
-  const [installedSections, setInstalledSections] = useState<InstalledSection[]>([]);
+  const { installedSections } = useInstalledSectionState();
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
   const [liveSpectrum, setLiveSpectrum] = useState<SpectrumSource | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -669,26 +669,23 @@ export const MolecularIceStudio: React.FC = () => {
 
   // Load installed sections once on mount / target change
   useEffect(() => {
-    const controller = new AbortController();
-    fetchInstalledSections(controller.signal)
-      .then((sections) => {
-        setInstalledSections(sections);
-        const ready = sections.filter((s) => s.status === 'ready');
-        if (ready.length === 0) {
-          setSelectedSectionId('');
-          return;
-        }
-        const match =
-          findMatchingSection(ready, selectedTarget.ra, selectedTarget.dec) ||
-          findMatchingSection(ready, ra, dec) ||
-          ready[0];
-        setSelectedSectionId((prev) => (prev && ready.some((s) => s.section_id === prev) ? prev : match.section_id));
-      })
-      .catch(() => {
-        // Ignore transient offline errors
-      });
-    return () => controller.abort();
-  }, [ra, dec, selectedTarget.ra, selectedTarget.dec]);
+    if (installedSections.length === 0) {
+      void fetchInstalledSections();
+    }
+  }, [installedSections.length]);
+
+  useEffect(() => {
+    const ready = installedSections.filter((s) => s.status === 'ready');
+    if (ready.length === 0) {
+      setSelectedSectionId('');
+      return;
+    }
+    const match =
+      findMatchingSection(ready, selectedTarget.ra, selectedTarget.dec) ||
+      findMatchingSection(ready, ra, dec) ||
+      ready[0];
+    setSelectedSectionId((prev) => (prev && ready.some((s) => s.section_id === prev) ? prev : match.section_id));
+  }, [installedSections, ra, dec, selectedTarget.ra, selectedTarget.dec]);
 
   // Installed section or on-demand live HDU 6 spectrum. Falls back to synthetic template when unavailable.
   useEffect(() => {
