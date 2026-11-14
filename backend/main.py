@@ -57,21 +57,32 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    created_pool = None
     try:
         try:
             from backend.db.pool import close_pool, create_pool
         except ImportError:
             from db.pool import close_pool, create_pool  # type: ignore
 
-        pool = await create_pool(min_size=1, max_size=2)
-        try:
-            await ensure_benchmarks_preinstalled(pool)
-        finally:
-            await close_pool(pool)
+        if getattr(_app.state, "db_pool", None) is None:
+            created_pool = await create_pool(min_size=1, max_size=5)
+            _app.state.db_pool = created_pool
+        await ensure_benchmarks_preinstalled(_app.state.db_pool)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Skipping startup benchmark seed: %s", exc)
-    yield
-    shutdown_cpu_pool(wait=False)
+    try:
+        yield
+    finally:
+        shutdown_cpu_pool(wait=False)
+        if created_pool is not None:
+            if getattr(_app.state, "db_pool", None) is created_pool:
+                _app.state.db_pool = None
+            try:
+                from backend.db.pool import close_pool
+            except ImportError:
+                from db.pool import close_pool  # type: ignore
+
+            await close_pool(created_pool)
 
 
 app = FastAPI(
