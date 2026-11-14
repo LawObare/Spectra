@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Input, Select } from '../components/ui';
 import {
   fetchInstalledSections,
+  fetchStaticSectionSpectrum,
   findMatchingSection,
   useInstalledSectionState,
 } from '../lib/installedSections';
@@ -557,11 +558,21 @@ export const MolecularIceStudio: React.FC = () => {
             if (!cancelled) setLiveStatus('idle');
             return;
           }
-          const res = await fetch(`/api/sections/${activeSec.section_id}/spectrum?normalize=false`, {
-            signal: controller.signal,
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          payload = await res.json();
+          try {
+            const res = await fetch(`/api/sections/${activeSec.section_id}/spectrum?normalize=false`, {
+              signal: controller.signal,
+            });
+            const contentType = (res.headers.get('content-type') || '').toLowerCase();
+            if (res.ok && !contentType.includes('text/html')) {
+              payload = await res.json();
+            }
+          } catch (err) {
+            if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          }
+          if (!payload) {
+            payload = await fetchStaticSectionSpectrum(activeSec.section_id, controller.signal);
+          }
+          if (!payload) throw new Error('Installed spectrum unavailable');
         } else {
           const response = await fetch('/api/spectrum/tasks', {
             method: 'POST',
