@@ -286,7 +286,14 @@ async def _extract_and_cache_spectrum(
 
     Avoids issuing a duplicate 30-exposure IRSA fetch during cutout finalization.
     """
-    return _extract_spectrum_from_tensor_payload(payload, ra=ra, dec=dec, label=label, normalize=False)
+    return await asyncio.to_thread(
+        _extract_spectrum_from_tensor_payload,
+        payload,
+        ra=ra,
+        dec=dec,
+        label=label,
+        normalize=False,
+    )
 
 
 async def _finalize_section_install(
@@ -439,6 +446,7 @@ async def _enqueue_real_section_install(
                     adaptive_window=adaptive_window,
                     zodi_subtracted=zodi_subtracted,
                     real_only=True,
+                    emit_partial=False,
                 ),
                 BackgroundTasks(),
             )
@@ -708,6 +716,7 @@ async def install_section(
             adaptive_window=body.adaptive_window,
             zodi_subtracted=body.zodi_subtracted,
             real_only=True,
+            emit_partial=False,
         ),
         background_tasks,
     )
