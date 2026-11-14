@@ -15,7 +15,9 @@
 
 ## 1. Executive Summary & Challenge Alignment
 
-**Spectra** is the winning solution for the **NASA Space Apps Challenge: "Display images of the sky from the SPHEREx mission, making it easy for anyone to quickly see how they change over time."**
+**Spectra** is an open-source time-domain blink comparator and 102-channel spectrophotometric exploration workbench built for the **NASA Space Apps Challenge: "Display images of the sky from the SPHEREx mission, making it easy for anyone to quickly see how they change over time."**
+
+> **Data Provenance & Simulation Transparency:** Spectra connects directly to the NASA/IPAC Infrared Science Archive (**IRSA SIA2 & Cutout APIs**, `spherex_qr2` collection) for live multi-extension FITS (`MEF`) ingestion, wavelength-matched co-addition, and `WCS-WAVE` spectral extraction. When running offline or inspecting multi-epoch survey projections beyond currently released single-pass QR2 pointings, pre-cached benchmark bundles and fallback cutouts use a physically calibrated instrument simulation model (zodiacal background, Box-Muller read/photon noise, and Spike S2 exposure depth matrices) and display a persistent **`SIMULATED DATA`** canvas watermark and `[Benchmark Model (Simulated)]` / `[Simulated Fallback (Offline)]` provenance badge so simulated pixels are never mistaken for live telescope telemetry.
 
 NASA's SPHEREx satellite (launched in early 2025) maps the entire sky every six months across **102 near-infrared spectral channels** ($0.75\,\mu\text{m} - 5.00\,\mu\text{m}$) at a native spatial resolution of $\approx 6.2''/\text{pixel}$, observing over a billion astronomical objects across four full all-sky passes and $>50$ deep-field passes over the ecliptic poles.
 

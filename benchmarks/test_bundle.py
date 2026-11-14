@@ -184,3 +184,29 @@ def test_static_files_exist_in_web_client():
         assert f32.exists(), f"Missing {f32}"
         assert json_file.exists(), f"Missing {json_file}"
         assert f32.stat().st_size > 200_000, f"File {f32} unexpectedly small"
+
+
+def test_review_audit_regressions():
+    """Verify exposure_ids have no '_arnard' truncation, post-May 2025 MJDs, and spatially varying variance."""
+    import statistics
+
+    target = next(t for t in BENCHMARK_TARGETS if t.subject_id == "benchmark_barnard")
+    buf = generate_benchmark_tensor(target)
+    parsed = parse_binary_tensor_buffer(buf)
+    hdr = parsed["header"]
+
+    # 1. Exposure IDs must end with _barnard, never _arnard
+    flat_ids = [eid for pass_ids in hdr["exposure_ids"] for eid in pass_ids]
+    assert all(eid.endswith("_barnard") for eid in flat_ids), f"Unexpected exposure IDs: {flat_ids}"
+
+    # 2. Survey pass MJDs must start after May 2025 (MJD >= 60789)
+    for mjd_start, mjd_end in hdr["mjd_ranges"]:
+        assert mjd_start >= 60789.0, f"Pre-launch MJD detected: {mjd_start}"
+        assert mjd_end > mjd_start
+
+    # 3. Variance plane is spatially varying (not constant 0.1225) and median flux > 0 (zodiacal background)
+    unique_vars = {round(v, 5) for v in parsed["variance"][: 29 * 29]}
+    assert len(unique_vars) > 50, "Variance plane should vary spatially with photon/flat statistics"
+    assert statistics.median(parsed["flux"]) > 0.01, "Median flux should reflect non-zero zodiacal background"
+    assert hdr.get("is_simulated") is True
+

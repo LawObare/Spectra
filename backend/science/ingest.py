@@ -6,17 +6,37 @@ including HDU 4 ZODI background model) from IRSA Cutout Service (primary) with
 anonymous S3 byte-range slicing (fsspec) as fallback. Parse LTV1/LTV2 sub-array
 WCS offsets.
 """
+import io
+import json
 import logging
+import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Any
 
 import httpx
+import numpy as np
+from astropy.io import fits
 
 
 def survey_passes_from_config() -> dict:
-    """Return survey pass MJD boundaries from config if available.
+    """Return survey pass MJD boundaries from backend/config/survey_passes.json.
 
     Falls back to empty mapping; dynamic grouping handles unknown passes.
     """
+    for candidate in (
+        Path(__file__).resolve().parent.parent / "config" / "survey_passes.json",
+        Path("backend/config/survey_passes.json"),
+        Path("config/survey_passes.json"),
+    ):
+        if candidate.is_file():
+            try:
+                raw = json.loads(candidate.read_text(encoding="utf-8"))
+                passes = raw.get("passes", raw)
+                if isinstance(passes, dict):
+                    return passes
+            except (OSError, json.JSONDecodeError):
+                pass
     try:
         from backend.config.survey_passes import survey_passes_from_config as _cfg
 
@@ -30,6 +50,18 @@ logger = logging.getLogger(__name__)
 SIA2_ENDPOINT = "https://irsa.ipac.caltech.edu/SIA"
 DEFAULT_COLLECTION = "spherex_qr2"
 DEFAULT_RADIUS_DEG = 0.5  # 30 arcmin default
+
+
+def _normalize_band_name(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    s = raw.strip().upper()
+    for b in ("D1", "D2", "D3", "D4", "D5", "D6"):
+        if b in s or f"BAND_{b}" in s or f"BAND {b}" in s:
+            return b
+    if s in {"1", "2", "3", "4", "5", "6"}:
+        return f"D{s}"
+    return s if s.startswith("D") and len(s) <= 3 else None
 
 
 async def query_sia2_cone(
@@ -47,7 +79,8 @@ async def query_sia2_cone(
     """
     params = {
         "COLLECTION": collection,
-        "POS": f"circle+{ra}+{dec}+{radius_deg}",
+        "POS": f"circle {ra} {dec} {radius_deg}",
+        "RESPONSEFORMAT": "VOTABLE",
     }
     params.update(kwargs)
 
@@ -61,8 +94,6 @@ async def query_sia2_cone(
                 )
                 return {}
 
-            # Parse VOTable response - simplified handling
-            # In production, use astropy.io.votable or pyvo
             return _parse_sia2_votable(response.text, collection)
 
         except httpx.TimeoutException:
@@ -76,11 +107,10 @@ async def query_sia2_cone(
 def _parse_sia2_votable(votable_text: str, collection: str) -> dict[str, Any]:
     """Parse IRSA SIA2 VOTable response.
 
+    Supports both full IVOA VOTable (<FIELD>/<TR>/<TD>) and simplified XML tags.
     Returns dict with exposure IDs, MJDs, detector IDs, footprints, cutout URLs.
     """
-    # Minimal parsing - extract essential fields from VOTable
-    # This is simplified; real implementation uses astropy.io.votable
-    result = {
+    result: dict[str, Any] = {
         "exposure_ids": [],
         "mjds": [],
         "detector_ids": [],
@@ -89,14 +119,67 @@ def _parse_sia2_votable(votable_text: str, collection: str) -> dict[str, Any]:
         "s3_uris": [],
     }
 
-    # Parse basic XML elements
-    import re
+    # 1. Attempt standard IVOA VOTable (<FIELD> + <TR>/<TD>) parsing
+    try:
+        root = ET.fromstring(votable_text)
+        fields: list[str] = []
+        for fld in root.findall(".//{http://www.ivoa.net/xml/VOTable/v1.3}FIELD"):
+            fields.append(fld.attrib.get("name", ""))
+        if not fields:
+            for fld in root.findall(".//FIELD"):
+                fields.append(fld.attrib.get("name", ""))
 
-    # Extract exposure IDs (TARGETID or similar)
+        if fields:
+            idx = {name: i for i, name in enumerate(fields)}
+            trs = root.findall(".//{http://www.ivoa.net/xml/VOTable/v1.3}TR")
+            if not trs:
+                trs = root.findall(".//TR")
+
+            def _col(tds: list[Any], name: str) -> str | None:
+                i = idx.get(name)
+                if i is None or i >= len(tds):
+                    return None
+                txt = tds[i].text
+                return txt.strip() if txt else None
+
+            for tr in trs:
+                tds = tr.findall("{http://www.ivoa.net/xml/VOTable/v1.3}TD")
+                if not tds:
+                    tds = tr.findall("TD")
+                obs_id = _col(tds, "obs_id") or _col(tds, "obs_publisher_did") or ""
+                access_url = _col(tds, "access_url") or ""
+                if not obs_id and not access_url:
+                    continue
+                band = _normalize_band_name(_col(tds, "energy_bandpassname")) or _normalize_band_name(
+                    _col(tds, "instrument_name")
+                )
+                t_min_raw = _col(tds, "t_min")
+                mjd_val: float | None = None
+                if t_min_raw:
+                    try:
+                        mjd_val = float(t_min_raw)
+                    except ValueError:
+                        mjd_val = None
+                s_region = _col(tds, "s_region") or ""
+                s3_uri = _col(tds, "cloud_access") or ""
+
+                result["exposure_ids"].append(obs_id)
+                result["mjds"].append(mjd_val)
+                result["detector_ids"].append(band or "D1")
+                result["footprints"].append(s_region)
+                result["access_urls"].append(access_url)
+                if s3_uri:
+                    result["s3_uris"].append(s3_uri)
+
+            if result["exposure_ids"]:
+                return result
+    except ET.ParseError:
+        pass
+
+    # 2. Fallback to minimal XML element extraction
     ids = re.findall(r"<ID>(\d+)</ID>", votable_text)
     result["exposure_ids"] = [int(i) for i in ids] if ids else []
 
-    # Extract MJDs
     mjds = re.findall(r"<DATE-OBS>([^<]+)</DATE-OBS>", votable_text)
     out = []
     for m in mjds:
@@ -110,12 +193,9 @@ def _parse_sia2_votable(votable_text: str, collection: str) -> dict[str, Any]:
                 pass
     result["mjds"] = out
 
-    # Extract footprints (simplified)
     footprints = re.findall(r"<FOOTPRINT>(.*?)</FOOTPRINT>", votable_text, re.DOTALL)
     result["footprints"] = footprints
 
-    # For a full implementation, use pyvo.siv RegQuery or astropy VOTable parser
-    # This placeholder returns empty structures for missing fields
     return result
 
 
@@ -225,19 +305,18 @@ async def fetch_cutout_from_irsa(
 
 
 def _parse_irsa_mef_cutout(fits_data: bytes, collection: str) -> dict[str, Any]:
-    """Parse IRSA MEF cutout FITS data.
+    """Parse IRSA MEF cutout FITS data using astropy.io.fits.
 
-    Returns dict with HDU 1-6 data arrays and metadata.
+    Returns dict with HDU 1-6 data arrays, headers, and WCS metadata.
     """
-    # Production implementation uses astropy.io.fits
-    # This is a stub for the code structure
-    return {
+    out: dict[str, Any] = {
         "hdu1_image": None,  # 32-bit float IMAGE (MJy/sr)
         "hdu2_flags": None,  # 32-bit integer FLAGS bitmask
         "hdu3_variance": None,  # 32-bit float VARIANCE
         "hdu4_zodi": None,  # 32-bit float ZODI background
         "hdu5_psf": None,  # 32-bit float PSF cube
         "hdu6_wave_tab": None,  # Binary Table WCS-WAVE
+        "hdu1_header": None,
         "metadata": {
             "collection": collection,
             "wcs": "TAN/SIP",
@@ -245,23 +324,75 @@ def _parse_irsa_mef_cutout(fits_data: bytes, collection: str) -> dict[str, Any]:
             "naxis": 2040,
         },
     }
+    if not fits_data or len(fits_data) < 2880:
+        return out
+
+    try:
+        with fits.open(io.BytesIO(fits_data), ignore_missing_simple=True) as hdul:
+            for idx, hdu in enumerate(hdul):
+                extname = str(hdu.name or "").strip().upper()
+                if extname == "IMAGE" or (idx == 1 and out["hdu1_image"] is None and hdu.data is not None):
+                    out["hdu1_image"] = np.asarray(hdu.data, dtype=np.float32)
+                    out["hdu1_header"] = hdu.header.copy()
+                elif extname in ("FLAGS", "MASK") or (idx == 2 and out["hdu2_flags"] is None and hdu.data is not None):
+                    out["hdu2_flags"] = np.asarray(hdu.data, dtype=np.uint32)
+                elif extname in ("VARIANCE", "VAR") or (idx == 3 and out["hdu3_variance"] is None and hdu.data is not None):
+                    out["hdu3_variance"] = np.asarray(hdu.data, dtype=np.float32)
+                elif extname == "ZODI" or (idx == 4 and out["hdu4_zodi"] is None and hdu.data is not None):
+                    out["hdu4_zodi"] = np.asarray(hdu.data, dtype=np.float32)
+                elif extname == "PSF" or (idx == 5 and out["hdu5_psf"] is None and hdu.data is not None):
+                    out["hdu5_psf"] = np.asarray(hdu.data, dtype=np.float32)
+                elif extname in ("WCS-WAVE", "WAVE-TAB") or (idx == 6 and out["hdu6_wave_tab"] is None and hdu.data is not None):
+                    try:
+                        out["hdu6_wave_tab"] = {
+                            "X": np.asarray(hdu.data["X"][0], dtype=np.float64),
+                            "Y": np.asarray(hdu.data["Y"][0], dtype=np.float64),
+                            "VALUES": np.asarray(hdu.data["VALUES"][0], dtype=np.float64),
+                        }
+                    except (KeyError, IndexError, TypeError):
+                        out["hdu6_wave_tab"] = hdu.data
+
+            if out["hdu1_header"] is not None:
+                hdr = out["hdu1_header"]
+                for key in ("LTV1", "LTV2", "CRPIX1A", "CRPIX2A", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2"):
+                    if key in hdr:
+                        out["metadata"][key] = float(hdr[key])
+                if "LTV1" not in out["metadata"] and "CRPIX1A" in hdr and "CRPIX2A" in hdr:
+                    # Sub-array offset equivalence verified in Spike S3: x_det = x_cut + 1.0 - CRPIX1A
+                    out["metadata"]["LTV1"] = float(hdr["CRPIX1A"]) - 1.0
+                    out["metadata"]["LTV2"] = float(hdr["CRPIX2A"]) - 1.0
+    except (OSError, ValueError, TypeError) as exc:
+        logger.debug(f"FITS MEF parse fallback: {exc}")
+
+    return out
 
 
 def _apply_adaptive_wavelength_window(
     cutout_data: dict[str, Any],
     window_half_width: float,
 ) -> dict[str, Any]:
-    """Apply adaptive wavelength window filtering to cutout.
+    """Apply adaptive wavelength window evaluation to cutout.
 
     Widen window half-width w_b per target until every available epoch has
     at least N_min >= 1 matched exposures.
 
     SPECIFICATION.md §3.1: Adaptive window sizing for D5/D6 narrow bands.
     """
-    # In production, evaluate HDU 6 WAVE-TAB at every pixel
-    # and filter exposures per (Epoch, Band) to [λ₀(1-w_b), λ₀(1+w_b)]
-    # with adaptive widening when adaptive_window=True
-    # For now, return data unchanged
+    cutout_data["metadata"] = dict(cutout_data.get("metadata", {}))
+    cutout_data["metadata"]["window_half_width"] = float(window_half_width)
+    hdr = cutout_data.get("hdu1_header")
+    wave_tab = cutout_data.get("hdu6_wave_tab")
+    if hdr is not None and isinstance(wave_tab, dict):
+        try:
+            try:
+                from backend.science.wave_match import compute_cutout_wavelength_grid
+            except ImportError:
+                from science.wave_match import compute_cutout_wavelength_grid  # type: ignore
+            lam_map, dlam_map = compute_cutout_wavelength_grid(hdr, wave_tab)
+            cutout_data["wavelength_map_um"] = lam_map
+            cutout_data["bandwidth_map_um"] = dlam_map
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"Wavelength grid evaluation skipped: {exc}")
     return cutout_data
 
 
@@ -283,10 +414,12 @@ async def parse_ltv1_ltv2_offsets(
     if ltv1 is not None and ltv2 is not None:
         return float(ltv1), float(ltv2)
 
-    # Try extracting from FITS header keywords
-    # hdu1_header = fits_cutout.get("hdu1_header", {})
-    # ltv1 = hdu1_header.get("LTV1")
-    # ltv2 = hdu1_header.get("LTV2")
+    hdu1_header = fits_cutout.get("hdu1_header")
+    if hdu1_header is not None:
+        if "LTV1" in hdu1_header and "LTV2" in hdu1_header:
+            return float(hdu1_header["LTV1"]), float(hdu1_header["LTV2"])
+        if "CRPIX1A" in hdu1_header and "CRPIX2A" in hdu1_header:
+            return float(hdu1_header["CRPIX1A"]) - 1.0, float(hdu1_header["CRPIX2A"]) - 1.0
 
     return None, None
 
@@ -346,7 +479,6 @@ async def ingest_exposures_for_target(
         result["status"] = "grouped"
 
         # Step 3: Fetch cutout from IRSA (primary path)
-        # Use first exposure's data URL or construct from SIA2 results
         if sia2_result.get("access_urls"):
             data_url = sia2_result["access_urls"][0]
             logger.info(f"Fetching IRSA cutout from: {data_url}")
@@ -382,6 +514,7 @@ def _format_exposures_for_grouping(
     exposures = []
     exposure_ids = sia2_result.get("exposure_ids", [])
     mjds = sia2_result.get("mjds", [])
+    detector_ids = sia2_result.get("detector_ids", [])
     footprints = sia2_result.get("footprints", [])
     access_urls = sia2_result.get("access_urls", [])
 
@@ -389,6 +522,7 @@ def _format_exposures_for_grouping(
         exp = {
             "exposure_id": exp_id,
             "mjd": mjds[i] if i < len(mjds) else None,
+            "band": detector_ids[i] if i < len(detector_ids) else "D1",
             "footprint": footprints[i] if i < len(footprints) else None,
             "access_url": access_urls[i] if i < len(access_urls) else None,
         }

@@ -22,12 +22,28 @@ from pydantic import BaseModel
 
 try:
     from backend.cache.lru import LRUCache
+    from backend.science.ingest import ingest_exposures_for_target
     from backend.science.injector import create_synth_a_preset, inject_synthetic_source_into_planes
+    from backend.science.reproject import (
+        build_master_wcs,
+        coadd_inverse_variance,
+        encode_binary_tensor,
+        reproject_exposures_sync,
+    )
     from backend.science.wave import match_benchmark_target
+    from backend.science.wave_match import filter_wavelength_matched_exposures
 except ImportError:
     from cache.lru import LRUCache  # type: ignore
+    from science.ingest import ingest_exposures_for_target  # type: ignore
     from science.injector import create_synth_a_preset, inject_synthetic_source_into_planes  # type: ignore
+    from science.reproject import (  # type: ignore
+        build_master_wcs,
+        coadd_inverse_variance,
+        encode_binary_tensor,
+        reproject_exposures_sync,
+    )
     from science.wave import match_benchmark_target  # type: ignore
+    from science.wave_match import filter_wavelength_matched_exposures  # type: ignore
 
 router = APIRouter(prefix="/api", tags=["cutout"])
 
@@ -234,10 +250,12 @@ def _pack_plane(flux, variance, flags, n_exp) -> bytes:
 
 
 async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
-    """Process a single cutout task (simulated pipeline with binary packaging)."""
+    """Process a single cutout task: benchmark cache -> live IRSA SIA2/MEF -> calibrated fallback."""
     task_id = task_data["task_id"]
-    ra = task_data["ra"]
-    dec = task_data["dec"]
+    ra = float(task_data["ra"])
+    dec = float(task_data["dec"])
+    fov_arcsec = int(task_data.get("fov_arcsec") or 180)
+    adaptive_window = bool(task_data.get("adaptive_window", False))
     try:
         for stage, prog, msg in [
             ("resolving", 0.1, "Resolving target coordinates"),
@@ -253,9 +271,8 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(0.01)
 
         matched = match_benchmark_target(ra, dec, match_radius_arcsec=60.0)
-        source_badge = "[NASA Benchmark (Pre-cached)]" if matched else "[IRSA Live (QR2)]"
 
-        # Check for precomputed authoritative NASA benchmark file
+        # 1. Check for precomputed NASA benchmark file
         loaded_precomputed = False
         if matched and not (task_data.get("synth_a") or task_data.get("synth_b")):
             base_slug = matched.get("name", "").lower().replace("'", "").replace(" ", "_").replace("-", "_")
@@ -291,42 +308,145 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                 if loaded_precomputed:
                     break
 
-        if not loaded_precomputed:
-            n_epochs, n_bands, h, w = 1, 1, 16, 16
-            flux = np.random.rand(n_epochs, n_bands, h, w).astype(np.float32)
-            variance = np.random.rand(n_epochs, n_bands, h, w).astype(np.float32) * 0.01
-            flags = np.zeros((n_epochs, n_bands, h, w), dtype=np.uint32)
-            n_exp = np.ones((n_epochs, n_bands, h, w), dtype=np.uint16)
+        # 2. Attempt live IRSA SIA2 exposure discovery + cutout reprojection when not precomputed
+        loaded_live_irsa = False
+        if not loaded_precomputed and not (task_data.get("synth_a") or task_data.get("synth_b")):
+            try:
+                ingest_res = await asyncio.wait_for(
+                    ingest_exposures_for_target(
+                        ra=ra,
+                        dec=dec,
+                        fov_arcsec=fov_arcsec,
+                        adaptive_window=adaptive_window,
+                    ),
+                    timeout=8.0,
+                )
+                cutout_mef = ingest_res.get("cutout") or {}
+                if (
+                    ingest_res.get("status") == "complete"
+                    and cutout_mef.get("hdu1_image") is not None
+                    and cutout_mef.get("hdu1_header") is not None
+                ):
+                    img = cutout_mef["hdu1_image"]
+                    var = (
+                        cutout_mef["hdu3_variance"]
+                        if cutout_mef.get("hdu3_variance") is not None
+                        else np.full_like(img, 0.04, dtype=np.float32)
+                    )
+                    flg = (
+                        cutout_mef["hdu2_flags"]
+                        if cutout_mef.get("hdu2_flags") is not None
+                        else np.zeros_like(img, dtype=np.uint32)
+                    )
+                    if task_data.get("zodi_subtracted") and cutout_mef.get("hdu4_zodi") is not None:
+                        img = img - cutout_mef["hdu4_zodi"]
 
-            # Inject synthetic source if requested (SPECIFICATION.md §4.1 Pipeline 3)
+                    sia2_q = ingest_res.get("sia2_query") or {}
+                    exp_id = str((sia2_q.get("exposure_ids") or ["spx_live_01"])[0])
+                    exp_mjd = float((sia2_q.get("mjds") or [60810.4])[0] or 60810.4)
+                    exp_band = str((sia2_q.get("detector_ids") or ["D1"])[0] or "D1")
+
+                    candidate_exps = [
+                        {
+                            "flux": img,
+                            "variance": var,
+                            "flags": flg,
+                            "cutout_header": cutout_mef["hdu1_header"],
+                            "wave_tab": cutout_mef.get("hdu6_wave_tab"),
+                            "band": exp_band,
+                            "epoch": "pass_01",
+                            "mjd": exp_mjd,
+                            "exposure_id": exp_id,
+                        }
+                    ]
+                    matched_res = filter_wavelength_matched_exposures(
+                        candidate_exps, ra=ra, dec=dec, adaptive_window=adaptive_window
+                    )
+                    exps_to_reproj = matched_res.matched_exposures or candidate_exps
+                    master_wcs, _, shape_out = build_master_wcs(ra, dec, min(fov_arcsec, 180))
+                    reproj_list = reproject_exposures_sync(exps_to_reproj, master_wcs, shape_out)
+                    coadd_res = coadd_inverse_variance(
+                        reproj_list,
+                        master_wcs=master_wcs,
+                        shape_out=shape_out,
+                        source_badge="[IRSA Live (spherex_qr2)]",
+                        release="spherex_qr2",
+                        fill_unobserved=0.0,
+                    )
+                    coadd_res.metadata["is_simulated"] = False
+                    payload = coadd_res.to_bytes(compression="none")
+                    await tensor_cache.set(f"tensor:{task_id}", payload, coadd_res.metadata)
+                    loaded_live_irsa = True
+            except Exception:  # noqa: BLE001
+                loaded_live_irsa = False
+
+        # 3. Calibrated simulation / synthetic injection fallback (honestly labeled)
+        if not loaded_precomputed and not loaded_live_irsa:
+            n_epochs, n_bands, h, w = 2, 6, 29, 29
+            rng = np.random.default_rng(abs(int(ra * 1000 + dec * 1000)) % (2**31 - 1) or 42)
+            # Zodiacal background + read noise per band D1..D6
+            zodi_levels = np.array([0.04, 0.05, 0.04, 0.08, 0.18, 0.32], dtype=np.float32)
+            read_sigmas = np.array([0.03, 0.035, 0.04, 0.045, 0.06, 0.08], dtype=np.float32)
+
+            flux = np.empty((n_epochs, n_bands, h, w), dtype=np.float32)
+            variance = np.empty((n_epochs, n_bands, h, w), dtype=np.float32)
+            flags = np.zeros((n_epochs, n_bands, h, w), dtype=np.uint32)
+            n_exp = np.full((n_epochs, n_bands, h, w), 4, dtype=np.uint16)
+
+            yy, xx = np.mgrid[0:h, 0:w]
+            sigma_psf = 1.0 / 2.35482  # 6.2" FWHM = 1.0 px => sigma = 0.4247 px
+            psf = np.exp(-((xx - 14.0) ** 2 + (yy - 14.0) ** 2) / (2.0 * sigma_psf**2)).astype(
+                np.float32
+            )
+
+            for e_idx in range(n_epochs):
+                for b_idx in range(n_bands):
+                    bg = zodi_levels[b_idx] if not task_data.get("zodi_subtracted") else 0.0
+                    sig = read_sigmas[b_idx]
+                    noise = rng.normal(0.0, sig, size=(h, w)).astype(np.float32)
+                    plane_flux = bg + 2.5 * psf + noise
+                    flux[e_idx, b_idx] = plane_flux
+                    variance[e_idx, b_idx] = (
+                        sig * sig + 0.015 * np.maximum(plane_flux, 0.0)
+                    ).astype(np.float32)
+
             if task_data.get("synth_a") or task_data.get("synth_b"):
                 source_badge = "[Synthetic Injection Mode]"
                 cfg = create_synth_a_preset(ra0=ra, dec0=dec)
                 inject_synthetic_source_into_planes(
-                    flux[0, 0],
-                    variance[0, 0],
-                    flags[0, 0],
+                    flux[0, 4],
+                    variance[0, 4],
+                    flags[0, 4],
                     crval_ra=ra,
                     crval_dec=dec,
-                    obs_epoch_mjd=59050.0,
+                    obs_epoch_mjd=60810.4,
                     band_idx=4,
                     config=cfg,
                 )
+            else:
+                source_badge = "[Simulated Fallback (Offline)]"
 
             header = {
                 "shape": [n_epochs, n_bands, h, w],
                 "crval": [ra, dec],
-                "cdelt": [-0.001722, 0.001722],
-                "mjd_ranges": [[59000, 59100]],
-                "exposure_ids": [1],
+                "cdelt": [-0.00172222, 0.00172222],
+                "mjd_ranges": [
+                    [[60789.85, 61053.42] for _ in range(n_bands)],
+                    [[61091.72, 61237.87] for _ in range(n_bands)],
+                ],
+                "exposure_ids": [f"sim_pass{e+1}_d{b+1}" for e in range(n_epochs) for b in range(n_bands)],
                 "release": "spherex_qr2",
                 "source_badge": source_badge,
-                "compression": "zstd-shuffle",
+                "is_simulated": True,
+                "compression": "none",
             }
-            hb = json.dumps(header).encode("utf-8")
-            raw = _pack_plane(flux[0, 0], variance[0, 0], flags[0, 0], n_exp[0, 0])
-            compressed = _encode_zstd_shuffle(raw)
-            payload = len(hb).to_bytes(4, "little") + hb + compressed
+            payload = encode_binary_tensor(
+                flux=flux,
+                variance=variance,
+                flags=flags,
+                n_exposures=n_exp,
+                metadata=header,
+            )
             await tensor_cache.set(f"tensor:{task_id}", payload, header)
 
         task_states[task_id].update(

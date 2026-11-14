@@ -693,7 +693,7 @@ export const PublicExplorerPortal: React.FC = () => {
           ? matchedCatalog.name
           : store.activeTargetName ||
             `J2000 ${urlRa.toFixed(4)}°, ${urlDec >= 0 ? '+' : ''}${urlDec.toFixed(4)}°`,
-        isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
+        isBench ? '[Benchmark Model (Simulated)]' : '[Simulated Fallback (Offline)]'
       );
     }
 
