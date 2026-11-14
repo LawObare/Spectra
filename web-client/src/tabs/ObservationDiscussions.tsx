@@ -475,12 +475,19 @@ export const ObservationDiscussions: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full w-full justify-center overflow-hidden bg-background font-sans text-xs text-foreground">
-      <div className="flex h-full w-full max-w-[1440px] flex-col lg:flex-row overflow-hidden">
+    <div
+      className="relative flex h-full w-full justify-center overflow-hidden bg-background bg-cover bg-center bg-no-repeat font-sans text-xs text-foreground"
+      style={{ backgroundImage: "url('/images/galaxy.jpg')" }}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 bg-background/65 backdrop-blur-[1px]"
+        aria-hidden="true"
+      />
+      <div className="relative z-10 flex h-full w-full max-w-[1440px] flex-col lg:flex-row overflow-hidden">
         {/* LEFT RAIL: Feed Views, External Archives & Zero-Auth Observer Footer */}
         <aside
           aria-label="Forum Navigation and Archives"
-          className="flex w-full lg:w-[236px] xl:w-[252px] shrink-0 flex-col max-h-56 lg:max-h-none border-b lg:border-b-0 lg:border-r border-border bg-card/30 overflow-y-auto px-3.5 py-4 gap-5"
+          className="flex w-full lg:w-[236px] xl:w-[252px] shrink-0 flex-col max-h-56 lg:max-h-none border-b lg:border-b-0 lg:border-r border-border/80 bg-card/55 backdrop-blur-md overflow-y-auto px-3.5 py-4 gap-5"
         >
           {/* Feed Navigation Views (modeled on My Feed / Groups / Bookmarks) */}
           <nav className="flex flex-col gap-1" aria-label="Feed Scope">
@@ -603,7 +610,7 @@ export const ObservationDiscussions: React.FC = () => {
             {/* New Post / Observation Note Composer (modeled on design.webp New Post card) */}
             <form
               onSubmit={handleCreateThread}
-              className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"
+              className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md shadow-sm overflow-hidden"
             >
               <div className="px-4 pt-3.5 pb-2 space-y-1.5">
                 <input
@@ -823,17 +830,17 @@ export const ObservationDiscussions: React.FC = () => {
             {/* Threaded Observations List */}
             <div className="space-y-4">
               {isLoading && (
-                <div className="rounded-xl border border-border bg-card p-6 text-center font-mono text-xs text-muted-foreground">
+                <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 text-center font-mono text-xs text-muted-foreground">
                   Loading community discussions from archive database…
                 </div>
               )}
               {!isLoading && loadError && (
-                <div className="rounded-xl border border-destructive/50 bg-card p-4 text-center font-mono text-xs text-destructive" role="alert">
+                <div className="rounded-xl border border-destructive/50 bg-card/85 backdrop-blur-md p-4 text-center font-mono text-xs text-destructive" role="alert">
                   Forum archive unavailable ({loadError}). Check database connectivity.
                 </div>
               )}
               {!isLoading && !loadError && filteredThreads.length === 0 && (
-                <div className="rounded-xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">
+                <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 text-center text-xs text-muted-foreground">
                   No community observations match the active filters.
                 </div>
               )}
@@ -850,7 +857,7 @@ export const ObservationDiscussions: React.FC = () => {
                   <article
                     key={t.id}
                     id={`thread-${t.id}`}
-                    className="rounded-xl border border-border bg-card p-4 space-y-3"
+                    className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-4 space-y-3"
                   >
                     {/* Post Author Header */}
                     <div className="flex items-start justify-between gap-2">
@@ -1086,10 +1093,10 @@ export const ObservationDiscussions: React.FC = () => {
         {/* RIGHT RAIL: Active Field Card, Classifications Filter (replaces dropdown), Trending Topics, Top Discussions */}
         <aside
           aria-label="Classifications and Trending Topics"
-          className="flex w-full lg:w-[276px] xl:w-[300px] shrink-0 flex-col max-h-72 lg:max-h-none border-t lg:border-t-0 lg:border-l border-border bg-card/30 overflow-y-auto p-4 gap-5"
+          className="flex w-full lg:w-[276px] xl:w-[300px] shrink-0 flex-col max-h-72 lg:max-h-none border-t lg:border-t-0 lg:border-l border-border/80 bg-card/55 backdrop-blur-md overflow-y-auto p-4 gap-5"
         >
           {/* Active Sky Field Highlight Card (modeled on top-right promo card) */}
-          <div className="rounded-xl border border-border bg-card p-3.5 space-y-2.5">
+          <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-3.5 space-y-2.5">
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold text-foreground truncate">
                 {activeTargetName || 'Active Sky Field'}
