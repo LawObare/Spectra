@@ -415,7 +415,7 @@ alongside JSON metadata. Eliminates Base64 encoding overhead (saving 33% bandwid
 
 ##### 2. WCS-WAVE Hyperspectral Extraction Pipeline (`GET /api/spectrum`)
 1. **Target Coordinate Resolution:** Input master pixel $(x_{\text{master}}, y_{\text{master}})$ is mapped to astronomical coordinates $(\alpha, \delta)$ via `master_wcs.pixel_to_world()`.
-2. **Detector Space Lookup:** For each individual exposure covering the coordinate, $(\alpha, \delta)$ is translated to native detector pixel $(x_{\text{det}}, y_{\text{det}})$ using that exposure's raw spatial WCS (`TAN-SIP`).
+2. **Detector Space Lookup:** For each individual exposure covering the coordinate, $(\alpha, \delta)$ is translated to native detector pixel $(x_{\text{det}}, y_{\text{det}})$ using that exposure's raw spatial WCS (`TAN-SIP`). When extracting from cutout sub-arrays, parent detector coordinates are restored using standard FITS sub-array offset keywords (`CRPIX1A`, `CRPIX2A`).
 3. **Linear Variable Filter Smile Inversion:** Query HDU 6 (`WCS-WAVE` `WAVE-TAB`). Perform 2D bilinear interpolation across the tabular grid:
    $$\lambda_k = \mathcal{I}_{\text{WAVE}}(x_{\text{det}}, y_{\text{det}}), \quad \Delta\lambda_k = \mathcal{I}_{\text{DWAVE}}(x_{\text{det}}, y_{\text{det}})$$
 4. **PSF Point-Source Photometry & Surface Brightness to Jy Conversion:**
@@ -830,7 +830,7 @@ flowchart LR
 
 4. `GET /api/resolve`:
    - **Query Parameters:** `target` (string, e.g. `133.73712 -7.24038`, `08h54m56.91s -07d14m25.4s`, `WISE 0855`, `Barnard's Star`).
-   - **Behavior:** Parses numeric or sexagesimal coordinates directly. If target is named, debounces 350 ms and calls CDS Sesame resolver. Propagates benchmark targets to epoch 2025.5.
+   - **Behavior:** Parses numeric or sexagesimal coordinates directly. For named targets, first checks an in-memory `LOCAL_CATALOG_MAP` (the 5 NASA benchmarks + 50 common infrared reference objects) for immediate $<1\,\text{ms}$ local resolution. On a cache miss, debounces 350 ms and queries CDS Sesame (`https://cds.unistra.fr/cgi-bin/nph-sesame/-oxp/SNV?{name}`) with a **2.0-second circuit breaker timeout**; regex-extracts `<jradeg>` and `<jdedeg>`. Propagates benchmark targets to epoch 2025.5.
    - **Response:**
      ```json
      {
@@ -1348,9 +1348,9 @@ Serves as the spatial macro-gateway, replacing IRSA’s 2D Aitoff oval with a fu
     });
     ```
 - **Real-Time Catalog Layers (VizieR & SkyBot):**
-  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$. Renders circles scaled by magnitude with vector arrows calculated as:
-    $$\Delta x = \mu_\alpha \cos\delta \cdot \text{scale}, \quad \Delta y = \mu_\delta \cdot \text{scale}$$
-  - SkyBot Ephemerides: Invokes `A.catalogFromSkyBot({ epoch: observationMjd })` to overlay known asteroids and comets at the current observation timestamp.
+  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$ within a $300''$ radius (limited to top 50 brightest sources with compact JSON delivery). Renders circles scaled by magnitude with vector arrows calculated as:
+    $$\Delta x = \mu_\alpha^* \cdot \text{scale}, \quad \Delta y = \mu_\delta \cdot \text{scale}$$
+  - SkyBot Ephemerides: Invokes `A.catalogFromSkyBot({ epoch: observationMjd })` to overlay known asteroids and comets. Protected by a **2.0-second circuit breaker**: if SkyBot times out or fails under heavy VO load, the response falls back gracefully to `"skybot_status": "cached_only"` without blocking the primary cutout stream.
 
 ---
 
@@ -1361,7 +1361,7 @@ The core motion detection and visual blinking engine, combining *WiseView* image
 +-----------------------------------------------------------+---------------------------------------+
 | LEFT PANEL (65%): Multi-Epoch Playback Canvas             | RIGHT PANEL (35%): Analysis Deck      |
 |                                                           |                                       |
-| [Viewport: HTML5 2D/WebGL Canvas]                         | [Render Mode Toggles]                 |
+| [Viewport: WebGL2 Float32 Canvas (gl.R32F)]               | [Render Mode Toggles]                 |
 | - Rectified North-Up Tangent Plane                        | ( ) Blink  (*) Diff  ( ) Co-Add       |
 | - Sub-Pixel Gaia DR3 Centroid Pins (Deblending)           |                                       |
 | - Contamination Flags: Cosmic Rays (Yellow), Dead (Red)   | [Raw vs. Rectified Sensor Toggle]     |
