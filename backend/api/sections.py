@@ -18,6 +18,7 @@ import struct
 import sys
 import threading
 from collections import OrderedDict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -624,6 +625,137 @@ async def _run_benchmark_seed_queue(pool: asyncpg.Pool, targets: list[dict[str, 
         logger.exception("Real IRSA benchmark pre-install runner encountered an error")
 
 
+def _find_disk_benchmark_entry(section_id: str) -> tuple[dict[str, Any], Path] | None:
+    """Return (benchmark_target, .spx.zst path) when a bundled benchmark exists on disk."""
+    for target in BENCHMARK_TARGETS.values():
+        ra = float(target["ra"])
+        dec = float(target["dec"])
+        sid = section_id_for(ra, dec, BENCHMARK_FOV_ARCSEC)
+        if sid == section_id:
+            candidate = SECTIONS_DIR / f"{sid}.spx.zst"
+            if candidate.exists():
+                return target, candidate
+    return None
+
+
+def _resolve_existing_tensor_path(section_id: str, db_tensor_path: str | None) -> str | None:
+    """Return an existing tensor path, falling back to SECTIONS_DIR/<section_id>.spx.zst."""
+    if db_tensor_path and Path(str(db_tensor_path)).exists():
+        return str(db_tensor_path)
+    if section_id.replace("_", "").isalnum():
+        local_candidate = SECTIONS_DIR / f"{section_id}.spx.zst"
+        if local_candidate.exists():
+            return str(local_candidate)
+    return None
+
+
+def _load_disk_benchmark_sections() -> list[dict[str, Any]]:
+    """Build section metadata directly from bundled real IRSA benchmark files on disk."""
+    sections: list[dict[str, Any]] = []
+    for target in BENCHMARK_TARGETS.values():
+        ra = float(target["ra"])
+        dec = float(target["dec"])
+        sid = section_id_for(ra, dec, BENCHMARK_FOV_ARCSEC)
+        path = SECTIONS_DIR / f"{sid}.spx.zst"
+        if not path.exists():
+            continue
+        try:
+            payload = _read_installed_tensor_bytes(str(path))
+            header, _ = _parse_tensor_header(payload)
+            shape = header.get("shape") or [0, 6, 0, 0]
+            source_badge = str(
+                header.get("source_badge") or "[IRSA Live (spherex_dr1 + spherex_qr3)]"
+            )
+            stat = path.stat()
+            mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+            sections.append(
+                {
+                    "section_id": sid,
+                    "label": str(target["name"]),
+                    "ra": ra,
+                    "dec": dec,
+                    "fov_arcsec": float(BENCHMARK_FOV_ARCSEC),
+                    "status": "ready",
+                    "epochs": int(shape[0]),
+                    "bands": int(shape[1]),
+                    "height": int(shape[2]),
+                    "width": int(shape[3]),
+                    "source_badge": source_badge,
+                    "size_bytes": int(stat.st_size),
+                    "task_id": None,
+                    "error_message": None,
+                    "created_at": mtime_iso,
+                    "updated_at": mtime_iso,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed reading bundled benchmark section %s: %s", path, exc)
+    return sections
+
+
+async def _hydrate_benchmark_from_disk(
+    pool: asyncpg.Pool, target: dict[str, Any], disk_path: Path
+) -> bool:
+    """Hydrate PostgreSQL installed_sections directly from a pre-bundled .spx.zst file."""
+    try:
+        payload = await asyncio.to_thread(_read_installed_tensor_bytes, str(disk_path))
+        header, _ = _parse_tensor_header(payload)
+        source_badge = str(header.get("source_badge") or "[IRSA Live (spherex_dr1 + spherex_qr3)]")
+        if header.get("is_simulated") is True or "Simulated" in source_badge or "Pre-cached" in source_badge:
+            return False
+        shape = header.get("shape") or [0, 6, 0, 0]
+        ra = float(target["ra"])
+        dec = float(target["dec"])
+        label = str(target["name"])
+        sid = section_id_for(ra, dec, BENCHMARK_FOV_ARCSEC)
+        size_bytes = disk_path.stat().st_size
+        spectrum_dict = await _extract_and_cache_spectrum(ra, dec, label, payload)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO installed_sections (
+                    section_id, label, ra, dec, fov_arcsec, status, epochs, bands,
+                    height, width, source_badge, tensor_path, spectrum_json, size_bytes,
+                    error_message, updated_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, 'ready', $6, $7, $8, $9, $10, $11, $12::jsonb, $13, NULL, NOW()
+                )
+                ON CONFLICT (section_id) DO UPDATE SET
+                    label = EXCLUDED.label,
+                    status = 'ready',
+                    epochs = EXCLUDED.epochs,
+                    bands = EXCLUDED.bands,
+                    height = EXCLUDED.height,
+                    width = EXCLUDED.width,
+                    source_badge = EXCLUDED.source_badge,
+                    tensor_path = EXCLUDED.tensor_path,
+                    spectrum_json = EXCLUDED.spectrum_json,
+                    size_bytes = EXCLUDED.size_bytes,
+                    error_message = NULL,
+                    updated_at = NOW()
+                """,
+                sid,
+                label,
+                ra,
+                dec,
+                float(BENCHMARK_FOV_ARCSEC),
+                int(shape[0]),
+                int(shape[1]),
+                int(shape[2]),
+                int(shape[3]),
+                source_badge,
+                str(disk_path),
+                json.dumps(spectrum_dict),
+                int(size_bytes),
+            )
+        logger.info("Hydrated pre-bundled benchmark section %s (%s) from disk", sid, label)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not hydrate benchmark %s from %s: %s", target.get("name"), disk_path, exc)
+        return False
+
+
 async def ensure_benchmarks_preinstalled(
     pool: asyncpg.Pool | None,
     *,
@@ -675,17 +807,25 @@ async def ensure_benchmarks_preinstalled(
             dec = float(target["dec"])
             sid = section_id_for(ra, dec, BENCHMARK_FOV_ARCSEC)
             row = existing_map.get(sid)
+            resolved_path = _resolve_existing_tensor_path(sid, row["tensor_path"] if row else None)
             is_real_ready = bool(
                 not force
                 and row
                 and row["status"] == "ready"
-                and row["tensor_path"]
-                and Path(str(row["tensor_path"])).exists()
+                and resolved_path is not None
                 and "Simulated" not in str(row["source_badge"])
                 and "Pre-cached" not in str(row["source_badge"])
             )
-            if not is_real_ready:
-                to_install.append(target)
+            if is_real_ready:
+                continue
+
+            disk_bundle = SECTIONS_DIR / f"{sid}.spx.zst"
+            if not force and disk_bundle.exists():
+                hydrated = await _hydrate_benchmark_from_disk(pool, target, disk_bundle)
+                if hydrated:
+                    continue
+
+            to_install.append(target)
 
         if not to_install:
             SECTIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -704,10 +844,14 @@ async def ensure_benchmarks_preinstalled(
 
 @router.get("/sections")
 async def list_installed_sections(request: Request) -> dict[str, Any]:
-    """Return all user-installed sky sections stored in PostgreSQL."""
+    """Return all user-installed sky sections stored in PostgreSQL or bundled on disk."""
     pool = await _get_pool(request)
     if pool is None:
-        return {"sections": [], "status": "offline"}
+        disk_sections = await asyncio.to_thread(_load_disk_benchmark_sections)
+        return {
+            "sections": disk_sections,
+            "status": "ready" if disk_sections else "offline",
+        }
     if "pytest" not in sys.modules and not _BENCHMARKS_SEEDED_MARKER.exists():
         await ensure_benchmarks_preinstalled(pool)
     async with pool.acquire() as conn:
@@ -795,8 +939,7 @@ async def install_section(
                 continue
             if (
                 ex_status == "ready"
-                and existing["tensor_path"]
-                and Path(str(existing["tensor_path"])).exists()
+                and _resolve_existing_tensor_path(ex_id, existing["tensor_path"]) is not None
             ):
                 return {
                     "section_id": ex_id,
@@ -872,20 +1015,30 @@ async def install_section(
 async def get_installed_section_tensor(section_id: str, request: Request) -> Response:
     """Serve the persisted 14 B/px binary tensor for an installed section."""
     pool = await _get_pool(request)
-    if pool is None:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT status, tensor_path FROM installed_sections WHERE section_id = $1",
-            section_id,
-        )
-    if not row:
+    tensor_path: str | None = None
+    if pool is not None:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, tensor_path FROM installed_sections WHERE section_id = $1",
+                section_id,
+            )
+        if row:
+            if row["status"] != "ready":
+                raise HTTPException(status_code=202, detail=f"Section {section_id} is {row['status']}")
+            tensor_path = _resolve_existing_tensor_path(section_id, row["tensor_path"])
+
+    if tensor_path is None:
+        disk_entry = _find_disk_benchmark_entry(section_id)
+        if disk_entry is not None:
+            tensor_path = str(disk_entry[1])
+
+    if not tensor_path:
+        if pool is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
         raise HTTPException(status_code=404, detail=f"Installed section {section_id} not found")
-    if row["status"] != "ready" or not row["tensor_path"]:
-        raise HTTPException(status_code=202, detail=f"Section {section_id} is {row['status']}")
 
     try:
-        payload = await asyncio.to_thread(_read_installed_tensor_bytes, str(row["tensor_path"]))
+        payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -908,21 +1061,41 @@ async def get_installed_section_spectrum(
 ) -> dict[str, Any]:
     """Return the 102-channel spectrum for an installed section (or probed pixel)."""
     pool = await _get_pool(request)
-    if pool is None:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT label, ra, dec, status, tensor_path, spectrum_json FROM installed_sections WHERE section_id = $1",
-            section_id,
-        )
-    if not row:
+    row = None
+    if pool is not None:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT label, ra, dec, status, tensor_path, spectrum_json FROM installed_sections WHERE section_id = $1",
+                section_id,
+            )
+        if row and row["status"] != "ready":
+            raise HTTPException(status_code=202, detail=f"Section {section_id} is {row['status']}")
+
+    if row is None:
+        disk_entry = _find_disk_benchmark_entry(section_id)
+        if disk_entry is not None:
+            target, disk_path = disk_entry
+            payload = await asyncio.to_thread(_read_installed_tensor_bytes, str(disk_path))
+            return await asyncio.to_thread(
+                _extract_spectrum_from_tensor_payload,
+                payload,
+                ra=float(target["ra"]),
+                dec=float(target["dec"]),
+                label=str(target["name"]),
+                px=px,
+                py=py,
+                epoch=epoch,
+                normalize=normalize,
+            )
+        if pool is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
         raise HTTPException(status_code=404, detail=f"Installed section {section_id} not found")
-    if row["status"] != "ready":
-        raise HTTPException(status_code=202, detail=f"Section {section_id} is {row['status']}")
+
+    tensor_path = _resolve_existing_tensor_path(section_id, row["tensor_path"])
 
     # If caller probes a specific pixel/epoch, compute directly from persisted tensor
-    if (px is not None or py is not None or epoch is not None) and row["tensor_path"]:
-        payload = await asyncio.to_thread(_read_installed_tensor_bytes, str(row["tensor_path"]))
+    if (px is not None or py is not None or epoch is not None) and tensor_path:
+        payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
         return _extract_spectrum_from_tensor_payload(
             payload,
             ra=float(row["ra"]),
@@ -940,7 +1113,7 @@ async def get_installed_section_spectrum(
         prov = spec.get("provenance") or {}
         covered = int(prov.get("covered_channels") or 0)
         needs_refresh = covered == 0 or (covered < TOTAL_SPHEREX_CHANNELS and "aperture_fallback_bands" not in prov)
-        if not needs_refresh or not row["tensor_path"]:
+        if not needs_refresh or not tensor_path:
             if normalize and not spec.get("continuum_flux_jy"):
                 waves = np.asarray(spec["wavelengths_um"], dtype=np.float64)
                 flux = np.asarray(spec["flux_jy"], dtype=np.float64)
@@ -951,9 +1124,9 @@ async def get_installed_section_spectrum(
                     spec["optical_depth_tau"] = [float(v) for v in np.round(tau_arr, 4)]
             return spec
 
-    if not row["tensor_path"]:
+    if not tensor_path:
         raise HTTPException(status_code=404, detail="Section spectrum unavailable")
-    payload = await asyncio.to_thread(_read_installed_tensor_bytes, str(row["tensor_path"]))
+    payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
     spec = await asyncio.to_thread(
         _extract_spectrum_from_tensor_payload,
         payload,
