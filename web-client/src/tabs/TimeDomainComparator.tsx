@@ -236,12 +236,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const isInstallingHere = Boolean(matchingDownloadingSection);
 
   useEffect(() => {
-    const isActive = Boolean(matchingDownloadingSection);
-    if (prevMatchingDownloadRef.current && !isActive && !loadedTensor) {
+    if (prevMatchingDownloadRef.current && !isInstallingHere && !loadedTensor) {
       setLoadAttempt((a) => a + 1);
     }
-    prevMatchingDownloadRef.current = isActive;
-  }, [matchingDownloadingSection, loadedTensor]);
+    prevMatchingDownloadRef.current = isInstallingHere;
+  }, [isInstallingHere, loadedTensor]);
 
   const handleSelectInstalledSection = useCallback(
     (section: InstalledSection) => {
