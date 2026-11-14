@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { useRealtimeDiscussions } from '../hooks/useRealtimeDiscussions';
@@ -7,9 +7,11 @@ import {
   SEARCHABLE_SKY_CATALOG,
 } from '../components/GlobalCommandHeader';
 import {
-  MAJOR_DISCOVERIES,
-  type MajorDiscovery,
-} from '../components/MajorDiscoveriesData';
+  findMatchingSection,
+  useInstalledSectionState,
+  type InstalledSection,
+} from '../lib/installedSections';
+import type { TensorHeader, TensorWorkerResponse } from '../workers/tensorWorker';
 import { Badge, Button, Input } from '../components/ui';
 
 /**
@@ -135,77 +137,157 @@ function ensureZeroAuthIdentity(): { observerId: string; observerKey: string; ha
   };
 }
 
-interface ThreadVisual {
-  imageSrc: string;
-  fallbackSrc: string;
-  imageCredit: string;
-  targetLabel: string;
-  badgeLabel: string;
+const BENCHMARK_TENSOR_URLS: Record<string, string> = {
+  barnard: '/benchmarks/barnard.f32',
+  wise0855: '/benchmarks/wise0855.f32',
+  eps_indi_b: '/benchmarks/eps_indi_b.f32',
+  rw_aur: '/benchmarks/rw_aur.f32',
+  r_dra: '/benchmarks/r_dra.f32',
+};
+
+const BAND_SHORT_NAMES = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'];
+
+interface DecodedStampTensor {
+  epochs: number;
+  bands: number;
+  width: number;
+  height: number;
+  fluxData: Float32Array[][];
+  varData: Float32Array[][];
+  nExpData: Uint16Array[][];
+  wcs?: { crval: [number, number]; cdelt: [number, number]; crpix: [number, number] };
+  sourceBadge: string;
 }
 
-const CATEGORY_FALLBACK_VISUALS: Record<string, { src: string; credit: string; label: string }> = {
-  interstellar_ice: {
-    src: '/images/discoveries/elias29.jpg',
-    credit: 'NASA/ESA/CSA/STScI — JWST (CC BY 4.0)',
-    label: 'Interstellar Ice Cloud',
-  },
-  moving_brown_dwarf: {
-    src: '/images/discoveries/wise0855.jpg',
-    credit: 'NASA/ESA/STScI — Hubble WFC3 (CC BY-SA 4.0)',
-    label: 'Substellar Mover Field',
-  },
-  circumstellar_disk: {
-    src: '/images/discoveries/rw_aur.jpg',
-    credit: 'ESO — protoplanetary disc impression (CC BY 4.0)',
-    label: 'Circumstellar Disk Field',
-  },
-  mira_agb_pulsator: {
-    src: '/images/discoveries/r_dra.jpg',
-    credit: 'DSS2/ESO — Mira-type AGB (CC BY 4.0)',
-    label: 'Mira AGB Pulsator Field',
-  },
-  variable_star: {
-    src: '/images/discoveries/betelgeuse.jpg',
-    credit: 'ALMA (ESO/NAOJ/NRAO) (CC BY 4.0)',
-    label: 'Variable Source Field',
-  },
-  high_z_emission: {
-    src: '/images/discoveries/cdfs.jpg',
-    credit: 'NASA/CXC/Penn State/B. Luo et al. (Public domain)',
-    label: 'Extragalactic Line Field',
-  },
-};
+const MAX_STAMP_TENSORS = 16;
+const STAMP_TENSOR_LRU = new Map<string, DecodedStampTensor>();
+const STAMP_INFLIGHT = new Map<string, Promise<DecodedStampTensor | null>>();
 
-const DEFAULT_FALLBACK_VISUAL = {
-  src: '/images/discoveries/nep_tdf.jpg',
-  credit: 'NASA/STScI — JWST NEP TDF (Public domain)',
-  label: 'SPHEREx Sky Cutout',
-};
+function decodeStampWithWorker(buffer: ArrayBuffer): Promise<TensorWorkerResponse> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), {
+      type: 'module',
+    });
+    worker.onmessage = (event: MessageEvent<TensorWorkerResponse>) => {
+      worker.terminate();
+      if (event.data.success) resolve(event.data);
+      else reject(new Error(event.data.error || 'Unable to decode binary tensor.'));
+    };
+    worker.onerror = (event) => {
+      worker.terminate();
+      reject(new Error(event.message || 'Tensor decoder worker failed.'));
+    };
+    worker.postMessage({ buffer }, [buffer]);
+  });
+}
 
-function resolveThreadVisual(t: DiscussionThread): ThreadVisual {
+async function fetchAndDecodeStampTensor(
+  cacheKey: string,
+  url: string
+): Promise<DecodedStampTensor | null> {
+  const hit = STAMP_TENSOR_LRU.get(cacheKey);
+  if (hit) {
+    STAMP_TENSOR_LRU.delete(cacheKey);
+    STAMP_TENSOR_LRU.set(cacheKey, hit);
+    return hit;
+  }
+  const existingFlight = STAMP_INFLIGHT.get(cacheKey);
+  if (existingFlight) return existingFlight;
+
+  const flight = (async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const buf = await response.arrayBuffer();
+      const decoded = await decodeStampWithWorker(buf);
+      const hdr: TensorHeader = decoded.header;
+      const [epochs, bands, height, width] = hdr.shape;
+      const planePixels = height * width;
+      const totalPixels = decoded.totalPixels;
+      const payload = decoded.payloadBuffer;
+      const allFlux = new Float32Array(payload, 0, totalPixels);
+      const allVar = new Float32Array(payload, totalPixels * 4, totalPixels);
+      const allNExp = new Uint16Array(payload, totalPixels * 12, totalPixels);
+
+      const fluxData: Float32Array[][] = [];
+      const varData: Float32Array[][] = [];
+      const nExpData: Uint16Array[][] = [];
+      for (let e = 0; e < epochs; e++) {
+        fluxData[e] = [];
+        varData[e] = [];
+        nExpData[e] = [];
+        for (let b = 0; b < bands; b++) {
+          const offset = (e * bands + b) * planePixels;
+          fluxData[e][b] = allFlux.subarray(offset, offset + planePixels);
+          varData[e][b] = allVar.subarray(offset, offset + planePixels);
+          nExpData[e][b] = allNExp.subarray(offset, offset + planePixels);
+        }
+      }
+
+      const parsed: DecodedStampTensor = {
+        epochs,
+        bands,
+        width,
+        height,
+        fluxData,
+        varData,
+        nExpData,
+        wcs:
+          Array.isArray(hdr.crval) && Array.isArray(hdr.cdelt)
+            ? {
+                crval: hdr.crval,
+                cdelt: hdr.cdelt,
+                crpix: Array.isArray(hdr.crpix)
+                  ? hdr.crpix
+                  : [(width + 1) / 2, (height + 1) / 2],
+              }
+            : undefined,
+        sourceBadge: hdr.source_badge || '[SPHEREx Cutout]',
+      };
+
+      STAMP_TENSOR_LRU.set(cacheKey, parsed);
+      while (STAMP_TENSOR_LRU.size > MAX_STAMP_TENSORS) {
+        const oldestKey = STAMP_TENSOR_LRU.keys().next().value;
+        if (oldestKey === undefined) break;
+        STAMP_TENSOR_LRU.delete(oldestKey);
+      }
+      return parsed;
+    } catch {
+      return null;
+    } finally {
+      STAMP_INFLIGHT.delete(cacheKey);
+    }
+  })();
+
+  STAMP_INFLIGHT.set(cacheKey, flight);
+  return flight;
+}
+
+function resolveThreadTargetMeta(t: DiscussionThread): {
+  targetLabel: string;
+  benchmarkId: string | null;
+} {
   const rawTarget = (t.targetName ?? '').trim();
   const hasExplicitTarget = rawTarget.length > 0 && rawTarget !== 'Selected Field';
   const haystack = `${rawTarget} ${t.title} ${(t.hashtags ?? []).join(' ')}`.toLowerCase();
-  const cosDec = Math.cos((t.dec * Math.PI) / 180);
+  const cosDec = Math.max(0.05, Math.cos((t.dec * Math.PI) / 180));
 
-  const matchedDiscovery: MajorDiscovery | undefined = MAJOR_DISCOVERIES.find((d) => {
-    const dRa = ((d.ra - t.ra + 540) % 360) - 180;
-    const sepDeg = Math.hypot(dRa * cosDec, d.dec - t.dec);
-    if (sepDeg <= 0.35) return true;
-    const nameMatch = haystack.includes(d.name.toLowerCase());
-    const codenameMatch = d.codename ? haystack.includes(d.codename.toLowerCase()) : false;
-    const idMatch = haystack.includes(d.id.toLowerCase());
-    const wiseMatch = d.id === 'wise0855' && haystack.includes('wise 0855');
-    return nameMatch || codenameMatch || idMatch || wiseMatch;
+  const matched = SEARCHABLE_SKY_CATALOG.find((item) => {
+    const dRa = ((item.ra - t.ra + 540) % 360) - 180;
+    if (Math.hypot(dRa * cosDec, item.dec - t.dec) <= 0.35) return true;
+    const wiseMatch = item.id === 'wise0855' && haystack.includes('wise 0855');
+    return (
+      haystack.includes(item.name.toLowerCase()) ||
+      haystack.includes(item.id.toLowerCase()) ||
+      wiseMatch
+    );
   });
 
-  if (matchedDiscovery) {
+  if (matched) {
+    const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === matched.id);
     return {
-      imageSrc: matchedDiscovery.imageSrc,
-      fallbackSrc: matchedDiscovery.imageSrc,
-      imageCredit: matchedDiscovery.imageCredit,
-      targetLabel: hasExplicitTarget ? rawTarget : matchedDiscovery.name,
-      badgeLabel: matchedDiscovery.spectralType || matchedDiscovery.categoryLabel,
+      targetLabel: hasExplicitTarget ? rawTarget : matched.name,
+      benchmarkId: isBench ? matched.id : null,
     };
   }
 
@@ -213,30 +295,798 @@ function resolveThreadVisual(t: DiscussionThread): ThreadVisual {
     Math.hypot(t.ra - 272.5, t.dec - -18.0333) <= 0.35 || haystack.includes('splices');
   if (isSplicesThread) {
     return {
-      imageSrc: '/images/discoveries/elias29.jpg',
-      fallbackSrc: '/images/discoveries/elias29.jpg',
-      imageCredit: 'NASA/ESA/CSA/STScI — JWST Interstellar Ice Core (CC BY 4.0)',
       targetLabel: hasExplicitTarget ? rawTarget : 'SPLICES J1810-1802',
-      badgeLabel: 'Dense Cloud Ice Field',
+      benchmarkId: null,
     };
   }
 
-  const fallback = CATEGORY_FALLBACK_VISUALS[t.classification] ?? DEFAULT_FALLBACK_VISUAL;
-  const fovDeg = Math.max(0.04, (t.fovArcsec || 180) / 3600).toFixed(4);
-  const cutoutUrl = `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=CDS%2FP%2F2MASS%2Fcolor&width=640&height=280&fov=${fovDeg}&ra=${encodeURIComponent(
-    String(t.ra)
-  )}&dec=${encodeURIComponent(String(t.dec))}&projection=TAN&format=jpg`;
-
   return {
-    imageSrc: cutoutUrl,
-    fallbackSrc: fallback.src,
-    imageCredit: '2MASS Infrared Cutout (CDS HiPS2FITS)',
     targetLabel: hasExplicitTarget
       ? rawTarget
       : `J2000 ${t.ra.toFixed(4)}°, ${t.dec >= 0 ? '+' : ''}${t.dec.toFixed(4)}°`,
-    badgeLabel: fallback.label,
+    benchmarkId: null,
   };
 }
+
+function asinhStretchScalar(norm: number, a = 0.08): number {
+  const safeA = Math.max(a, 1e-6);
+  return Math.asinh(norm / safeA) / Math.asinh(1 / safeA);
+}
+
+const VIRIDIS_STOPS: Array<[number, number, number]> = [
+  [12, 16, 36],
+  [59, 82, 139],
+  [33, 145, 140],
+  [94, 201, 98],
+  [253, 231, 37],
+];
+
+function sampleViridisRgb(t: number): [number, number, number] {
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = clamped * (VIRIDIS_STOPS.length - 1);
+  const idx = Math.min(VIRIDIS_STOPS.length - 2, Math.floor(scaled));
+  const frac = scaled - idx;
+  const c0 = VIRIDIS_STOPS[idx];
+  const c1 = VIRIDIS_STOPS[idx + 1];
+  return [
+    Math.round(c0[0] + (c1[0] - c0[0]) * frac),
+    Math.round(c0[1] + (c1[1] - c0[1]) * frac),
+    Math.round(c0[2] + (c1[2] - c0[2]) * frac),
+  ];
+}
+
+function sampleDiffRgb(signedNorm: number): [number, number, number] {
+  const clamped = Math.max(-1, Math.min(1, signedNorm));
+  if (clamped >= 0) {
+    // Positive flux change -> mid-charcoal to warm amber-gold
+    return [
+      Math.round(18 + 232 * clamped),
+      Math.round(22 + 166 * clamped),
+      Math.round(32 + 20 * clamped),
+    ];
+  }
+  // Negative flux change -> mid-charcoal to bright cyan-blue
+  const neg = -clamped;
+  return [
+    Math.round(18 + 38 * neg),
+    Math.round(22 + 168 * neg),
+    Math.round(32 + 218 * neg),
+  ];
+}
+
+function bandCoverageCount(
+  flux: Float32Array | undefined,
+  nExp: Uint16Array | undefined
+): number {
+  if (!flux || !nExp) return 0;
+  let count = 0;
+  for (let i = 0; i < flux.length; i++) {
+    if (nExp[i] > 0 && Number.isFinite(flux[i])) count += 1;
+  }
+  return count;
+}
+
+function computeQuantileBounds(
+  values: Float32Array,
+  validMask?: Uint8Array
+): { low: number; high: number; maxFinite: number } {
+  const samples: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    if (validMask && !validMask[i]) continue;
+    const v = values[i];
+    if (Number.isFinite(v)) samples.push(v);
+  }
+  if (samples.length === 0) return { low: 0, high: 1, maxFinite: 0 };
+  samples.sort((a, b) => a - b);
+  const lo = samples[Math.floor(samples.length * 0.03)];
+  const hi = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.992))];
+  const maxFinite = samples[samples.length - 1];
+  return { low: lo, high: hi > lo ? hi : lo + 1, maxFinite };
+}
+
+function computeBandCoadd(
+  tensor: DecodedStampTensor,
+  bandIndex: number
+): { flux: Float32Array; valid: Uint8Array; validCount: number } {
+  const total = tensor.width * tensor.height;
+  const sumWFlux = new Float64Array(total);
+  const sumW = new Float64Array(total);
+  const outFlux = new Float32Array(total);
+  const valid = new Uint8Array(total);
+
+  for (let e = 0; e < tensor.epochs; e++) {
+    const fPlane = tensor.fluxData[e]?.[bandIndex];
+    const vPlane = tensor.varData[e]?.[bandIndex];
+    const nPlane = tensor.nExpData[e]?.[bandIndex];
+    if (!fPlane || !nPlane) continue;
+    for (let i = 0; i < total; i++) {
+      const f = fPlane[i];
+      if (nPlane[i] === 0 || !Number.isFinite(f)) continue;
+      const v = vPlane?.[i] ?? 1;
+      const w = Number.isFinite(v) && v > 0 ? 1 / Math.max(v, 1e-8) : 1;
+      sumWFlux[i] += f * w;
+      sumW[i] += w;
+    }
+  }
+
+  let validCount = 0;
+  for (let i = 0; i < total; i++) {
+    if (sumW[i] > 0) {
+      outFlux[i] = sumWFlux[i] / sumW[i];
+      valid[i] = 1;
+      validCount += 1;
+    } else {
+      outFlux[i] = Number.NaN;
+    }
+  }
+  return { flux: outFlux, valid, validCount };
+}
+
+function skyToStampPixel(
+  raDeg: number,
+  decDeg: number,
+  wcs: DecodedStampTensor['wcs'],
+  width: number,
+  height: number,
+  flipY: boolean
+): { x: number; y: number } {
+  const fallback = { x: width * 0.5, y: height * 0.5 };
+  if (!wcs) return fallback;
+  const toRad = Math.PI / 180;
+  const ra0 = wcs.crval[0] * toRad;
+  const dec0 = wcs.crval[1] * toRad;
+  const ra1 = raDeg * toRad;
+  const dec1 = decDeg * toRad;
+  const dra = ra1 - ra0;
+  const sinD0 = Math.sin(dec0);
+  const cosD0 = Math.cos(dec0);
+  const sinD1 = Math.sin(dec1);
+  const cosD1 = Math.cos(dec1);
+  const cosDra = Math.cos(dra);
+  const denom = sinD0 * sinD1 + cosD0 * cosD1 * cosDra;
+  if (denom <= 0) return fallback;
+  const xiDeg = (cosD1 * Math.sin(dra)) / denom / toRad;
+  const etaDeg = (cosD0 * sinD1 - sinD0 * cosD1 * cosDra) / denom / toRad;
+  const pxX = wcs.crpix[0] - 0.5 + xiDeg / wcs.cdelt[0];
+  const rawPy = wcs.crpix[1] - 0.5 + etaDeg / wcs.cdelt[1];
+  const pxY = flipY ? height - rawPy : rawPy;
+  if (pxX < 0 || pxX > width || pxY < 0 || pxY > height) return fallback;
+  return { x: pxX, y: pxY };
+}
+
+interface StampRenderMetrics {
+  modeSummary: string;
+  peakFluxLabel: string;
+  gridLabel: string;
+  hasDiffPair: boolean;
+  epochCount: number;
+}
+
+function selectStampPlan(
+  tensor: DecodedStampTensor,
+  preferredBandOrder: number[]
+): {
+  primaryBand: number;
+  coveredEpochs: number[];
+  diffBand: number | null;
+  diffEp0: number;
+  diffEpN: number;
+} {
+  let primaryBand = 0;
+  let primaryEpochs: number[] = [];
+  let diffBand: number | null = null;
+  let diffEp0 = 0;
+  let diffEpN = 0;
+
+  for (const b of preferredBandOrder) {
+    if (b < 0 || b >= tensor.bands) continue;
+    const cov: number[] = [];
+    for (let e = 0; e < tensor.epochs; e++) {
+      if (bandCoverageCount(tensor.fluxData[e]?.[b], tensor.nExpData[e]?.[b]) > 0) {
+        cov.push(e);
+      }
+    }
+    if (cov.length > 0 && primaryEpochs.length === 0) {
+      primaryBand = b;
+      primaryEpochs = cov;
+    }
+    if (cov.length >= 2 && diffBand === null) {
+      diffBand = b;
+      diffEp0 = cov[0];
+      diffEpN = cov[cov.length - 1];
+    }
+  }
+
+  return {
+    primaryBand,
+    coveredEpochs: primaryEpochs,
+    diffBand,
+    diffEp0,
+    diffEpN,
+  };
+}
+
+function renderTensorStampToCanvas(
+  canvas: HTMLCanvasElement,
+  tensor: DecodedStampTensor,
+  thread: DiscussionThread,
+  stampMode: 'blink' | 'difference' | 'coadd',
+  blinkEpochSlot: 0 | 1,
+  benchmarkId: string | null
+): StampRenderMetrics {
+  const { width, height } = tensor;
+  const total = width * height;
+  const flipY = (tensor.wcs?.cdelt?.[1] ?? 1) > 0;
+  const isCold = benchmarkId === 'wise0855' || thread.classification === 'moving_brown_dwarf';
+  const bandOrder = isCold ? [4, 5, 3, 2, 1, 0] : [1, 2, 4, 3, 5, 0];
+  const plan = selectStampPlan(tensor, bandOrder);
+
+  const imgData = new ImageData(width, height);
+  const rgba = imgData.data;
+  let modeSummary = '';
+  let maxFlux = 0;
+
+  if (stampMode === 'difference' && plan.diffBand !== null) {
+    const f0 = tensor.fluxData[plan.diffEp0][plan.diffBand];
+    const fN = tensor.fluxData[plan.diffEpN][plan.diffBand];
+    const n0 = tensor.nExpData[plan.diffEp0][plan.diffBand];
+    const nN = tensor.nExpData[plan.diffEpN][plan.diffBand];
+    const absSamples: number[] = [];
+    for (let i = 0; i < total; i++) {
+      if (n0[i] > 0 && nN[i] > 0 && Number.isFinite(f0[i]) && Number.isFinite(fN[i])) {
+        absSamples.push(Math.abs(fN[i] - f0[i]));
+      }
+    }
+    absSamples.sort((a, b) => a - b);
+    const diffScale =
+      absSamples.length > 0
+        ? Math.max(absSamples[Math.min(absSamples.length - 1, Math.floor(absSamples.length * 0.99))], 1e-4)
+        : 1.0;
+
+    for (let dispY = 0; dispY < height; dispY++) {
+      const srcY = flipY ? height - 1 - dispY : dispY;
+      for (let x = 0; x < width; x++) {
+        const srcIdx = srcY * width + x;
+        const outIdx = (dispY * width + x) * 4;
+        if (
+          n0[srcIdx] > 0 &&
+          nN[srcIdx] > 0 &&
+          Number.isFinite(f0[srcIdx]) &&
+          Number.isFinite(fN[srcIdx])
+        ) {
+          const diff = fN[srcIdx] - f0[srcIdx];
+          if (Math.abs(diff) > maxFlux) maxFlux = Math.abs(diff);
+          const stretched = asinhStretchScalar(diff / diffScale, 0.12);
+          const [r, g, b] = sampleDiffRgb(stretched);
+          rgba[outIdx] = r;
+          rgba[outIdx + 1] = g;
+          rgba[outIdx + 2] = b;
+          rgba[outIdx + 3] = 255;
+        } else {
+          rgba[outIdx] = 8;
+          rgba[outIdx + 1] = 11;
+          rgba[outIdx + 2] = 18;
+          rgba[outIdx + 3] = 255;
+        }
+      }
+    }
+    modeSummary = `Diff ${BAND_SHORT_NAMES[plan.diffBand] ?? `B${plan.diffBand + 1}`} · P${plan.diffEpN + 1}−P${plan.diffEp0 + 1}`;
+  } else if (stampMode === 'coadd') {
+    const rBand = tensor.bands >= 5 ? computeBandCoadd(tensor, 4) : null;
+    const gBand = tensor.bands >= 3 ? computeBandCoadd(tensor, 2) : null;
+    const bBand = tensor.bands >= 1 ? computeBandCoadd(tensor, 0) : null;
+    const rgbActiveCount =
+      (rBand && rBand.validCount > 0 ? 1 : 0) +
+      (gBand && gBand.validCount > 0 ? 1 : 0) +
+      (bBand && bBand.validCount > 0 ? 1 : 0);
+
+    if (rgbActiveCount >= 2 && rBand && gBand && bBand) {
+      const rStats = computeQuantileBounds(rBand.flux, rBand.valid);
+      const gStats = computeQuantileBounds(gBand.flux, gBand.valid);
+      const bStats = computeQuantileBounds(bBand.flux, bBand.valid);
+      maxFlux = Math.max(rStats.maxFinite, gStats.maxFinite, bStats.maxFinite);
+
+      const channelVal = (
+        band: { flux: Float32Array; valid: Uint8Array },
+        stats: { low: number; high: number },
+        idx: number
+      ) => {
+        if (!band.valid[idx] || !Number.isFinite(band.flux[idx])) return 0;
+        const norm = Math.max(0, (band.flux[idx] - stats.low) / (stats.high - stats.low));
+        return Math.round(Math.max(0, Math.min(1, asinhStretchScalar(norm, 0.08))) * 255);
+      };
+
+      for (let dispY = 0; dispY < height; dispY++) {
+        const srcY = flipY ? height - 1 - dispY : dispY;
+        for (let x = 0; x < width; x++) {
+          const srcIdx = srcY * width + x;
+          const outIdx = (dispY * width + x) * 4;
+          const anyCovered = rBand.valid[srcIdx] || gBand.valid[srcIdx] || bBand.valid[srcIdx];
+          if (!anyCovered) {
+            rgba[outIdx] = 8;
+            rgba[outIdx + 1] = 11;
+            rgba[outIdx + 2] = 18;
+            rgba[outIdx + 3] = 255;
+            continue;
+          }
+          rgba[outIdx] = channelVal(rBand, rStats, srcIdx);
+          rgba[outIdx + 1] = channelVal(gBand, gStats, srcIdx);
+          rgba[outIdx + 2] = channelVal(bBand, bStats, srcIdx);
+          rgba[outIdx + 3] = 255;
+        }
+      }
+      modeSummary = `Coadd RGB (D5/D3/D1)`;
+    } else {
+      const single = computeBandCoadd(tensor, plan.primaryBand);
+      const stats = computeQuantileBounds(single.flux, single.valid);
+      maxFlux = stats.maxFinite;
+      for (let dispY = 0; dispY < height; dispY++) {
+        const srcY = flipY ? height - 1 - dispY : dispY;
+        for (let x = 0; x < width; x++) {
+          const srcIdx = srcY * width + x;
+          const outIdx = (dispY * width + x) * 4;
+          if (!single.valid[srcIdx] || !Number.isFinite(single.flux[srcIdx])) {
+            rgba[outIdx] = 8;
+            rgba[outIdx + 1] = 11;
+            rgba[outIdx + 2] = 18;
+            rgba[outIdx + 3] = 255;
+            continue;
+          }
+          const norm = Math.max(0, (single.flux[srcIdx] - stats.low) / (stats.high - stats.low));
+          const [r, g, b] = sampleViridisRgb(asinhStretchScalar(norm, 0.08));
+          rgba[outIdx] = r;
+          rgba[outIdx + 1] = g;
+          rgba[outIdx + 2] = b;
+          rgba[outIdx + 3] = 255;
+        }
+      }
+      modeSummary = `Coadd ${BAND_SHORT_NAMES[plan.primaryBand] ?? `B${plan.primaryBand + 1}`}`;
+    }
+  } else {
+    const epochs = plan.coveredEpochs.length > 0 ? plan.coveredEpochs : [0];
+    const ep = blinkEpochSlot === 0 ? epochs[0] : epochs[epochs.length - 1];
+    const flux = tensor.fluxData[ep]?.[plan.primaryBand];
+    const nExp = tensor.nExpData[ep]?.[plan.primaryBand];
+    if (flux && nExp) {
+      const validMask = new Uint8Array(total);
+      for (let i = 0; i < total; i++) {
+        if (nExp[i] > 0 && Number.isFinite(flux[i])) validMask[i] = 1;
+      }
+      const stats = computeQuantileBounds(flux, validMask);
+      maxFlux = stats.maxFinite;
+      for (let dispY = 0; dispY < height; dispY++) {
+        const srcY = flipY ? height - 1 - dispY : dispY;
+        for (let x = 0; x < width; x++) {
+          const srcIdx = srcY * width + x;
+          const outIdx = (dispY * width + x) * 4;
+          if (!validMask[srcIdx]) {
+            rgba[outIdx] = 8;
+            rgba[outIdx + 1] = 11;
+            rgba[outIdx + 2] = 18;
+            rgba[outIdx + 3] = 255;
+            continue;
+          }
+          const norm = Math.max(0, (flux[srcIdx] - stats.low) / (stats.high - stats.low));
+          const [r, g, b] = sampleViridisRgb(asinhStretchScalar(norm, 0.08));
+          rgba[outIdx] = r;
+          rgba[outIdx + 1] = g;
+          rgba[outIdx + 2] = b;
+          rgba[outIdx + 3] = 255;
+        }
+      }
+    }
+    modeSummary = `Blink ${BAND_SHORT_NAMES[plan.primaryBand] ?? `B${plan.primaryBand + 1}`} · P${ep + 1}/${tensor.epochs}`;
+  }
+
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const displayCssSize = canvas.clientWidth || 184;
+  canvas.width = Math.round(displayCssSize * dpr);
+  canvas.height = Math.round(displayCssSize * dpr);
+
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const offscreen = document.createElement('canvas');
+    offscreen.width = width;
+    offscreen.height = height;
+    const octx = offscreen.getContext('2d');
+    if (octx) {
+      octx.putImageData(imgData, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(offscreen, 0, 0, displayCssSize, displayCssSize);
+    }
+
+    // Center J2000 Crosshair Reticle
+    const targetPt = skyToStampPixel(thread.ra, thread.dec, tensor.wcs, width, height, flipY);
+    const rx = (targetPt.x / width) * displayCssSize;
+    const ry = (targetPt.y / height) * displayCssSize;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(rx - 10, ry);
+    ctx.lineTo(rx - 4, ry);
+    ctx.moveTo(rx + 4, ry);
+    ctx.lineTo(rx + 10, ry);
+    ctx.moveTo(rx, ry - 10);
+    ctx.lineTo(rx, ry - 4);
+    ctx.moveTo(rx, ry + 4);
+    ctx.lineTo(rx, ry + 10);
+    ctx.stroke();
+
+    // North-Up / East-Left Compass Overlay (top-right)
+    const cx0 = displayCssSize - 14;
+    const cy0 = 24;
+    ctx.strokeStyle = 'rgba(248, 250, 252, 0.85)';
+    ctx.fillStyle = 'rgba(248, 250, 252, 0.9)';
+    ctx.font = '600 9px "IBM Plex Mono", ui-monospace, monospace';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(cx0, cy0);
+    ctx.lineTo(cx0, cy0 - 11);
+    ctx.moveTo(cx0, cy0);
+    ctx.lineTo(cx0 - 11, cy0);
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillText('N', cx0, cy0 - 13);
+    ctx.textAlign = 'right';
+    ctx.fillText('E', cx0 - 13, cy0 + 3);
+
+    // Angular Scale Bar (bottom-left)
+    const pixelScaleArcsec = Math.abs((tensor.wcs?.cdelt?.[1] ?? 6.2 / 3600) * 3600) || 6.2;
+    const totalFovArcsec = width * pixelScaleArcsec;
+    const barArcsec = totalFovArcsec >= 240 ? 60 : 30;
+    const barPx = (barArcsec / totalFovArcsec) * displayCssSize;
+    const bx = 8;
+    const by = displayCssSize - 10;
+    ctx.strokeStyle = 'rgba(248, 250, 252, 0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(bx, by - 3);
+    ctx.lineTo(bx, by);
+    ctx.lineTo(bx + barPx, by);
+    ctx.lineTo(bx + barPx, by - 3);
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillText(`${barArcsec}"`, bx, by - 5);
+    ctx.restore();
+  }
+
+  return {
+    modeSummary,
+    peakFluxLabel: `${maxFlux.toFixed(maxFlux >= 10 ? 1 : 2)} MJy/sr`,
+    gridLabel: `${width}×${height} px · ${(Math.abs((tensor.wcs?.cdelt?.[1] ?? 6.2 / 3600) * 3600)).toFixed(1)}"/px`,
+    hasDiffPair: plan.diffBand !== null,
+    epochCount: tensor.epochs,
+  };
+}
+
+function renderOfflineWcsGrid(canvas: HTMLCanvasElement, thread: DiscussionThread): void {
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const w = canvas.clientWidth || 620;
+  const h = canvas.clientHeight || 176;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#060911';
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
+  ctx.lineWidth = 1;
+  for (let x = (w % 40) * 0.5; x < w; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  for (let y = (h % 40) * 0.5; y < h; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+  ctx.moveTo(cx - 28, cy);
+  ctx.lineTo(cx - 8, cy);
+  ctx.moveTo(cx + 8, cy);
+  ctx.lineTo(cx + 28, cy);
+  ctx.moveTo(cx, cy - 28);
+  ctx.lineTo(cx, cy - 8);
+  ctx.moveTo(cx, cy + 8);
+  ctx.lineTo(cx, cy + 28);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+  ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(
+    `J2000 ${thread.ra.toFixed(4)}°, ${thread.dec >= 0 ? '+' : ''}${thread.dec.toFixed(4)}° · FoV ${thread.fovArcsec}"`,
+    cx,
+    cy + 34
+  );
+  ctx.fillStyle = 'rgba(251, 191, 36, 0.9)';
+  ctx.fillText('Offline — Install Sky Section to View Tensor', cx, cy + 50);
+}
+
+const SkyPatchPreview: React.FC<{
+  thread: DiscussionThread;
+  targetLabel: string;
+  benchmarkId: string | null;
+  installedSections: InstalledSection[];
+  onInspectInComparator: () => void;
+}> = ({ thread, targetLabel, benchmarkId, installedSections, onInspectInComparator }) => {
+  const matchedSection = useMemo(
+    () => findMatchingSection(installedSections, thread.ra, thread.dec, thread.fovArcsec),
+    [installedSections, thread.dec, thread.fovArcsec, thread.ra]
+  );
+
+  const tensorSource = useMemo(() => {
+    if (matchedSection) {
+      return {
+        cacheKey: `${matchedSection.section_id}:${matchedSection.updated_at || matchedSection.size_bytes}`,
+        url: `/api/sections/${matchedSection.section_id}/tensor?v=${encodeURIComponent(
+          String(matchedSection.updated_at || matchedSection.size_bytes)
+        )}`,
+      };
+    }
+    if (benchmarkId && BENCHMARK_TENSOR_URLS[benchmarkId]) {
+      return {
+        cacheKey: BENCHMARK_TENSOR_URLS[benchmarkId],
+        url: BENCHMARK_TENSOR_URLS[benchmarkId],
+      };
+    }
+    return null;
+  }, [benchmarkId, matchedSection]);
+
+  const [tensor, setTensor] = useState<DecodedStampTensor | null>(() =>
+    tensorSource ? STAMP_TENSOR_LRU.get(tensorSource.cacheKey) ?? null : null
+  );
+  const [viewMode, setViewMode] = useState<'tensor' | 'survey'>(() =>
+    tensorSource ? 'tensor' : 'survey'
+  );
+  const [stampMode, setStampMode] = useState<'blink' | 'difference' | 'coadd'>(
+    thread.renderMode
+  );
+  const [blinkEpochSlot, setBlinkEpochSlot] = useState<0 | 1>(1);
+  const [isHoverBlinking, setIsHoverBlinking] = useState(false);
+  const [surveyStage, setSurveyStage] = useState<'2mass' | 'dss2' | 'offline'>('2mass');
+  const [stampMetrics, setStampMetrics] = useState<StampRenderMetrics | null>(null);
+
+  const stampCanvasRef = useRef<HTMLCanvasElement>(null);
+  const offlineCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!tensorSource) {
+      setTensor(null);
+      setViewMode('survey');
+      return;
+    }
+    const cached = STAMP_TENSOR_LRU.get(tensorSource.cacheKey);
+    if (cached) {
+      setTensor(cached);
+      setViewMode('tensor');
+      return;
+    }
+    void fetchAndDecodeStampTensor(tensorSource.cacheKey, tensorSource.url).then((loaded) => {
+      if (cancelled) return;
+      if (loaded) {
+        setTensor(loaded);
+        setViewMode('tensor');
+      } else {
+        setTensor(null);
+        setViewMode('survey');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tensorSource]);
+
+  useEffect(() => {
+    if (!isHoverBlinking || stampMode !== 'blink' || viewMode !== 'tensor') return;
+    const id = window.setInterval(() => {
+      setBlinkEpochSlot((prev) => (prev === 0 ? 1 : 0));
+    }, 900);
+    return () => window.clearInterval(id);
+  }, [isHoverBlinking, stampMode, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== 'tensor' || !tensor || !stampCanvasRef.current) return;
+    const metrics = renderTensorStampToCanvas(
+      stampCanvasRef.current,
+      tensor,
+      thread,
+      stampMode,
+      blinkEpochSlot,
+      benchmarkId
+    );
+    setStampMetrics(metrics);
+  }, [benchmarkId, blinkEpochSlot, stampMode, tensor, thread, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== 'survey' || surveyStage !== 'offline' || !offlineCanvasRef.current) return;
+    renderOfflineWcsGrid(offlineCanvasRef.current, thread);
+  }, [surveyStage, thread, viewMode]);
+
+  const fovDeg = Math.max(0.04, (thread.fovArcsec || 180) / 3600).toFixed(4);
+  const hipsSurvey = surveyStage === 'dss2' ? 'CDS%2FP%2FDSS2%2Fcolor' : 'CDS%2FP%2F2MASS%2Fcolor';
+  const cutoutUrl = `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=${hipsSurvey}&width=640&height=280&fov=${fovDeg}&ra=${encodeURIComponent(
+    String(thread.ra)
+  )}&dec=${encodeURIComponent(String(thread.dec))}&projection=TAN&format=jpg`;
+
+  return (
+    <div className="border-b border-border/70 bg-[#060911]">
+      {viewMode === 'tensor' && tensor ? (
+        <div
+          className="flex flex-col sm:flex-row items-stretch"
+          onMouseEnter={() => setIsHoverBlinking(true)}
+          onMouseLeave={() => setIsHoverBlinking(false)}
+        >
+          <div className="relative h-44 w-44 sm:h-48 sm:w-48 shrink-0 self-center sm:self-auto bg-black border-b sm:border-b-0 sm:border-r border-border/60 overflow-hidden">
+            <canvas
+              ref={stampCanvasRef}
+              onClick={() => {
+                if (stampMode === 'blink') setBlinkEpochSlot((s) => (s === 0 ? 1 : 0));
+                else onInspectInComparator();
+              }}
+              title={
+                stampMode === 'blink'
+                  ? 'Click to toggle Pass 1 vs latest Pass (hover to blink)'
+                  : 'Inspect full interactive tensor in Time-Domain Comparator'
+              }
+              className="block h-full w-full cursor-pointer"
+            />
+          </div>
+
+          <div className="flex flex-1 flex-col justify-between p-3 gap-2.5 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] font-medium text-primary">
+                [SPHEREx Float32 · {stampMetrics?.modeSummary || stampMode}]
+              </span>
+              <div className="inline-flex rounded-md border border-border bg-background/80 p-0.5 font-mono text-[9px]">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('tensor')}
+                  className="rounded px-1.5 py-0.5 bg-primary/20 text-primary font-medium"
+                >
+                  SPHEREx Stamp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSurveyStage('2mass');
+                    setViewMode('survey');
+                  }}
+                  className="rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  2MASS Survey
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono text-[10px] tabular-nums">
+              <div>
+                <div className="text-[9px] uppercase text-muted-foreground">Peak Amplitude</div>
+                <div className="text-foreground">{stampMetrics?.peakFluxLabel ?? '—'}</div>
+              </div>
+              <div>
+                <div className="text-[9px] uppercase text-muted-foreground">Sampling</div>
+                <div className="text-foreground">{stampMetrics?.gridLabel ?? `${tensor.width}×${tensor.height}`}</div>
+              </div>
+              <div className="col-span-2 truncate text-[10px] text-muted-foreground">
+                Source: <span className="text-foreground/85">{tensor.sourceBadge}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1 font-mono text-[9px]">
+              {(['blink', 'difference', 'coadd'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setStampMode(m)}
+                  disabled={m === 'difference' && stampMetrics?.hasDiffPair === false}
+                  className={`rounded border px-1.5 py-0.5 capitalize transition-colors ${
+                    stampMode === m
+                      ? 'border-primary/60 bg-primary/15 text-primary'
+                      : 'border-border bg-background/50 text-muted-foreground hover:text-foreground disabled:opacity-40'
+                  }`}
+                >
+                  {m === 'difference' ? 'Diff' : m}
+                </button>
+              ))}
+              {stampMode === 'blink' && (stampMetrics?.epochCount ?? 1) > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setBlinkEpochSlot((s) => (s === 0 ? 1 : 0))}
+                  className="ml-auto rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-amber-300"
+                >
+                  {blinkEpochSlot === 0 ? 'Frame T₀ (Click → Tₙ)' : 'Frame Tₙ (Click → T₀)'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="relative h-44 sm:h-48 w-full overflow-hidden group">
+          {surveyStage === 'offline' ? (
+            <canvas ref={offlineCanvasRef} className="block h-full w-full" />
+          ) : (
+            <>
+              <img
+                src={cutoutUrl}
+                alt={`${targetLabel} sky cutout at ${thread.ra.toFixed(4)}°, ${thread.dec.toFixed(4)}°`}
+                loading="lazy"
+                decoding="async"
+                onError={() =>
+                  setSurveyStage((cur) => (cur === '2mass' ? 'dss2' : 'offline'))
+                }
+                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+              />
+              {/* Center J2000 Target Crosshair Reticle */}
+              <div
+                className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+                aria-hidden="true"
+              >
+                <div className="relative h-7 w-7">
+                  <div className="absolute left-1/2 top-0 h-2 w-[1px] -translate-x-1/2 bg-sky-400/90" />
+                  <div className="absolute left-1/2 bottom-0 h-2 w-[1px] -translate-x-1/2 bg-sky-400/90" />
+                  <div className="absolute top-1/2 left-0 h-[1px] w-2 -translate-y-1/2 bg-sky-400/90" />
+                  <div className="absolute top-1/2 right-0 h-[1px] w-2 -translate-y-1/2 bg-sky-400/90" />
+                </div>
+              </div>
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/35" />
+            </>
+          )}
+
+          <div className="absolute top-2 left-2.5 right-2.5 flex items-center justify-between gap-2">
+            <span className="pointer-events-none rounded-md border border-white/15 bg-black/70 px-2 py-0.5 font-mono text-[10px] tabular-nums text-white/90 backdrop-blur-sm">
+              {thread.ra.toFixed(2)}°, {thread.dec >= 0 ? '+' : ''}
+              {thread.dec.toFixed(2)}° · {thread.fovArcsec}&quot;
+            </span>
+            {tensor && (
+              <div className="inline-flex rounded-md border border-border bg-black/80 p-0.5 font-mono text-[9px] backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('tensor')}
+                  className="rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  SPHEREx Stamp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('survey')}
+                  className="rounded px-1.5 py-0.5 bg-primary/20 text-primary font-medium"
+                >
+                  2MASS Survey
+                </button>
+              </div>
+            )}
+          </div>
+
+          <span className="pointer-events-none absolute bottom-1.5 left-2.5 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[9px] text-white/80 backdrop-blur-sm">
+            N↑ ←E · TAN Sky Cutout
+          </span>
+          <span className="pointer-events-none absolute bottom-1.5 right-2.5 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[9px] text-white/75 backdrop-blur-sm">
+            {surveyStage === 'dss2'
+              ? '[DSS2 Color Cutout · CDS HiPS2FITS]'
+              : surveyStage === 'offline'
+                ? '[WCS Tangent Grid · Offline]'
+                : '[2MASS JHKs Cutout · CDS HiPS2FITS]'}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const ObservationDiscussions: React.FC = () => {
   const {
@@ -262,6 +1112,7 @@ export const ObservationDiscussions: React.FC = () => {
 
   const { threads, setThreads, sseConnected, isLoading, loadError } =
     useRealtimeDiscussions<DiscussionThread>([]);
+  const { installedSections } = useInstalledSectionState();
   const [scopeFilter, setScopeFilter] = useState<'ALL' | 'TARGET' | 'VERIFIED'>('ALL');
   const [feedSort, setFeedSort] = useState<'latest' | 'top'>('latest');
   const [classFilter, setClassFilter] = useState<string>('ALL');
@@ -959,7 +1810,7 @@ export const ObservationDiscussions: React.FC = () => {
                       t.classification;
                 const repliesOpen =
                   expandedReplies[t.id] ?? t.replies.length > 0;
-                const visual = resolveThreadVisual(t);
+                const targetMeta = resolveThreadTargetMeta(t);
 
                 return (
                   <article
@@ -1013,39 +1864,16 @@ export const ObservationDiscussions: React.FC = () => {
 
                     {/* Embedded Telemetry State Card (modeled on code preview + Read All ->) */}
                     <div className="rounded-lg border border-border bg-background/90 overflow-hidden">
-                      <div className="relative h-40 sm:h-44 w-full overflow-hidden border-b border-border/70 bg-neutral-950 group">
-                        <img
-                          src={visual.imageSrc}
-                          alt={`${visual.targetLabel} — ${t.title}`}
-                          loading="lazy"
-                          decoding="async"
-                          onError={(e) => {
-                            if (
-                              !e.currentTarget.dataset.fallbackApplied &&
-                              e.currentTarget.src !== `${window.location.origin}${visual.fallbackSrc}`
-                            ) {
-                              e.currentTarget.dataset.fallbackApplied = '1';
-                              e.currentTarget.src = visual.fallbackSrc;
-                            }
-                          }}
-                          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                        />
-                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
-                        <div className="pointer-events-none absolute top-2 left-2.5 right-2.5 flex items-center justify-between gap-2">
-                          <span className="rounded-md border border-white/15 bg-black/65 px-2 py-0.5 font-mono text-[10px] tabular-nums text-white/90 backdrop-blur-sm">
-                            {t.ra.toFixed(2)}°, {t.dec >= 0 ? '+' : ''}{t.dec.toFixed(2)}° · {t.fovArcsec}&quot;
-                          </span>
-                          <span className="max-w-[55%] truncate rounded-md border border-primary/35 bg-black/65 px-2 py-0.5 font-mono text-[10px] text-primary backdrop-blur-sm">
-                            {visual.badgeLabel}
-                          </span>
-                        </div>
-                        <span className="pointer-events-none absolute bottom-1.5 right-2.5 rounded bg-black/55 px-1.5 py-0.5 font-mono text-[9px] text-white/75 backdrop-blur-sm">
-                          {visual.imageCredit}
-                        </span>
-                      </div>
+                      <SkyPatchPreview
+                        thread={t}
+                        targetLabel={targetMeta.targetLabel}
+                        benchmarkId={targetMeta.benchmarkId}
+                        installedSections={installedSections}
+                        onInspectInComparator={() => handleRestorePinnedState(t, 'comparator')}
+                      />
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-secondary/30 px-3 py-1.5 font-mono text-[10px]">
                         <span className="text-foreground/90 font-medium">
-                          {visual.targetLabel}
+                          {targetMeta.targetLabel}
                         </span>
                         <span className="text-primary">
                           {t.confidencePct > 0 ? `${catLabel} · ${t.confidencePct}%` : catLabel}
