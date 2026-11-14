@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
+import { useRealtimeDiscussions } from '../hooks/useRealtimeDiscussions';
 import {
   MANDATORY_BENCHMARKS,
   SEARCHABLE_SKY_CATALOG,
@@ -37,16 +38,66 @@ export interface DiscussionThread {
   body: string;
   upvotes: number;
   replies: DiscussionReply[];
+  hashtags?: string[];
+  classVotes?: Partial<Record<ClassVoteKey, number>>;
+}
+
+type ClassVoteKey = 'V_mover' | 'V_var' | 'V_ice' | 'V_artifact';
+
+interface ClassificationShortcut {
+  id: string;
+  label: string;
+  classification: string;
+  hashtag: string;
+  voteKey: ClassVoteKey;
+  channel: string;
 }
 
 const CLASSIFICATION_CATEGORIES = [
   { id: 'moving_brown_dwarf', label: 'High-PM Substellar / Brown Dwarf' },
+  { id: 'variable_star', label: 'Flashing Variable' },
   { id: 'circumstellar_disk', label: 'Circumstellar Disk / Dipper Occultation' },
   { id: 'mira_agb_pulsator', label: 'AGB / Mira Long-Period Variable' },
   { id: 'interstellar_ice', label: 'Molecular Cloud 3.0–4.67 µm Ice Absorption' },
   { id: 'high_z_emission', label: 'Extragalactic Hα / [OIII] Line Emitter' },
   { id: 'solar_system_mover', label: 'Solar System Asteroid / NEOWISE Mover' },
+  { id: 'optical_blend_artifact', label: 'Optical Blend / Artifact' },
   { id: 'instrumental_flag', label: 'Detector Persistence / Cosmic Ray Artifact' },
+];
+
+const CLASSIFICATION_SHORTCUTS: ClassificationShortcut[] = [
+  {
+    id: 'mover',
+    label: '[+ Dipole/Mover]',
+    classification: 'moving_brown_dwarf',
+    hashtag: '#mover',
+    voteKey: 'V_mover',
+    channel: 'movers',
+  },
+  {
+    id: 'variable',
+    label: '[+ Flashing Variable]',
+    classification: 'variable_star',
+    hashtag: '#variable',
+    voteKey: 'V_var',
+    channel: 'discoveries',
+  },
+  {
+    id: 'ice_source',
+    label: '[+ Interstellar Ice]',
+    classification: 'interstellar_ice',
+    hashtag: '#ice_source',
+    voteKey: 'V_ice',
+    channel: 'ices',
+  },
+  {
+    id: 'blend_artifact',
+    label: '[+ Optical Blend/Artifact]',
+    classification: 'optical_blend_artifact',
+    hashtag: '#blend_artifact',
+    voteKey: 'V_artifact',
+    channel: 'artifacts',
+  },
 ];
 
 const INITIAL_THREADS: DiscussionThread[] = [
@@ -164,34 +215,17 @@ export const ObservationDiscussions: React.FC = () => {
 
   const identity = useMemo(() => ensureZeroAuthIdentity(), []);
 
-  const [threads, setThreads] = useState<DiscussionThread[]>(INITIAL_THREADS);
+  const { threads, setThreads, sseConnected } =
+    useRealtimeDiscussions<DiscussionThread>(INITIAL_THREADS);
   const [scopeFilter, setScopeFilter] = useState<'ALL' | 'TARGET'>('ALL');
   const [classFilter, setClassFilter] = useState<string>('ALL');
   const [newTitle, setNewTitle] = useState<string>('');
   const [newBody, setNewBody] = useState<string>('');
   const [newClass, setNewClass] = useState<string>('moving_brown_dwarf');
+  const [selectedShortcut, setSelectedShortcut] =
+    useState<ClassificationShortcut | null>(null);
   const [newConfidence, setNewConfidence] = useState<number>(90);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
-  const [sseConnected, setSseConnected] = useState<boolean>(false);
-
-  // Attempt non-blocking SSE connection to /api/forum/stream (Issue #23)
-  useEffect(() => {
-    if (typeof EventSource === 'undefined') return;
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource('/api/forum/stream');
-      es.onopen = () => setSseConnected(true);
-      es.onerror = () => {
-        setSseConnected(false);
-        es?.close();
-      };
-    } catch {
-      setSseConnected(false);
-    }
-    return () => {
-      es?.close();
-    };
-  }, []);
 
   const filteredThreads = useMemo(() => {
     return threads.filter((t) => {
@@ -211,6 +245,10 @@ export const ObservationDiscussions: React.FC = () => {
     e.preventDefault();
     if (!newTitle.trim() || !newBody.trim()) return;
 
+    const hashtags = selectedShortcut ? [selectedShortcut.hashtag] : [];
+    const taggedBody = hashtags.length > 0 && !newBody.includes(hashtags[0])
+      ? `${newBody.trim()} ${hashtags[0]}`
+      : newBody.trim();
     const created: DiscussionThread = {
       id: `thr-${Date.now()}`,
       title: newTitle.trim(),
@@ -226,31 +264,62 @@ export const ObservationDiscussions: React.FC = () => {
       targetName:
         activeTargetName ||
         `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`,
-      body: newBody.trim(),
+      body: taggedBody,
       upvotes: 1,
       replies: [],
+      hashtags,
+      classVotes: selectedShortcut ? { [selectedShortcut.voteKey]: 1 } : {},
     };
 
     setThreads((prev) => [created, ...prev]);
     setNewTitle('');
     setNewBody('');
+    setSelectedShortcut(null);
+    setNewClass('moving_brown_dwarf');
 
     try {
-      await fetch('/api/forum/threads', {
+      const response = await fetch('/api/forum/threads', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Observer-ID': identity.observerId,
           'X-Observer-Key': identity.observerKey,
         },
-        body: JSON.stringify(created),
+        body: JSON.stringify({
+          title: created.title,
+          body: created.body,
+          classification: created.classification,
+          confidencePct: created.confidencePct,
+          ra: created.ra,
+          dec: created.dec,
+          fovArcsec: created.fovArcsec,
+          renderMode: created.renderMode,
+          targetName: created.targetName,
+          hashtags,
+          classificationVote: selectedShortcut?.id ?? null,
+          channel: selectedShortcut?.channel ?? 'discoveries',
+        }),
       });
+      if (response.ok) {
+        const payload = (await response.json()) as { thread?: Partial<DiscussionThread> };
+        if (payload.thread?.id !== undefined) {
+          const saved = {
+            ...created,
+            ...payload.thread,
+            id: String(payload.thread.id),
+            replies: payload.thread.replies ?? [],
+          } as DiscussionThread;
+          setThreads((prev) =>
+            prev.map((thread) => (thread.id === created.id ? saved : thread))
+          );
+        }
+      }
     } catch {
       // Optimistic local state preserved when backend is offline
     }
   };
 
-  const handleAddReply = (threadId: string) => {
+  const handleAddReply = async (threadId: string) => {
     const text = (replyDrafts[threadId] || '').trim();
     if (!text) return;
 
@@ -268,6 +337,67 @@ export const ObservationDiscussions: React.FC = () => {
       )
     );
     setReplyDrafts((prev) => ({ ...prev, [threadId]: '' }));
+
+    if (!/^\d+$/.test(threadId)) return;
+    try {
+      await fetch('/api/forum/replies', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observer-ID': identity.observerId,
+          'X-Observer-Key': identity.observerKey,
+        },
+        body: JSON.stringify({ threadId: Number(threadId), body: text }),
+      });
+    } catch {
+      // Keep the optimistic reply visible while the API reconnects.
+    }
+  };
+
+  const handleClassificationVote = async (
+    thread: DiscussionThread,
+    shortcut: ClassificationShortcut
+  ) => {
+    if (!/^\d+$/.test(thread.id)) {
+      setThreads((prev) =>
+        prev.map((item) =>
+          item.id === thread.id
+            ? {
+                ...item,
+                classVotes: {
+                  ...item.classVotes,
+                  [shortcut.voteKey]: (item.classVotes?.[shortcut.voteKey] ?? 0) + 1,
+                },
+              }
+            : item
+        )
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/forum/threads/${thread.id}/classifications`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observer-ID': identity.observerId,
+          'X-Observer-Key': identity.observerKey,
+        },
+        body: JSON.stringify({ classificationVote: shortcut.id }),
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { thread?: Partial<DiscussionThread> };
+      if (!payload.thread) return;
+      setThreads((prev) =>
+        prev.map((item) =>
+          item.id === thread.id
+            ? { ...item, ...payload.thread, id: thread.id }
+            : item
+        )
+      );
+    } catch {
+      // Keep the current discussion usable when the backend is offline.
+    }
   };
 
   // Restore exact sky coordinate & comparator state from a discussion post
@@ -320,6 +450,13 @@ export const ObservationDiscussions: React.FC = () => {
         name: 'IRSA ZTF / WISE Time-Domain Archive',
         desc: 'Optical & mid-infrared historical light curves',
         url: `https://irsa.ipac.caltech.edu/irsaviewer/?__action=layout.showDropDown&view=HiPSList`,
+      },
+      {
+        name: 'Pan-STARRS PS1 Optical Cutouts',
+        desc: 'Color and grizy stack cutouts at the active J2000 position',
+        url: `https://ps1images.stsci.edu/cgi-bin/ps1cutouts?pos=${encodeURIComponent(
+          `${ra.toFixed(6)} ${dec.toFixed(6)}`
+        )}`,
       },
       {
         name: 'IAU Transient Name Server (TNS)',
@@ -455,6 +592,33 @@ export const ObservationDiscussions: React.FC = () => {
               </span>
             </div>
 
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-[11px] text-muted-foreground">
+                Structured classification:
+              </span>
+              {CLASSIFICATION_SHORTCUTS.map((shortcut) => (
+                <Button
+                  key={shortcut.id}
+                  type="button"
+                  variant={selectedShortcut?.id === shortcut.id ? 'secondary' : 'outline'}
+                  size="xs"
+                  aria-pressed={selectedShortcut?.id === shortcut.id}
+                  onClick={() => {
+                    setSelectedShortcut(shortcut);
+                    setNewClass(shortcut.classification);
+                  }}
+                  className="font-mono text-[10px]"
+                >
+                  {shortcut.label}
+                </Button>
+              ))}
+              {selectedShortcut && (
+                <span className="font-mono text-[10px] text-primary">
+                  {selectedShortcut.hashtag} will be attached
+                </span>
+              )}
+            </div>
+
             <div className="mt-2.5 grid grid-cols-12 gap-2">
               <div className="col-span-12 md:col-span-6">
                 <label htmlFor="obs-title" className="block text-[11px] text-muted-foreground">
@@ -477,7 +641,10 @@ export const ObservationDiscussions: React.FC = () => {
                   id="obs-class"
                   sizeVariant="sm"
                   value={newClass}
-                  onChange={(e) => setNewClass(e.target.value)}
+                  onChange={(e) => {
+                    setNewClass(e.target.value);
+                    setSelectedShortcut(null);
+                  }}
                   className="mt-1 w-full bg-background"
                 >
                   {CLASSIFICATION_CATEGORIES.map((c) => (
@@ -587,6 +754,32 @@ export const ObservationDiscussions: React.FC = () => {
                   <p className="mt-2.5 text-xs leading-relaxed text-foreground/90">
                     {t.body}
                   </p>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
+                    <span className="mr-1 text-[10px] text-muted-foreground">
+                      Classify this observation:
+                    </span>
+                    {CLASSIFICATION_SHORTCUTS.map((shortcut) => (
+                      <Button
+                        key={shortcut.id}
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => void handleClassificationVote(t, shortcut)}
+                        className="font-mono text-[9px]"
+                      >
+                        {shortcut.label}
+                      </Button>
+                    ))}
+                    {CLASSIFICATION_SHORTCUTS.map((shortcut) => {
+                      const votes = t.classVotes?.[shortcut.voteKey] ?? 0;
+                      return votes > 0 ? (
+                        <span key={shortcut.voteKey} className="font-mono text-[9px] text-muted-foreground">
+                          {shortcut.voteKey} {votes}
+                        </span>
+                      ) : null;
+                    })}
+                  </div>
 
                   {/* Replies */}
                   {t.replies.length > 0 && (
