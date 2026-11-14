@@ -122,7 +122,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   // Spatial Parameters (defaults to WISE 0855-0714)
   ra: 133.737120,
   dec: -7.240380,
-  fovArcsec: 180.0,
+  fovArcsec: 300.0,
   activeTargetName: 'WISE 0855-0714',
   sourceBadge: '[NASA Benchmark (Pre-cached)]',
 
@@ -145,7 +145,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   maxFluxCut: 1.0,
 
   // Probed Pixel & Spectral State
-  probedPixel: { x: 16, y: 16 },
+  probedPixel: { x: 24, y: 24 },
   probeSkyPosition: null,
   activeSpectrum: [],
   isSpectrumLoading: false,
