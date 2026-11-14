@@ -6,7 +6,7 @@ import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import {
   fetchInstalledSections,
   findMatchingSection,
-  type InstalledSection,
+  useInstalledSectionState,
 } from '../lib/installedSections';
 
 /**
@@ -137,8 +137,11 @@ function generateSpectrum(params: {
 /** Solve 2-component NNLS: min_{a,b>=0} sum(((y - a*t1 - b*t2)/s)^2). */
 function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: number; b: number; chi2Red: number } {
   let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0;
+  let validCount = 0;
   const n = y.length;
   for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(y[i]) || !Number.isFinite(s[i])) continue;
+    validCount += 1;
     const w = 1 / Math.max(s[i] * s[i], 1e-12);
     s11 += w * t1[i] * t1[i];
     s22 += w * t2[i] * t2[i];
@@ -146,6 +149,7 @@ function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: 
     sy1 += w * y[i] * t1[i];
     sy2 += w * y[i] * t2[i];
   }
+  if (validCount < 2) return { a: 0, b: 0, chi2Red: 0 };
   const det = s11 * s22 - s12 * s12;
   let a = det !== 0 ? (s22 * sy1 - s12 * sy2) / det : 0;
   let b = det !== 0 ? (s11 * sy2 - s12 * sy1) / det : 0;
@@ -157,13 +161,14 @@ function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: 
   for (const [ca, cb] of candidates) {
     let chi2 = 0;
     for (let i = 0; i < n; i++) {
+      if (!Number.isFinite(y[i]) || !Number.isFinite(s[i])) continue;
       const r = (y[i] - ca * t1[i] - cb * t2[i]) / Math.max(s[i], 1e-12);
       chi2 += r * r;
     }
     if (chi2 < best.chi2) best = { a: ca, b: cb, chi2 };
   }
   a = best.a; b = best.b;
-  const dof = Math.max(1, n - 2);
+  const dof = Math.max(1, validCount - 2);
   return { a, b, chi2Red: best.chi2 / dof };
 }
 
@@ -222,20 +227,33 @@ function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { gr
 export const SpectrophotometricLab: React.FC = () => {
   const {
     ra, dec, activeTargetName, probedPixel, probeSkyPosition, activeSpectrum, activeEpochIndex,
-    isSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
+    isSpectralBlinkSynced, setSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
     setActiveSpectrum, setSpectrumLoading,
   } = useTelemetryStore();
   const { setZ, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
+  const { installedSections } = useInstalledSectionState();
   const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Synthetic Injection Mode]');
   const [spectrumStatus, setSpectrumStatus] = useState('');
-  const [installedSections, setInstalledSections] = useState<InstalledSection[]>([]);
-  const [activeInstalledSection, setActiveInstalledSection] = useState<InstalledSection | null>(null);
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
 
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
     [installedSections]
   );
+  const readySectionsKey = useMemo(
+    () => readyInstalledSections.map((s) => `${s.section_id}:${s.updated_at || ''}`).join('|'),
+    [readyInstalledSections]
+  );
+  const activeInstalledSection = useMemo(() => {
+    const position = probeSkyPosition ?? { ra, dec };
+    return findMatchingSection(readyInstalledSections, position.ra, position.dec);
+  }, [readyInstalledSections, probeSkyPosition, ra, dec]);
+
+  useEffect(() => {
+    if (installedSections.length === 0) {
+      void fetchInstalledSections();
+    }
+  }, [installedSections.length]);
 
   // Live / Installed 102-Channel WCS-WAVE Hyperspectral Fetch (SPECIFICATION.md §4.1 Pipeline 2, §5.3.1)
   useEffect(() => {
@@ -249,20 +267,15 @@ export const SpectrophotometricLab: React.FC = () => {
         const position = probeSkyPosition ?? { ra, dec };
         const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
 
-        // 1. Prefer locally installed sky section spectrum so Tab 3 never re-queries IRSA needlessly
-        let sections: InstalledSection[] = [];
-        try {
-          sections = await fetchInstalledSections(controller.signal);
-          if (!cancelled) setInstalledSections(sections);
-        } catch {
-          // Ignore list error and check live fallback policy
+        let sections = readyInstalledSections;
+        if (sections.length === 0) {
+          sections = (await fetchInstalledSections()).filter((s) => s.status === 'ready');
         }
         if (cancelled) return;
 
         const matched = findMatchingSection(sections, position.ra, position.dec);
         let data: any;
         if (matched) {
-          setActiveInstalledSection(matched);
           setSpectrumStatus(`Extracting 102-ch spectrum from installed "${matched.label}"…`);
           const qs = new URLSearchParams({ normalize: 'false' });
           if (probedPixel) {
@@ -278,11 +291,11 @@ export const SpectrophotometricLab: React.FC = () => {
           if (!secRes.ok) throw new Error(`HTTP ${secRes.status}`);
           data = await secRes.json();
         } else {
-          setActiveInstalledSection(null);
           if (forceLiveCoordKey !== coordKey) {
             setSpectrumStatus('No installed section at this coordinate — pick an installed section or click Query Live');
             return;
           }
+          setSpectrumStatus('Querying live IRSA HDU 6 spectrum (sampling D1–D6 exposures)…');
           const queued = await fetch('/api/spectrum/tasks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -323,8 +336,10 @@ export const SpectrophotometricLab: React.FC = () => {
           setSpectrumSourceBadge(sourceBadge as string);
           setSpectrumStatus(`${data.provenance.covered_channels}/${data.provenance.channel_count} channels covered`);
         }
-      } catch {
-        // Keep the deterministic fallback, with its source badge visible in the UI.
+      } catch (err) {
+        if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
+          setSpectrumStatus(err instanceof Error ? err.message : 'Spectrum extraction unavailable — showing synthetic preview');
+        }
       } finally {
         if (!cancelled) setSpectrumLoading(false);
       }
@@ -344,6 +359,7 @@ export const SpectrophotometricLab: React.FC = () => {
     isSpectralBlinkSynced,
     activeEpochIndex,
     forceLiveCoordKey,
+    readySectionsKey,
     setActiveSpectrum,
     setSpectrumLoading,
   ]);
@@ -354,6 +370,7 @@ export const SpectrophotometricLab: React.FC = () => {
     Array<{ id?: string; name: string; spectral_class: string; similarity: number; flux_curve: number[] }>
   >([]);
   const [isFindingSimilar, setIsFindingSimilar] = useState(false);
+  const [similarStatus, setSimilarStatus] = useState('Awaiting archive spectrum for SIMD matching');
 
   const zRef = useRef(manualRedshiftZ);
   const chartRef = useRef<HTMLDivElement | null>(null);
@@ -375,7 +392,7 @@ export const SpectrophotometricLab: React.FC = () => {
     if (activeSpectrum && activeSpectrum.length >= 102) return activeSpectrum.slice(0, 102);
     return generateSpectrum({
       ra, dec, targetName: activeTargetName,
-      px: probedPixel?.x ?? 16, py: probedPixel?.y ?? 16,
+      px: probedPixel?.x ?? 24, py: probedPixel?.y ?? 24,
       epochIndex, mjdBase: 60810,
     });
   }, [activeSpectrum, ra, dec, activeTargetName, probedPixel?.x, probedPixel?.y, epochIndex]);
@@ -384,10 +401,38 @@ export const SpectrophotometricLab: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     const fetchSimilar = async () => {
-      if (!spectrum || spectrum.length < 10 || spectrumSourceBadge.includes('Synthetic') || spectrum.some((channel) => !Number.isFinite(channel.fluxMjySr))) return;
+      if (!spectrum || spectrum.length < 10 || spectrumSourceBadge.includes('Synthetic')) {
+        setSimilarMatches([]);
+        setSimilarStatus('Install a section or query live spectrum for SIMD matching');
+        return;
+      }
+      const finiteIdx: number[] = [];
+      for (let i = 0; i < spectrum.length; i++) {
+        if (Number.isFinite(spectrum[i].fluxMjySr)) finiteIdx.push(i);
+      }
+      if (finiteIdx.length < 17) {
+        setSimilarMatches([]);
+        setSimilarStatus(`Only ${finiteIdx.length}/102 channels covered at px (${probedPixel?.x ?? 24},${probedPixel?.y ?? 24}) — need ≥17 for SIMD match`);
+        return;
+      }
+      const fluxArr = spectrum.map((c, idx) => {
+        if (Number.isFinite(c.fluxMjySr)) return c.fluxMjySr;
+        // Linearly interpolate / clamp missing bands so sparse gaps don't break 102-pt cosine similarity
+        let left = -1;
+        let right = -1;
+        for (const fi of finiteIdx) {
+          if (fi < idx) left = fi;
+          else if (fi > idx) { right = fi; break; }
+        }
+        if (left >= 0 && right >= 0) {
+          const t = (idx - left) / (right - left);
+          return spectrum[left].fluxMjySr * (1 - t) + spectrum[right].fluxMjySr * t;
+        }
+        return spectrum[left >= 0 ? left : right].fluxMjySr;
+      });
       setIsFindingSimilar(true);
+      setSimilarStatus('Evaluating SIMD cosine similarity...');
       try {
-        const fluxArr = spectrum.map((c) => c.fluxMjySr);
         const res = await fetch('/api/subjects/similar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -397,10 +442,13 @@ export const SpectrophotometricLab: React.FC = () => {
           const data = await res.json();
           if (!cancelled && Array.isArray(data.matches)) {
             setSimilarMatches(data.matches);
+            if (data.matches.length === 0) setSimilarStatus('No template matches returned');
           }
+        } else if (!cancelled) {
+          setSimilarStatus(`Similarity service unavailable (HTTP ${res.status})`);
         }
       } catch {
-        // Fallback gracefully
+        if (!cancelled) setSimilarStatus('Similarity service unreachable');
       } finally {
         if (!cancelled) setIsFindingSimilar(false);
       }
@@ -409,7 +457,7 @@ export const SpectrophotometricLab: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [spectrum, spectrumSourceBadge]);
+  }, [spectrum, spectrumSourceBadge, probedPixel?.x, probedPixel?.y]);
 
   const isRDraconis = (activeTargetName || '').toLowerCase().includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
   const isEpsInd = (activeTargetName || '').toLowerCase().includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
@@ -430,7 +478,7 @@ export const SpectrophotometricLab: React.FC = () => {
 
   const data = useMemo((): uPlot.AlignedData => {
     const x = spectrum.map((c) => c.wavelengthUm);
-    const y = spectrum.map((c) => c.fluxMjySr);
+    const y = spectrum.map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null));
     return [x, y];
   }, [spectrum]);
 
@@ -478,6 +526,7 @@ export const SpectrophotometricLab: React.FC = () => {
       ctx.lineWidth = 1;
       for (let i = 0; i < spec.length; i++) {
         const c = spec[i];
+        if (!Number.isFinite(c.fluxMjySr) || !Number.isFinite(c.uncertainty)) continue;
         const x = u.valToPos(c.wavelengthUm, 'x', true);
         const y0 = u.valToPos(c.fluxMjySr - c.uncertainty, 'y', true);
         const y1 = u.valToPos(c.fluxMjySr + c.uncertainty, 'y', true);
@@ -488,6 +537,7 @@ export const SpectrophotometricLab: React.FC = () => {
         const [m0, m1] = mjdRangeRef.current;
         for (let i = 0; i < spec.length; i++) {
           const c = spec[i];
+          if (!Number.isFinite(c.fluxMjySr)) continue;
           const x = u.valToPos(c.wavelengthUm, 'x', true);
           const y = u.valToPos(c.fluxMjySr, 'y', true);
           const m = specMjdRef.current[i] ?? m0;
@@ -502,7 +552,7 @@ export const SpectrophotometricLab: React.FC = () => {
       ctx.lineWidth = 1.2;
       for (let i = 0; i < spec.length; i++) {
         const c = spec[i];
-        if (!c.flag) continue;
+        if (!c.flag || !Number.isFinite(c.fluxMjySr)) continue;
         const x = u.valToPos(c.wavelengthUm, 'x', true);
         const y = u.valToPos(c.fluxMjySr, 'y', true);
         const s = 5;
@@ -534,7 +584,17 @@ export const SpectrophotometricLab: React.FC = () => {
       height: 420,
       padding: [16, 12, 0, 0],
       cursor: { drag: { x: false, y: false } },
-      scales: { x: { time: false, min: 0.75, max: 5.0 }, y: { auto: true } },
+      scales: {
+        x: { time: false, min: 0.75, max: 5.0 },
+        y: {
+          auto: true,
+          range: (_u, min, max) => {
+            if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+            if (min === max) return [min - 0.5, max + 0.5];
+            return [min, max];
+          },
+        },
+      },
       axes: [
         { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Wavelength λ (µm)' },
         { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Flux (MJy/sr)' },
@@ -545,6 +605,7 @@ export const SpectrophotometricLab: React.FC = () => {
           label: 'Fν',
           stroke: '#ffffff',
           width: 1.5,
+          spanGaps: true,
           points: { show: true, size: 4, fill: '#ffffff', stroke: '#0a0a0a' },
         },
       ],
@@ -619,7 +680,7 @@ export const SpectrophotometricLab: React.FC = () => {
                   setForceLiveCoordKey(null);
                   setUrlRa(Number(chosen.ra.toFixed(5)));
                   setUrlDec(Number(chosen.dec.toFixed(5)));
-                  setUrlFov(Math.round(chosen.fov_arcsec || 180));
+                  setUrlFov(Math.round(chosen.fov_arcsec || 300));
                   useTelemetryStore.setState({
                     ra: chosen.ra,
                     dec: chosen.dec,
@@ -653,8 +714,19 @@ export const SpectrophotometricLab: React.FC = () => {
                 Query Live Spectrum
               </button>
             )}
-            <span className="rounded bg-sky-950/60 px-2 py-0.5 font-mono text-[10px] text-sky-300">probe px ({probedPixel?.x ?? 16},{probedPixel?.y ?? 16})</span>
-            {isSpectralBlinkSynced && <span className="rounded bg-emerald-950/60 px-2 py-0.5 text-[10px] text-emerald-300">Spectral blink synced (epoch {epochIndex})</span>}
+            <span className="rounded bg-sky-950/60 px-2 py-0.5 font-mono text-[10px] text-sky-300">probe px ({probedPixel?.x ?? 24},{probedPixel?.y ?? 24})</span>
+            <button
+              type="button"
+              onClick={() => setSpectralBlinkSynced(!isSpectralBlinkSynced)}
+              className={`rounded border px-2 py-0.5 text-[10px] transition ${
+                isSpectralBlinkSynced
+                  ? 'border-emerald-700/60 bg-emerald-950/60 text-emerald-300'
+                  : 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-600'
+              }`}
+              title="Toggle between full multi-epoch coadd and active comparator epoch"
+            >
+              {isSpectralBlinkSynced ? `Epoch ${epochIndex} Only` : 'All Epochs (Coadded)'}
+            </button>
             {spectrumStatus && <span className="text-[10px] text-neutral-400">{spectrumStatus}</span>}
           </div>
           <p className="mt-1 text-[11px] text-neutral-400">
@@ -697,7 +769,7 @@ export const SpectrophotometricLab: React.FC = () => {
               <tbody>
                 {spectrum.map((c) => (
                   <tr key={c.channel}>
-                    <td>{c.channel}</td><td>{c.detector}</td><td>{c.wavelengthUm}</td><td>{c.fluxMjySr}</td><td>{c.uncertainty}</td><td>{c.flag ? flagTooltip(c.flag) : '0'}</td>
+                    <td>{c.channel}</td><td>{c.detector}</td><td>{c.wavelengthUm}</td><td>{Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : '—'}</td><td>{Number.isFinite(c.uncertainty) ? c.uncertainty : '—'}</td><td>{c.flag ? flagTooltip(c.flag) : '0'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -807,7 +879,7 @@ export const SpectrophotometricLab: React.FC = () => {
                 </div>
               ))
             ) : (
-              <div className="text-neutral-500 text-[10px]">Evaluating SIMD cosine similarity...</div>
+              <div className="text-neutral-500 text-[10px]">{similarStatus}</div>
             )}
           </div>
         </div>
