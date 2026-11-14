@@ -56,6 +56,46 @@ def test_progress_unknown_task_404():
     assert r.status_code == 404
 
 
+def test_cached_cutout_coverage_returns_recent_nearby_regions():
+    import asyncio
+    import time
+
+    client, cutout = _client()
+    cutout._cached_cutout_regions.clear()
+    asyncio.run(cutout.tensor_cache.set("request:nearby", b"processed tensor"))
+    cutout._cached_cutout_regions["nearby"] = {
+        "ra": 10.1,
+        "dec": 20.0,
+        "fov_arcsec": 180,
+        "cached_at": time.monotonic(),
+        "source_badge": "[IRSA Live (spherex_qr2)]",
+    }
+    cutout._cached_cutout_regions["outside"] = {
+        "ra": 30.0,
+        "dec": 20.0,
+        "fov_arcsec": 180,
+        "cached_at": time.monotonic(),
+        "source_badge": "[IRSA Live (spherex_qr2)]",
+    }
+    cutout._cached_cutout_regions["evicted"] = {
+        "ra": 10.2,
+        "dec": 20.0,
+        "fov_arcsec": 180,
+        "cached_at": time.monotonic(),
+        "source_badge": "[IRSA Live (spherex_qr2)]",
+    }
+
+    response = client.get("/api/cutout/cache/coverage?ra=10&dec=20&radius_deg=1")
+
+    assert response.status_code == 200
+    assert response.json()["regions"] == [{
+        "ra": 10.1,
+        "dec": 20.0,
+        "fov_arcsec": 180,
+        "source_badge": "[IRSA Live (spherex_qr2)]",
+    }]
+
+
 def test_progress_after_enqueue():
     client, cutout = _client()
     cutout._worker_started = True  # prevent background processing for deterministic state
