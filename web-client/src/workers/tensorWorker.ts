@@ -18,10 +18,12 @@ export interface TensorHeader {
   shape: [number, number, number, number]; // [N_epochs, N_bands, H, W]
   crval?: [number, number];
   cdelt?: [number, number];
-  mjd_ranges?: [number, number][];
-  exposure_ids?: string[][];
+  crpix?: [number, number];
+  mjd_ranges?: [number, number][][];
+  exposure_ids?: string[] | string[][];
   release?: string;
   source_badge?: string;
+  is_simulated?: boolean;
   compression?: 'none' | 'zstd' | 'zstd-shuffle';
 }
 
@@ -35,16 +37,12 @@ export interface TensorWorkerResponse {
   taskId?: string;
   error?: string;
   header: TensorHeader;
-  fluxBuffer: ArrayBuffer;
-  varianceBuffer: ArrayBuffer;
-  flagsBuffer: ArrayBuffer;
-  nExposuresBuffer: ArrayBuffer;
-  totalPixelsPerPlane: number;
+  payloadBuffer: ArrayBuffer;
+  totalPixels: number;
 }
 
 /**
- * Invert byte-shuffling (Blosc/HDF5 filter standard)
- * Reconstructs array of `n` elements of `elementSize` bytes from shuffled byte stream.
+ * Invert the backend's byte shuffle over fixed-size pixel records.
  */
 function unshuffleBytes(shuffled: Uint8Array, elementSize: number): Uint8Array {
   const n = Math.floor(shuffled.length / elementSize);
@@ -77,95 +75,60 @@ self.onmessage = async (e: MessageEvent<TensorWorkerRequest>) => {
     const headerStr = new TextDecoder('utf-8').decode(headerBytes);
     const header: TensorHeader = JSON.parse(headerStr);
 
+    if (
+      !Array.isArray(header.shape) || header.shape.length !== 4 ||
+      header.shape.some((value) => !Number.isSafeInteger(value) || value <= 0)
+    ) {
+      throw new Error('Invalid tensor shape in metadata header.');
+    }
     const [epochs, bands, height, width] = header.shape;
     const totalPixels = epochs * bands * height * width;
-
-    const fluxBytesCount = totalPixels * 4;
-    const varBytesCount = totalPixels * 4;
-    const flagsBytesCount = totalPixels * 4;
-    const nExpBytesCount = totalPixels * 2;
-    const totalUncompressedBytes = fluxBytesCount + varBytesCount + flagsBytesCount + nExpBytesCount;
+    const totalUncompressedBytes = totalPixels * 14;
+    if (!Number.isSafeInteger(totalUncompressedBytes)) {
+      throw new Error('Tensor shape exceeds safe byte-size limits.');
+    }
 
     let payloadBytes = new Uint8Array(buffer, 4 + headerLen);
 
     // 2. Handle zstd / zstd-shuffle decompression if required
     if (header.compression === 'zstd' || header.compression === 'zstd-shuffle') {
-      try {
-        const { Decompressor } = await import('zstd-wasm');
-        const decompressor = new Decompressor();
-        await decompressor.init();
-        payloadBytes = decompressor.decompress(payloadBytes);
-      } catch (decompError) {
-        if (payloadBytes.byteLength !== totalUncompressedBytes) {
-          throw new Error(`Zstd decompression failed: ${decompError}`);
-        }
-      }
+      const { Decompressor } = await import('zstd-wasm');
+      const decompressor = new Decompressor();
+      await decompressor.init();
+      payloadBytes = decompressor.decompress(payloadBytes);
     }
-
-    // 3. Extract and un-shuffle binary planes
-    let rawFluxBytes: Uint8Array;
-    let rawVarBytes: Uint8Array;
-    let rawFlagsBytes: Uint8Array;
-    let rawNExpBytes: Uint8Array;
-
-    let offset = 0;
-    const fluxSlice = payloadBytes.subarray(offset, offset + fluxBytesCount);
-    offset += fluxBytesCount;
-
-    const varSlice = payloadBytes.subarray(offset, offset + varBytesCount);
-    offset += varBytesCount;
-
-    const flagsSlice = payloadBytes.subarray(offset, offset + flagsBytesCount);
-    offset += flagsBytesCount;
-
-    const nExpSlice = payloadBytes.subarray(offset, offset + nExpBytesCount);
 
     if (header.compression === 'zstd-shuffle') {
-      rawFluxBytes = unshuffleBytes(fluxSlice, 4);
-      rawVarBytes = unshuffleBytes(varSlice, 4);
-      rawFlagsBytes = unshuffleBytes(flagsSlice, 4);
-      rawNExpBytes = unshuffleBytes(nExpSlice, 2);
-    } else {
-      rawFluxBytes = fluxSlice;
-      rawVarBytes = varSlice;
-      rawFlagsBytes = flagsSlice;
-      rawNExpBytes = nExpSlice;
+      // The server shuffles each 14-byte [FLUX, VARIANCE, FLAGS, N_EXPOSURES]
+      // pixel record as a whole before compression, not each plane separately.
+      payloadBytes = unshuffleBytes(payloadBytes, 14);
+    }
+    if (payloadBytes.byteLength !== totalUncompressedBytes) {
+      throw new Error(`Tensor payload size mismatch: got ${payloadBytes.byteLength}, expected ${totalUncompressedBytes}.`);
     }
 
-    // 4. Create typed buffers for zero-copy Transferable transfer
-    const fluxTyped = new Float32Array(rawFluxBytes.buffer, rawFluxBytes.byteOffset, totalPixels);
-    const varTyped = new Float32Array(rawVarBytes.buffer, rawVarBytes.byteOffset, totalPixels);
-    const flagsTyped = new Uint32Array(rawFlagsBytes.buffer, rawFlagsBytes.byteOffset, totalPixels);
-    const nExpTyped = new Uint16Array(rawNExpBytes.buffer, rawNExpBytes.byteOffset, totalPixels);
-
-    const fluxBuf = fluxTyped.buffer.slice(fluxTyped.byteOffset, fluxTyped.byteOffset + fluxTyped.byteLength);
-    const varBuf = varTyped.buffer.slice(varTyped.byteOffset, varTyped.byteOffset + varTyped.byteLength);
-    const flagsBuf = flagsTyped.buffer.slice(flagsTyped.byteOffset, flagsTyped.byteOffset + flagsTyped.byteLength);
-    const nExpBuf = nExpTyped.buffer.slice(nExpTyped.byteOffset, nExpTyped.byteOffset + nExpTyped.byteLength);
+    // Align the planes once, then transfer the single allocation. Main-thread
+    // Float32Array/Uint32Array/Uint16Array views can share it without copies.
+    const payloadBuffer = new ArrayBuffer(totalUncompressedBytes);
+    new Uint8Array(payloadBuffer).set(payloadBytes);
 
     const response: TensorWorkerResponse = {
       success: true,
       taskId,
       header,
-      fluxBuffer: fluxBuf,
-      varianceBuffer: varBuf,
-      flagsBuffer: flagsBuf,
-      nExposuresBuffer: nExpBuf,
-      totalPixelsPerPlane: totalPixels,
+      payloadBuffer,
+      totalPixels,
     };
 
-    (self as any).postMessage(response, [fluxBuf, varBuf, flagsBuf, nExpBuf]);
+    (self as any).postMessage(response, [payloadBuffer]);
   } catch (err: any) {
     const errorResponse: TensorWorkerResponse = {
       success: false,
       taskId,
       error: err?.message || String(err),
       header: { shape: [0, 0, 0, 0] },
-      fluxBuffer: new ArrayBuffer(0),
-      varianceBuffer: new ArrayBuffer(0),
-      flagsBuffer: new ArrayBuffer(0),
-      nExposuresBuffer: new ArrayBuffer(0),
-      totalPixelsPerPlane: 0,
+      payloadBuffer: new ArrayBuffer(0),
+      totalPixels: 0,
     };
     self.postMessage(errorResponse);
   }
