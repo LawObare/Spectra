@@ -87,14 +87,37 @@ async def health_live() -> JSONResponse:
 async def health_check() -> JSONResponse:
     """Dual-action keep-alive check.
 
-    Specification Anchor: SPECIFICATION.md §4.2, §10.4.8
+    Specification Anchor: SPECIFICATION.md §4.2, §10.2, §10.6
+    Touches both FastAPI and Supabase PostgreSQL in one request, updating heartbeat.
     """
+    db_status = "offline"
+    try:
+        try:
+            from backend.db.pool import close_pool, create_pool
+            from backend.db.queries import PING_HEARTBEAT
+        except ImportError:
+            from db.pool import close_pool, create_pool  # type: ignore
+            from db.queries import PING_HEARTBEAT  # type: ignore
+
+        pool = await create_pool(min_size=1, max_size=1)
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(PING_HEARTBEAT)
+                if row:
+                    db_status = "updated"
+        finally:
+            await close_pool(pool)
+    except Exception:  # noqa: BLE001
+        db_status = "offline"
+
     return JSONResponse(
         status_code=200,
         content={
             "status": "healthy",
             "service": "spectra-backend",
             "version": "1.0.0",
+            "supabase": db_status,
+            "engine": "fastapi",
         },
     )
 
