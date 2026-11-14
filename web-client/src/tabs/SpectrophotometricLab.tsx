@@ -515,7 +515,7 @@ export const SpectrophotometricLab: React.FC = () => {
         ctx.fillStyle = d.color;
         ctx.fillRect(x0, top, x1 - x0, height);
         ctx.fillStyle = 'rgba(229,229,229,0.45)';
-        ctx.font = '10px ui-monospace, monospace';
+        ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
         ctx.fillText(d.id, x0 + 4, top + 12);
       }
       ctx.restore();
@@ -576,7 +576,7 @@ export const SpectrophotometricLab: React.FC = () => {
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
         ctx.fillStyle = line.color;
-        ctx.font = '10px ui-monospace, monospace';
+        ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
         ctx.fillText(`${line.label} z=${z.toFixed(2)}`, x + 3, u.bbox.top + 24);
       }
       ctx.restore();
