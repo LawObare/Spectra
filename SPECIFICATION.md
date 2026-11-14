@@ -1989,7 +1989,7 @@ To guarantee maximum engineering velocity and eliminate the risk of a partially 
 - **Phase 3 (P2: Institutional Polish):** ~12 person-days. Tab 4 on point sources with verified $A$-values, synthetic injection calibration, read-only admin triage and data exports. **Gate 3.**
 - **Phase 4 (P3: Optional Model Lab):** Model Lab on synthetic data, photo-$z$, Dawid–Skene.
 - **Hardening & Deploy:** ~3 person-days.
-- **Explicit Cut Order if Time Runs Short:** P3 Model Lab $\r\rightarrow$ Tab 4 Molecular Studio $\r\rightarrow$ Admin triage $\r\rightarrow$ Tab 5 forum polish $\r\rightarrow$ Tab 3 template overlays. **NEVER CUT P0.** On completion of each phase, the system reaches a 100% self-contained, testable, and demonstrable milestone before work begins on the next phase.
+- **Explicit Cut Order if Time Runs Short:** P3 Model Lab $\rightarrow$ Tab 4 Molecular Studio $\rightarrow$ Admin triage $\rightarrow$ Tab 5 forum polish $\rightarrow$ Tab 3 template overlays. **NEVER CUT P0.** On completion of each phase, the system reaches a 100% self-contained, testable, and demonstrable milestone before work begins on the next phase.
 
 ```mermaid
 gantt

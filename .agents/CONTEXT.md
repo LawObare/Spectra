@@ -2697,3 +2697,34 @@ To ensure that **any** agent working in the repository—whether running via Ant
 ### Status
 - Passed all integrity checks (894 lines, 60,794 chars).
 - Committed and pushed to `main`.
+
+---
+
+## Exchange #42: Complete Domain Specification & Ground-Truth Benchmarks Embedded in SDD
+
+### Context & Goals
+- Conducted exhaustive gap analysis between `SPECIFICATION.md` (v3.0.0-PROD) and `SYSTEM_ARCHITECTURE.md` (SDD) to ensure 100% architectural coverage and zero omissions.
+
+### Changes Integrated into SYSTEM_ARCHITECTURE.md
+1. **Sequential Priority-Gated Implementation Roadmap & Strict Cut Order (§1.4):**
+   - Embedded Day-0 Spikes (S1, S2, S3), Phase 1 P0 (Core Challenge, Gate 1), Phase 2 P1 (Science Differentiator, Gate 2), Phase 3 P2 (Institutional Polish, Gate 3), and Phase 4 (Deployment, Gate 4).
+   - Codified strict cut order: `P3 Model Lab -> Tab 4 Molecular Studio -> Admin triage -> Tab 5 forum polish -> Tab 3 template overlays. NEVER CUT P0.`
+2. **Astrophysical Ground-Truth & Instrumental Standard (§2.4):**
+   - Embedded full 6 HDU Level 2 FITS extension standard (HDU 1 to HDU 6).
+   - Embedded complete HDU 2 (`FLAGS`) 32-bit bitmask hierarchy table (bits 0 to 22) with physical meanings and overlay rendering rules.
+   - Embedded the 5 Mandatory NASA Benchmark Targets Ground-Truth Table (Barnard's Star, WISE 0855-0714, Epsilon Indi B, RW Aurigae, R Draconis) with J2000 coordinates, proper motions, position angles, and propagated 2025.5 coordinates.
+   - Embedded Continuous Integration (CI) Coordinate Grounding Check (`benchmarks/build.py`, 1" failure threshold).
+   - Embedded Detector Super-Bands (D1 to D6) and Laboratory Molecular Band Strengths ($A$-values for $\text{H}_2\text{O}$, $\text{CO}_2$, $^{13}\text{CO}_2$, $\text{CO}$, $\text{CH}_3\text{OH}$).
+3. **Advanced Scientific Solvers in Tab 3 (§4.1):**
+   - Embedded Composite Spectral Unmixing formulation ($a \cdot T_1 + b \cdot T_2$ via NNLS) for de-blending Epsilon Indi B into T1+T6 brown dwarfs within a single $6.2''$ pixel.
+   - Embedded Automated Galaxy Photo-$z$ Solver ($P(z) \propto \exp(-\chi^2/2)$) with Planck 2018 lookback time and luminosity distance calculations, coupled to an interactive redshift slider ($z = 0.0 - 2.5$).
+4. **Backend Algorithms & Simulation Engines (§4.2):**
+   - Embedded Adaptive Wavelength Matching Algorithm ($w_b \approx 1/R_b$) with resolving power handling per detector and adaptive widening badge.
+   - Embedded Native Per-Exposure PSF Centroiding Engine with HDU 5 parent detector coordinate zone selection and inverse-covariance position coaddition.
+   - Embedded Synthetic Source Injector Engine (`synth_a` & `synth_b`) with proper motion displacement equations, PSF-convolved flux injection, and Poisson noise variance propagation.
+5. **Operational Risk Management Matrix (§11.1):**
+   - Embedded complete Risk Management & Mitigation Matrix covering all 8 operational and archive failure modes.
+
+### Status
+- Passed comprehensive integrity verification across `SPECIFICATION.md` (2,575 lines) and `SYSTEM_ARCHITECTURE.md` (1,028 lines, 78,904 chars, 38 balanced code fences).
+- Committed and pushed to `main`.
