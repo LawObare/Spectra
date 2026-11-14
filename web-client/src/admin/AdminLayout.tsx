@@ -46,8 +46,8 @@ export const AdminLayout: React.FC = () => {
   return (
     <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background font-sans text-foreground">
       {/* MISSION CONTROL TOP BAR */}
-      <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
+      <header className="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3 sm:px-4 py-2 shrink-0 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-primary" />
             <h1 className="text-xs font-semibold tracking-wide text-foreground">
@@ -94,7 +94,7 @@ export const AdminLayout: React.FC = () => {
       </nav>
 
       {/* WORKSPACE CONTENT ROUTER */}
-      <main className="flex-1 overflow-hidden relative">
+      <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden relative">
         <Routes>
           <Route path="/" element={<Navigate to="/admin/dynamics" replace />} />
           <Route path="/dynamics" element={<TrainingDynamics />} />
