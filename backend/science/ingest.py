@@ -79,11 +79,33 @@ DEFAULT_RADIUS_DEG = 0.5  # 30 arcmin default
 SIA_CACHE_TTL_SECONDS = 600.0
 SIA_CACHE_MAX_ENTRIES = 512
 ARCHIVE_IO_SEMAPHORE = asyncio.Semaphore(4)
+ARCHIVE_SLOT_WAIT_TIMEOUT_SECONDS = 20.0
+EXPOSURE_FETCH_CONCURRENCY = 2
 _RANGE_CACHE = LRUCache(maxsize=64 * 1024 * 1024, getsizeof=len)
 _RANGE_CACHE_LOCK = threading.Lock()
 _sia_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _sia_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 _sia_cache_lock = asyncio.Lock()
+
+
+async def _acquire_archive_slot(operation: str, timeout: float) -> bool:
+    """Acquire an archive I/O slot without letting queued work wait forever."""
+    wait_started = time.monotonic()
+    try:
+        await asyncio.wait_for(ARCHIVE_IO_SEMAPHORE.acquire(), timeout=max(0.0, timeout))
+    except TimeoutError:
+        logger.warning(
+            "Archive slot timeout operation=%s wait_s=%.3f",
+            operation,
+            time.monotonic() - wait_started,
+        )
+        return False
+    logger.info(
+        "Archive slot acquired operation=%s wait_s=%.3f",
+        operation,
+        time.monotonic() - wait_started,
+    )
+    return True
 
 
 async def _run_thread_to_completion(function: Callable[..., Any], *args: Any) -> Any:
@@ -150,7 +172,7 @@ async def query_sia2_cone(
             _sia_inflight[cache_key] = inflight
     try:
         result = await asyncio.shield(inflight)
-        if result:
+        if result and not result.get("error"):
             async with _sia_cache_lock:
                 _sia_cache[cache_key] = (time.monotonic(), result)
                 if len(_sia_cache) > SIA_CACHE_MAX_ENTRIES:
@@ -167,31 +189,49 @@ async def _query_sia2_uncached(
     ra: float, dec: float, radius_deg: float, collection: str, params: dict[str, Any]
 ) -> dict[str, Any]:
     started = time.monotonic()
-    async with ARCHIVE_IO_SEMAPHORE, httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.get(SIA2_ENDPOINT, params=params)
-            if response.status_code != 200:
-                logger.warning(
-                    f"SIA2 query returned HTTP {response.status_code} for "
-                    f"RA={ra}, Dec={dec}, radius={radius_deg}"
+    slot_acquired = await _acquire_archive_slot(
+        f"sia:{collection}", ARCHIVE_SLOT_WAIT_TIMEOUT_SECONDS
+    )
+    if not slot_acquired:
+        return {
+            "collection": collection,
+            "exposure_ids": [],
+            "error": "archive_capacity_timeout",
+        }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.get(SIA2_ENDPOINT, params=params)
+                if response.status_code != 200:
+                    logger.warning(
+                        "SIA2 query returned HTTP %s for collection=%s RA=%s Dec=%s radius=%s",
+                        response.status_code,
+                        collection,
+                        ra,
+                        dec,
+                        radius_deg,
+                    )
+                    return {"collection": collection, "exposure_ids": [], "error": "http_error"}
+
+                parsed = _parse_sia2_votable(response.text, collection)
+                logger.info(
+                    "SIA query collection=%s rows=%d duration_s=%.3f",
+                    collection,
+                    len(parsed.get("exposure_ids", [])),
+                    time.monotonic() - started,
                 )
-                return {}
+                return parsed
 
-            parsed = _parse_sia2_votable(response.text, collection)
-            logger.info(
-                "SIA query collection=%s rows=%d duration_s=%.3f",
-                collection,
-                len(parsed.get("exposure_ids", [])),
-                time.monotonic() - started,
-            )
-            return parsed
-
-        except httpx.TimeoutException:
-            logger.error(f"SIA2 query timed out for RA={ra}, Dec={dec}")
-            return {}
-        except httpx.HTTPError as e:
-            logger.error(f"SIA2 query HTTP error: {e}")
-            return {}
+            except httpx.TimeoutException:
+                logger.error(
+                    "SIA2 query timed out for collection=%s RA=%s Dec=%s", collection, ra, dec
+                )
+                return {"collection": collection, "exposure_ids": [], "error": "http_timeout"}
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("SIA2 query failed for collection=%s: %s", collection, exc)
+                return {"collection": collection, "exposure_ids": [], "error": "query_error"}
+    finally:
+        ARCHIVE_IO_SEMAPHORE.release()
 
 
 def _parse_sia2_votable(votable_text: str, collection: str) -> dict[str, Any]:
@@ -382,78 +422,96 @@ async def fetch_cutout_from_irsa(
 
     started = time.monotonic()
     deadline = asyncio.get_running_loop().time() + 45.0
-    async with ARCHIVE_IO_SEMAPHORE, httpx.AsyncClient(timeout=30.0) as client:
-        for attempt in range(2):
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                response = await asyncio.wait_for(
-                    client.get(cutout_url), timeout=min(30.0, remaining)
-                )
-                logger.info(
-                    "IRSA cutout attempt collection=%s attempt=%d status=%d bytes=%d duration_s=%.3f",
-                    collection,
-                    attempt + 1,
-                    response.status_code,
-                    len(response.content),
-                    time.monotonic() - started,
-                )
-                if response.status_code != 200:
-                    logger.warning(
-                        "IRSA Cutout returned HTTP %s for collection=%s: %s",
-                        response.status_code,
-                        collection,
-                        cutout_url,
-                    )
-                    if response.status_code not in {429, 500, 502, 503, 504} or attempt:
+    slot_acquired = await _acquire_archive_slot(
+        f"irsa-cutout:{collection}",
+        min(
+            ARCHIVE_SLOT_WAIT_TIMEOUT_SECONDS,
+            max(0.0, deadline - asyncio.get_running_loop().time()),
+        ),
+    )
+    if slot_acquired:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                for attempt in range(2):
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
                         break
-                else:
-                    cutout_data = _parse_irsa_mef_cutout(
-                        response.content, collection=collection, include_psf=include_psf
-                    )
-                    required_hdus = (
-                        "hdu1_image",
-                        "hdu1_header",
-                        "hdu2_flags",
-                        "hdu3_variance",
-                        "hdu6_wave_tab",
-                    )
-                    if all(cutout_data.get(key) is not None for key in required_hdus):
-                        if adaptive_window:
-                            cutout_data = _apply_adaptive_wavelength_window(
-                                cutout_data, window_half_width
-                            )
+                    try:
+                        response = await asyncio.wait_for(
+                            client.get(cutout_url), timeout=min(30.0, remaining)
+                        )
                         logger.info(
-                            "Cutout fetch collection=%s source=irsa bytes=%d duration_s=%.3f",
+                            "IRSA cutout attempt collection=%s attempt=%d status=%d bytes=%d duration_s=%.3f",
                             collection,
+                            attempt + 1,
+                            response.status_code,
                             len(response.content),
                             time.monotonic() - started,
                         )
-                        return cutout_data
-                    logger.warning(
-                        "Incomplete IRSA MEF cutout for collection=%s (attempt %s/2)",
-                        collection,
-                        attempt + 1,
-                    )
-                    if attempt:
-                        break
-            except (httpx.HTTPError, OSError, ValueError, TimeoutError) as exc:
-                logger.warning(
-                    "IRSA Cutout request failed for collection=%s (attempt %s/2): %s",
-                    collection,
-                    attempt + 1,
-                    exc,
-                )
-                if attempt:
-                    break
-            await asyncio.sleep(0.5)
+                        if response.status_code != 200:
+                            logger.warning(
+                                "IRSA Cutout returned HTTP %s for collection=%s: %s",
+                                response.status_code,
+                                collection,
+                                cutout_url,
+                            )
+                            if response.status_code not in {429, 500, 502, 503, 504} or attempt:
+                                break
+                        else:
+                            cutout_data = _parse_irsa_mef_cutout(
+                                response.content, collection=collection, include_psf=include_psf
+                            )
+                            required_hdus = (
+                                "hdu1_image",
+                                "hdu1_header",
+                                "hdu2_flags",
+                                "hdu3_variance",
+                                "hdu6_wave_tab",
+                            )
+                            if all(cutout_data.get(key) is not None for key in required_hdus):
+                                if adaptive_window:
+                                    cutout_data = _apply_adaptive_wavelength_window(
+                                        cutout_data, window_half_width
+                                    )
+                                logger.info(
+                                    "Cutout fetch collection=%s source=irsa bytes=%d duration_s=%.3f",
+                                    collection,
+                                    len(response.content),
+                                    time.monotonic() - started,
+                                )
+                                return cutout_data
+                            logger.warning(
+                                "Incomplete IRSA MEF cutout for collection=%s (attempt %s/2)",
+                                collection,
+                                attempt + 1,
+                            )
+                            if attempt:
+                                break
+                    except (httpx.HTTPError, OSError, ValueError, TimeoutError) as exc:
+                        logger.warning(
+                            "IRSA Cutout request failed for collection=%s (attempt %s/2): %s",
+                            collection,
+                            attempt + 1,
+                            exc,
+                        )
+                        if attempt:
+                            break
+                    await asyncio.sleep(0.5)
+        finally:
+            ARCHIVE_IO_SEMAPHORE.release()
     if s3_uri:
         try:
-            async with ARCHIVE_IO_SEMAPHORE:
+            slot_acquired = await _acquire_archive_slot(
+                f"s3-cutout:{collection}", ARCHIVE_SLOT_WAIT_TIMEOUT_SECONDS
+            )
+            if not slot_acquired:
+                return {}
+            try:
                 cutout_data = await _run_thread_to_completion(
                     _fetch_cutout_from_s3, s3_uri, ra, dec, size_deg, collection, include_psf
                 )
+            finally:
+                ARCHIVE_IO_SEMAPHORE.release()
             required_hdus = (
                 "hdu1_image",
                 "hdu1_header",
@@ -988,11 +1046,41 @@ async def ingest_exposures_for_target(
         if progress_hook:
             await progress_hook("discovering", 0.15, "Querying IRSA QR2 and QR3 exposure catalogs")
         logger.info(f"SIA2 query: RA={ra}, Dec={dec}, FoV={fov_arcsec}''")
+        query_progress_lock = asyncio.Lock()
+        completed_queries = 0
+
+        async def query_collection(source: str) -> dict[str, Any]:
+            nonlocal completed_queries
+            try:
+                query_result = await query_sia2_cone(
+                    ra, dec, radius_deg=fov_arcsec / 3600.0, collection=source
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("SIA collection=%s query raised an exception: %s", source, exc)
+                query_result = {
+                    "collection": source,
+                    "exposure_ids": [],
+                    "error": "query_error",
+                }
+            async with query_progress_lock:
+                completed_queries += 1
+                rows = len(query_result.get("exposure_ids", []))
+                error = query_result.get("error")
+                if error:
+                    logger.warning("SIA collection=%s unavailable reason=%s", source, error)
+                if progress_hook:
+                    progress = 0.15 + 0.1 * completed_queries / len(collections)
+                    state = f"failed ({error})" if error else f"returned {rows} exposures"
+                    await progress_hook(
+                        "discovering",
+                        progress,
+                        f"{source.upper()} {state}; {completed_queries} of "
+                        f"{len(collections)} archive queries complete",
+                    )
+            return query_result
+
         sia2_results = await asyncio.gather(
-            *(
-                query_sia2_cone(ra, dec, radius_deg=fov_arcsec / 3600.0, collection=source)
-                for source in collections
-            )
+            *(query_collection(source) for source in collections)
         )
         result["sia2_query"] = dict(zip(collections, sia2_results, strict=True))
         result["status"] = "sia2_queried"
@@ -1006,9 +1094,22 @@ async def ingest_exposures_for_target(
                 exposures.append(exposure)
 
         if not exposures:
+            query_failures = {
+                source: query_result.get("error")
+                for source, query_result in zip(collections, sia2_results, strict=True)
+                if query_result.get("error")
+            }
             logger.warning(f"No exposures found via SIA2 for RA={ra}, Dec={dec}")
-            result["error"] = "No exposures found via SIA2"
-            result["status"] = "no_exposures"
+            if query_failures and len(query_failures) == len(collections):
+                result["error"] = (
+                    f"All IRSA collection queries failed: {query_failures}"
+                )
+                result["status"] = "archive_error"
+            else:
+                result["error"] = "No exposures found via SIA2"
+                if query_failures:
+                    result["error"] += f"; some collection queries failed: {query_failures}"
+                result["status"] = "no_exposures"
             return result
 
         # Step 2: Cluster the exposures returned for this coordinate. QR2 and
@@ -1078,21 +1179,23 @@ async def ingest_exposures_for_target(
         # Step 3: Fetch actual MEF cutouts from IRSA for selected pass/band pairs.
         completed_fetches = 0
         progress_lock = asyncio.Lock()
+        exposure_fetch_semaphore = asyncio.Semaphore(EXPOSURE_FETCH_CONCURRENCY)
 
         async def fetch_exposure(exposure: dict[str, Any]) -> dict[str, Any] | None:
             nonlocal completed_fetches
             fetch_started = time.monotonic()
-            cutout = await fetch_cutout_from_irsa(
-                str(exposure["access_url"]),
-                ra,
-                dec,
-                fov_arcsec / 3600.0,
-                bands=bands,
-                adaptive_window=adaptive_window,
-                collection=str(exposure["collection"]),
-                s3_uri=exposure.get("s3_uri"),
-                include_psf=spectrum_mode,
-            )
+            async with exposure_fetch_semaphore:
+                cutout = await fetch_cutout_from_irsa(
+                    str(exposure["access_url"]),
+                    ra,
+                    dec,
+                    fov_arcsec / 3600.0,
+                    bands=bands,
+                    adaptive_window=adaptive_window,
+                    collection=str(exposure["collection"]),
+                    s3_uri=exposure.get("s3_uri"),
+                    include_psf=spectrum_mode,
+                )
             logger.info(
                 "Exposure fetch collection=%s id=%s usable=%s duration_s=%.3f",
                 exposure["collection"],
