@@ -31,6 +31,7 @@ try:
         encode_binary_tensor,
         reproject_exposures_sync,
     )
+    from backend.science.wave import match_benchmark_target
     from backend.science.wave_match import filter_wavelength_matched_exposures
 except ImportError:
     from cache.lru import LRUCache  # type: ignore
@@ -42,6 +43,7 @@ except ImportError:
         encode_binary_tensor,
         reproject_exposures_sync,
     )
+    from science.wave import match_benchmark_target  # type: ignore
     from science.wave_match import filter_wavelength_matched_exposures  # type: ignore
 
 router = APIRouter(prefix="/api", tags=["cutout"])
@@ -53,6 +55,7 @@ cutout_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=5)
 tensor_cache = LRUCache()
 # Task state store
 task_states: dict[str, dict[str, Any]] = {}
+_worker_started = False
 _active_request_tasks: dict[str, str] = {}
 _request_lock = asyncio.Lock()
 _worker_lock = asyncio.Lock()
@@ -136,6 +139,7 @@ async def _enqueue_cutout_task(
     synth_b: dict | None,
     zodi_subtracted: bool,
     request_key: str | None = None,
+    real_only: bool = False,
 ) -> str:
     task_id = _new_task_id()
     task_data = {
@@ -148,6 +152,7 @@ async def _enqueue_cutout_task(
         "synth_a": synth_a,
         "synth_b": synth_b,
         "zodi_subtracted": zodi_subtracted,
+        "real_only": real_only,
         "status": "queued",
         "progress": 0.0,
         "stage": "queued",
@@ -167,6 +172,8 @@ async def _enqueue_cutout_task(
 
 
 async def _ensure_worker() -> None:
+    if _worker_started:
+        return
     async with _worker_lock:
         while len(_worker_tasks) < _worker_count:
             task = asyncio.create_task(_queue_worker())
@@ -213,6 +220,7 @@ class CutoutRequest(BaseModel):
     synth_a: dict[str, Any] | None = None
     synth_b: dict[str, Any] | None = None
     zodi_subtracted: bool = False
+    real_only: bool = False
 
 
 def _cutout_request_key(body: CutoutRequest) -> str:
@@ -227,6 +235,7 @@ def _cutout_request_key(body: CutoutRequest) -> str:
             "synth_a": body.synth_a,
             "synth_b": body.synth_b,
             "zodi_subtracted": body.zodi_subtracted,
+            "real_only": body.real_only,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -285,6 +294,7 @@ async def create_cutout(
             body.synth_b,
             body.zodi_subtracted,
             request_key,
+            body.real_only,
         )
         _active_request_tasks[request_key] = task_id
         task_states[task_id] = {
@@ -464,6 +474,62 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                 )
                 return {"task_id": task_id, "status": "complete", "cache_hit": True}
 
+        # Fast-Path: Check for pre-cached benchmark bundle unless live IRSA data is requested
+        matched_bench = match_benchmark_target(ra, dec, match_radius_arcsec=60.0)
+        if matched_bench and not task_data.get("real_only") and not (task_data.get("synth_a") or task_data.get("synth_b")):
+            base_slug = (
+                matched_bench.get("name", "")
+                .lower()
+                .replace("'", "")
+                .replace(" ", "_")
+                .replace("-", "_")
+            )
+            search_names = [base_slug, matched_bench.get("name", "").lower(), matched_bench.get("name", "")]
+            alias_map = {
+                "barnards_star": "barnard",
+                "wise_0855_0714": "wise0855",
+                "wise_0855": "wise0855",
+                "epsilon_indi_b": "eps_indi_b",
+                "rw_aurigae": "rw_aur",
+                "r_draconis": "r_dra",
+            }
+            if base_slug in alias_map:
+                search_names.append(alias_map[base_slug])
+
+            from pathlib import Path
+            for sname in search_names:
+                for base_dir in [
+                    Path("web-client/public/benchmarks"),
+                    Path("../web-client/public/benchmarks"),
+                    Path("benchmarks"),
+                    Path("../benchmarks"),
+                ]:
+                    cand = base_dir / f"{sname}.f32"
+                    if cand.is_file():
+                        raw_bytes = cand.read_bytes()
+                        if len(raw_bytes) >= 4:
+                            hl = int.from_bytes(raw_bytes[:4], "little")
+                            if len(raw_bytes) >= 4 + hl:
+                                parsed_hdr = json.loads(raw_bytes[4 : 4 + hl].decode("utf-8"))
+                                await tensor_cache.set(f"tensor:{task_id}", raw_bytes, parsed_hdr)
+                                if request_key:
+                                    await tensor_cache.set(f"request:{request_key}", raw_bytes, parsed_hdr)
+                                task_states[task_id].update(
+                                    {
+                                        "status": "complete",
+                                        "stage": "complete",
+                                        "progress": 1.0,
+                                        "message": f"Complete ({parsed_hdr.get('source_badge', 'NASA Benchmark')})",
+                                    }
+                                )
+                                logger.info(
+                                    "Loaded benchmark tensor %s for task=%s duration_s=%.3f",
+                                    cand,
+                                    task_id,
+                                    time.monotonic() - started_at,
+                                )
+                                return {"task_id": task_id, "status": "complete", "source": "benchmark"}
+
         # Load the requested IRSA release and build epochs from its actual exposures.
         loaded_live_irsa = False
         live_error = None
@@ -472,6 +538,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
         partial_reference_wavelengths: dict[str, float] = {}
         partial_reprojected: list[Any] = []
         partial_reprojected_ids: set[tuple[str, str]] = set()
+        last_partial_publish_time = 0.0
 
         def candidate_identity(exposure: dict[str, Any]) -> tuple[str, str]:
             return (str(exposure.get("collection") or ""), str(exposure["exposure_id"]))
@@ -533,6 +600,11 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                 ]
                 if not new_matches:
                     return
+                nonlocal last_partial_publish_time
+                now = time.monotonic()
+                if now - last_partial_publish_time < 1.5:
+                    return
+                last_partial_publish_time = now
                 master_wcs, _, shape_out = build_master_wcs(
                     ra, dec, min(fov_arcsec, 180)
                 )
