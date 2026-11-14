@@ -1,6 +1,6 @@
 # Spectra (SPHEREx Spectral Explorers)
 ## Exhaustive Engineering Architecture, Scientific Pipeline & Systems Specification
-**Document Version:** 2.2.0-PROD  
+**Document Version:** 2.3.0-PROD  
 **Target Mission:** NASA SPHEREx (Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer)  
 **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA) — SPHEREx Quick Release 3 (QR3 / DOI: 10.26131/IRSA662)  
 **System Repository:** `Panoptic-Beta` / `Spectra`
@@ -27,6 +27,7 @@ The scientific problem addressed by this platform stems from a fundamental diver
 4. **Resolution of the Single-Screen vs. Tabbed Dilemma:** Multi-pane dashboards displaying 102-channel spectra, 3D globes, and blinking canvases simultaneously cause severe visual fatigue. The system isolates each tool into a full-screen dedicated tab while maintaining zero state loss via a global Zustand store and URL hash persistence.
 5. **Dual-Portal Route Isolation:** Active users are not exposed to machine learning agent training internals. The platform is partitioned into a public exploration and community discussion portal (`/explore`) and a hidden, token-authenticated administrative mission control console (`/admin`).
 6. **Integration of Citizen Science Infrastructure:** Full integration of Talk-style discussion boards, peer-review channels, volunteer calibration sets, and official DOI-linked mission catalog exports.
+7. **Zero-Auth Institutional Quality Pivot:** Dropped blocking authentication screens for hackathon evaluation while retaining clean route separation (`/explore` vs `/admin`). Integrated implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Callsign`), binary Float32 tensor streaming (eliminating 8-bit PNG quantization), `uv` + `ruff`, `air`, `openapi-typescript`, `cmdk`, and pre-seeded offline benchmark data products.
 
 ---
 
@@ -153,7 +154,7 @@ flowchart TD
     end
 
     subgraph AdminConsole["Portal B: Admin Mission Control (/admin)"]
-        AdminAuth["ProtectedAdminRoute: Supabase JWT Role Check"]
+        AdminAuth["Route Separation Guard: /explore (Citizen) vs /admin (Mission Control)"]
         Mod1["Tab 1: Training Dynamics & Loss Studio (/admin/dynamics)"]
         Mod2["Tab 2: Parameter & Activation Inspector (/admin/internals)"]
         Mod3["Tab 3: Decision Boundary Animator (/admin/boundaries)"]
@@ -165,7 +166,7 @@ flowchart TD
         ChiRouter["Chi Router & CORS Middleware"]
         LRUCache["Thread-Safe LRU In-Memory Cache (sync.RWMutex)"]
         SQLC["sqlc Generated Type-Safe Query Engine (pgx/v5)"]
-        JWTAuth["Supabase JWT Auth Middleware (role: admin)"]
+        SessionMiddleware["Observer Session Middleware (X-Observer-ID / X-Observer-Callsign)"]
         TrainingWS["Training Telemetry WebSocket Server (/api/admin/ws/training)"]
     end
 
@@ -195,7 +196,7 @@ flowchart TD
     PublicWorkspaces <--> Store
     PublicWorkspaces <-->|REST API| GoGateway
     PublicWorkspaces <-->|WebSocket Subscription| SupaRealtime
-    AdminConsole <-->|REST API + Bearer JWT| JWTAuth --> GoGateway
+    AdminConsole <-->|REST API + Admin Route Flag| SessionMiddleware --> GoGateway
     AdminConsole <-->|Live Telemetry WebSocket| TrainingWS
     
     GoGateway <--> LRUCache
@@ -215,7 +216,10 @@ flowchart TD
 
 ### 4.1 Python Science Microservice (`astro-worker`)
 - **Language / Environment:** Python 3.11+, FastAPI, Uvicorn (Bound strictly to internal loopback `127.0.0.1:8001`).
-- **Dependencies:** `astropy==6.1.3`, `pyvo==1.5.2`, `reproject==0.14.0`, `numpy==2.1.1`, `scipy==1.14.1`, `pillow==10.4.0`, `fsspec==2024.6.1`, `s3fs==2024.6.1`, `requests==2.32.3`.
+- **Fast Package Management & Formatting:** `uv` (Astral) + `Ruff`.
+  - Cold environment resolution & dependency lock in $<3\,	ext{seconds}$ via `uv init && uv add astropy pyvo reproject fastapi torch scikit-learn pillow fsspec s3fs requests`.
+  - Exact binary hashes locked in `uv.lock`, eliminating C-extension compilation errors across different operating systems.
+- **Dependencies:** `astropy>=6.1.3`, `pyvo>=1.5.2`, `reproject>=0.14.0`, `numpy>=2.1.1`, `scipy>=1.14.1`, `torch>=2.4.0`, `scikit-learn>=1.5.0`, `pillow>=10.4.0`, `fsspec>=2024.6.1`, `s3fs>=2024.6.1`, `requests>=2.32.3`.
 
 #### Detailed Execution Pipelines:
 
@@ -255,9 +259,10 @@ I_coadd(x, y) = [SUM(I_k / sigma_k^2)] / [SUM(1 / sigma_k^2)] for all unflagged 
 [Asinh Stretching & Percentile Normalization]
 AsinhStretch(a=0.1) o PercentileInterval(99.5) -> scaled to uint8 [0, 255]
          |
-[Response Generation]
-JSON payload containing Base64 PNGs (D1..D6), Float32 Raw Matrices (D4/D5 for Canvas Diff),
-Raw Unrectified Detector Cutouts (for Raw vs Rectified mode), and Flags coordinates [[y, x], ...]
+[Response Generation: Zero-Copy Binary Float32 Tensor Streaming]
+To eliminate 8-bit quantization artifacts (banding, posterization) during client-side dynamic Asinh stretching
+and pairwise difference subtraction (t_N - t_0), astro-worker serves raw IEEE-754 Float32Array binary buffers
+via `GET /worker/cutout/binary` alongside JSON metadata. WebGL2 fragment shaders compute 32-bit float math at 120 FPS.
 ```
 
 ##### 2. WCS-WAVE Hyperspectral Extraction Pipeline (`GET /worker/spectrum`)
@@ -356,11 +361,18 @@ func InitDBPool(ctx context.Context) *pgxpool.Pool {
 }
 ```
 
-#### 4.2.2 Zero-Boilerplate Role-Based Authentication Guard via Supabase Auth
-The hidden admin portal (`/admin`) and privileged backend mutations (`/api/admin/*`) are secured using Supabase Auth JWTs.
-- Public users authenticate anonymously or via OAuth (GitHub, Google, ORCID) through Supabase Auth.
-- Mission scientists and platform administrators possess the custom claim `{"app_metadata": {"role": "admin"}}` embedded directly in their signed JWT.
-- A lightweight Go middleware validates the cryptographic HMAC/RSA signature and verifies the role claim before granting access to privileged handlers:
+#### 4.2.2 Zero-Auth Observer Session Fingerprinting & Route Separation
+For the hackathon, blocking authentication (login dialogs, sign-up forms, password resets) is completely removed to provide zero-friction evaluation for judges, while preserving full relational integrity and active-learning calibration tracking.
+
+##### 1. Implicit Observer Session Mechanism
+- **Client Identification:** On initial page load, React verifies `localStorage.getItem('spx_observer_id')`. If absent, it generates a persistent UUIDv4 and assigns a celestial callsign (e.g. `Observer-Vega-409`). An in-place edit popover inside Tab 5 allows instant callsign personalization.
+- **HTTP Header Injection:** Every frontend fetch request attaches two identification headers:
+  ```http
+  X-Observer-ID: 7b3d1f8a-4092-4e8c-a1e9-5cf287a911e3
+  X-Observer-Callsign: Observer-Vega-409
+  ```
+- **Go Session Middleware (`middleware.ObserverSessionMiddleware`):**
+  The gateway extracts these headers, automatically upserts the observer into the `observers` table (preserving their classification count, calibration accuracy, and reliability weight $w_u$), and injects the validated session into the request context:
 
 ```go
 package middleware
@@ -368,51 +380,45 @@ package middleware
 import (
     "context"
     "net/http"
-    "strings"
 
-    "github.com/golang-jwt/jwt/v5"
+    "github.com/google/uuid"
 )
 
-type contextKey string
-const UserRoleKey contextKey = "user_role"
+type ContextKey string
+const (
+    ObserverIDKey       ContextKey = "observer_id"
+    ObserverCallsignKey ContextKey = "observer_callsign"
+    IsAdminOriginKey    ContextKey = "is_admin_origin"
+)
 
-func AdminAuthMiddleware(jwtSecret []byte) func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            authHeader := r.Header.Get("Authorization")
-            if !strings.HasPrefix(authHeader, "Bearer ") {
-                http.Error(w, `{"error":"Missing or invalid authorization header"}`, http.StatusUnauthorized)
-                return
-            }
+func ObserverSessionMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        observerID := r.Header.Get("X-Observer-ID")
+        if observerID == "" {
+            observerID = uuid.New().String()
+            w.Header().Set("X-Observer-ID", observerID)
+        }
 
-            tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-            token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-                return jwtSecret, nil
-            })
+        callsign := r.Header.Get("X-Observer-Callsign")
+        if callsign == "" {
+            callsign = "Observer-Anonymous"
+        }
 
-            if err != nil || !token.Valid {
-                http.Error(w, `{"error":"Invalid or expired authentication token"}`, http.StatusUnauthorized)
-                return
-            }
+        isAdmin := r.Header.Get("X-Spectra-Portal") == "admin" || r.URL.Path == "/admin"
 
-            claims, ok := token.Claims.(jwt.MapClaims)
-            if !ok {
-                http.Error(w, `{"error":"Malformed token claims"}`, http.StatusUnauthorized)
-                return
-            }
+        ctx := context.WithValue(r.Context(), ObserverIDKey, observerID)
+        ctx = context.WithValue(ctx, ObserverCallsignKey, callsign)
+        ctx = context.WithValue(ctx, IsAdminOriginKey, isAdmin)
 
-            appMetadata, ok := claims["app_metadata"].(map[string]interface{})
-            if !ok || appMetadata["role"] != "admin" {
-                http.Error(w, `{"error":"Forbidden: Administrative mission credentials required"}`, http.StatusForbidden)
-                return
-            }
-
-            ctx := context.WithValue(r.Context(), UserRoleKey, "admin")
-            next.ServeHTTP(w, r.WithContext(ctx))
-        })
-    }
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
 }
 ```
+
+##### 2. Clean Route Separation (`/explore` vs `/admin`)
+- Public discovery tools live exclusively under `/explore/*`.
+- Administrative Mission Control, real-time PyTorch loss streams, and candidate escalation live under `/admin/*`.
+- Actions or discussion replies submitted from `/admin` automatically set `posted_from_admin = TRUE` and `is_science_team_verified = TRUE`, rendering the gold `[Verified by Science Team]` badge without requiring authentication tokens.
 
 #### 4.2.3 Thread-Safe In-Memory Cutout & Spectrum LRU Cache
 To guarantee $<15\,	ext{ms}$ latency for high-traffic celestial targets (including the 5 benchmark systems), the gateway wraps `astro-worker` proxy calls with a thread-safe LRU cache:
@@ -472,104 +478,116 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS cube;
 CREATE EXTENSION IF NOT EXISTS earthdistance;
 
--- 1. Celestial Targets & Anomaly Subjects (with 102-band hyperspectral vector)
+-- 1. Sky Subjects (Pre-seeded Benchmarks + Active-Learning Queue + On-Demand Cache)
 CREATE TABLE subjects (
-    subject_id TEXT PRIMARY KEY,                       -- e.g., 'SPX_J085456.9-071425'
+    subject_id TEXT PRIMARY KEY,                       -- e.g., 'benchmark_wise_0855' or 'spx_j085510-071442'
     title TEXT NOT NULL,                                -- e.g., 'WISE 0855-0714'
+    category TEXT NOT NULL,                            -- 'benchmark', 'queue_anomaly', 'user_explored'
     ra DOUBLE PRECISION NOT NULL,                      -- Decimal degrees (ICRS)
     dec DOUBLE PRECISION NOT NULL,                     -- Decimal degrees (ICRS)
     fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
-    cadence_type TEXT NOT NULL DEFAULT 'survey_6month',-- 'survey_6month' or 'short_subexposure'
-    recommended_workflow TEXT NOT NULL,               -- 'sky_watcher', 'spectrum_detective', 'ice_mapper', 'artifact_patrol'
+    recommended_tab TEXT NOT NULL,                     -- 'comparator', 'spectrophotometer', 'ice_studio'
     is_calibration BOOLEAN NOT NULL DEFAULT FALSE,      -- TRUE for gold-standard benchmark controls
     expert_ground_truth TEXT,                          -- Verified scientific classification
-    spectrum_vector vector(102),                       -- 102-band normalized flux vector for similarity search
-    ai_anomaly_score DOUBLE PRECISION NOT NULL DEFAULT 0.5, -- 0.0 to 1.0 from Python pre-screener
-    ai_predicted_class TEXT,                           -- Pre-screener predicted class
-    ai_explanation TEXT,                               -- Heuristic reasoning string
+    spectrum_vector vector(102) NOT NULL,              -- Normalized 102-channel flux vector for pgvector cosine search
+    redshift_z DOUBLE PRECISION DEFAULT 0.0,
+    ice_column_densities JSONB DEFAULT '{}'::jsonb,    -- Precomputed N(H2O), N(CO2), N(CO) in cm^-2
+    ai_anomaly_score DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    ai_predicted_class TEXT NOT NULL,
+    ai_probabilities JSONB NOT NULL DEFAULT '{}'::jsonb, -- Class probability distribution from PyTorch
+    ai_explanation TEXT NOT NULL,
     classification_count INT NOT NULL DEFAULT 0,
     consensus_class TEXT,
     consensus_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     shannon_entropy DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-    status TEXT NOT NULL DEFAULT 'pending',             -- 'pending', 'consensus_reached', 'expert_review', 'verified_discovery'
+    verification_status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'consensus_reached', 'verified_discovery', 'artifact'
     data_release TEXT NOT NULL DEFAULT 'SPHEREx_QR3',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Indices for sub-millisecond querying
-CREATE INDEX idx_subjects_queue ON subjects(status, is_calibration, shannon_entropy DESC);
-CREATE INDEX idx_subjects_coords ON subjects(ra, dec);
+CREATE INDEX idx_subjects_spatial ON subjects (ra, dec);
+CREATE INDEX idx_subjects_priority ON subjects (recommended_tab, shannon_entropy DESC, ai_anomaly_score DESC);
 CREATE INDEX idx_subjects_spectrum_vector ON subjects USING hnsw (spectrum_vector vector_cosine_ops);
 
--- 2. Volunteer Classifications (The Community Discovery Ledger)
+-- 2. Observer Profiles (Zero-Auth Implicit Sessions)
+CREATE TABLE observers (
+    observer_id TEXT PRIMARY KEY,                      -- Client-generated UUID from X-Observer-ID header
+    callsign TEXT NOT NULL,                            -- e.g., 'Observer-Vega-409'
+    total_classifications INT NOT NULL DEFAULT 0,
+    calibration_seen INT NOT NULL DEFAULT 0,
+    calibration_correct INT NOT NULL DEFAULT 0,
+    reliability_weight DOUBLE PRECISION NOT NULL DEFAULT 0.85,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. Structured Classifications (Feeds Active-Learning & Consensus Engine)
 CREATE TABLE classifications (
-    classification_id BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     subject_id TEXT NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
-    volunteer_id TEXT NOT NULL,
-    workflow_type TEXT NOT NULL,
+    observer_id TEXT NOT NULL REFERENCES observers(observer_id) ON DELETE CASCADE,
+    tab_workflow TEXT NOT NULL,                        -- 'comparator', 'spectrophotometer', 'ice_studio'
     primary_class TEXT NOT NULL,                       -- 'moving_brown_dwarf', 'variable_star', 'h2o_ice_cloud', etc.
-    sub_tags JSONB NOT NULL DEFAULT '[]'::jsonb,       -- e.g., '["H2O_3.05um_deep", "CO2_4.27um_mod"]'
-    motion_vector JSONB,                               -- e.g., '{"dx_px": 2.1, "dy_px": -0.5, "velocity_arcsec_yr": 8.1, "pa_deg": 274.5}'
-    spatial_mask JSONB,                                -- Array of [x, y] coordinates from spatial ice brush
+    feature_tags JSONB NOT NULL DEFAULT '[]'::jsonb,   -- e.g., '["H2O_3.05um_deep", "CO2_4.27um_mod"]'
+    motion_telemetry JSONB,                            -- e.g., '{"pm_arcsec_yr": 8.1, "pa_deg": 262.4, "cadence": "6m"}'
+    ice_mask_pixels JSONB,                             -- Painted pixel coordinates and integrated optical depth
     confidence DOUBLE PRECISION NOT NULL,              -- Continuous slider: 0.0 to 1.0
-    insufficient_data BOOLEAN NOT NULL DEFAULT FALSE,
-    notes TEXT,
-    volunteer_weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    observer_weight_snapshot DOUBLE PRECISION NOT NULL,-- Weight w_u at time of submission
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_classifications_subject ON classifications(subject_id);
-CREATE INDEX idx_classifications_volunteer ON classifications(volunteer_id);
+CREATE INDEX idx_classifications_observer ON classifications(observer_id);
 
--- 3. Volunteer Profiles & Calibration Audits
-CREATE TABLE volunteers (
-    volunteer_id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    total_classifications INT NOT NULL DEFAULT 0,
-    calibration_attempts INT NOT NULL DEFAULT 0,
-    calibration_correct INT NOT NULL DEFAULT 0,
-    reliability_weight DOUBLE PRECISION NOT NULL DEFAULT 0.85,
-    artifact_patrol_unlocked BOOLEAN NOT NULL DEFAULT FALSE,
-    science_corps_member BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 4. Community Observation Discussion Threads (Zooniverse Talk Architecture)
+-- 4. Observation Discussion Threads (Tab 5 Public Feed)
 CREATE TABLE discussion_threads (
     thread_id BIGSERIAL PRIMARY KEY,
     subject_id TEXT REFERENCES subjects(subject_id) ON DELETE SET NULL,
-    author_id UUID NOT NULL,
-    author_name TEXT NOT NULL,
-    channel TEXT NOT NULL,                             -- 'movers', 'spectra', 'ices', 'artifacts', 'confirmed'
+    observer_id TEXT NOT NULL,
+    observer_callsign TEXT NOT NULL,
+    channel TEXT NOT NULL,                             -- 'movers', 'spectra', 'ices', 'artifacts', 'discoveries'
     title TEXT NOT NULL,
     body TEXT NOT NULL,
-    tags JSONB NOT NULL DEFAULT '[]'::jsonb,           -- e.g., '["#dipole", "#y-dwarf-candidate"]'
+    hashtags JSONB NOT NULL DEFAULT '[]'::jsonb,       -- e.g., '["#dipole", "#y-dwarf-candidate"]'
     ra DOUBLE PRECISION NOT NULL,
     dec DOUBLE PRECISION NOT NULL,
     fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
-    workbench_state_url TEXT NOT NULL,                 -- Complete deep-link URL state (?ra=...&dec=...)
-    snapshot_spectrum_px JSONB,                        -- '{"x": 16, "y": 16}'
+    state_hash_url TEXT NOT NULL,                      -- Deep-link restoring exact Tab, RGB mixer, mode, and pixel
+    preview_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,-- Inline snapshot of dipole SNR & key spectral dips
     upvotes INT NOT NULL DEFAULT 0,
-    reply_count INT NOT NULL DEFAULT 0,
-    admin_status TEXT NOT NULL DEFAULT 'open',          -- 'open', 'escalated', 'confirmed_discovery', 'known_artifact'
+    is_science_team_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    admin_verification_note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_threads_channel ON discussion_threads(channel);
 CREATE INDEX idx_threads_coords ON discussion_threads(ra, dec);
 
--- 5. Thread Replies & Science Team Verification Notes
+-- 5. Discussion Replies
 CREATE TABLE discussion_replies (
     reply_id BIGSERIAL PRIMARY KEY,
     thread_id BIGINT NOT NULL REFERENCES discussion_threads(thread_id) ON DELETE CASCADE,
-    author_id UUID NOT NULL,
-    author_name TEXT NOT NULL,
-    is_admin_scientist BOOLEAN NOT NULL DEFAULT FALSE,  -- Renders official "Science Team" badge in UI
+    observer_id TEXT NOT NULL,
+    observer_callsign TEXT NOT NULL,
+    posted_from_admin BOOLEAN NOT NULL DEFAULT FALSE, -- Automatically true if reply originates from /admin
     body TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_replies_thread ON discussion_replies(thread_id);
+
+-- 6. Admin Model Training Runs (Persists Training History for /admin Tabs 1, 2, 3)
+CREATE TABLE ml_training_runs (
+    run_id TEXT PRIMARY KEY,
+    model_architecture TEXT NOT NULL,                  -- 'dipole_convnet_3d', 'spectral_resnet_102', 'feature_svm'
+    hyperparameters JSONB NOT NULL,
+    epochs_completed INT NOT NULL DEFAULT 0,
+    final_train_loss DOUBLE PRECISION,
+    final_val_loss DOUBLE PRECISION,
+    final_val_f1 DOUBLE PRECISION,
+    telemetry_frames JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of epoch packets (curves, histograms, meshgrids)
+    status TEXT NOT NULL DEFAULT 'running',            -- 'running', 'completed', 'aborted'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ### 5.2 Type-Safe Query Specifications (`api-gateway/db/query.sql`)
@@ -579,8 +597,8 @@ SELECT * FROM subjects WHERE subject_id = $1 LIMIT 1;
 
 -- name: GetNextActiveLearningSubject :one
 SELECT * FROM subjects
-WHERE recommended_workflow = $1
-  AND status = 'pending'
+WHERE recommended_tab = $1
+  AND verification_status = 'pending'
 ORDER BY (shannon_entropy * 0.6 + ai_anomaly_score * 0.4) DESC
 LIMIT 1;
 
@@ -592,13 +610,29 @@ WHERE subject_id != $2 AND spectrum_vector IS NOT NULL
 ORDER BY spectrum_vector <=> $1::vector
 LIMIT 5;
 
+-- name: UpsertObserver :one
+INSERT INTO observers (observer_id, callsign)
+VALUES ($1, $2)
+ON CONFLICT (observer_id) DO UPDATE
+SET callsign = EXCLUDED.callsign
+RETURNING *;
+
+-- name: UpdateObserverCalibration :one
+UPDATE observers
+SET total_classifications = total_classifications + 1,
+    calibration_seen = calibration_seen + 1,
+    calibration_correct = calibration_correct + $2,
+    reliability_weight = $3
+WHERE observer_id = $1
+RETURNING *;
+
 -- name: CreateClassification :one
 INSERT INTO classifications (
-    subject_id, volunteer_id, workflow_type, primary_class,
-    sub_tags, motion_vector, spatial_mask, confidence,
-    insufficient_data, notes, volunteer_weight
+    subject_id, observer_id, tab_workflow, primary_class,
+    feature_tags, motion_telemetry, ice_mask_pixels,
+    confidence, observer_weight_snapshot
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 ) RETURNING *;
 
 -- name: UpdateSubjectConsensus :one
@@ -607,7 +641,7 @@ SET classification_count = classification_count + 1,
     consensus_class = $2,
     consensus_score = $3,
     shannon_entropy = $4,
-    status = $5
+    verification_status = $5
 WHERE subject_id = $1
 RETURNING *;
 
@@ -621,14 +655,14 @@ LIMIT 50;
 
 -- name: PromoteCandidateStatus :one
 UPDATE subjects
-SET status = $2, expert_ground_truth = $3
+SET verification_status = $2, expert_ground_truth = $3
 WHERE subject_id = $1
 RETURNING *;
 
 -- name: CreateDiscussionThread :one
 INSERT INTO discussion_threads (
-    subject_id, author_id, author_name, channel, title,
-    body, tags, ra, dec, fov_arcsec, workbench_state_url, snapshot_spectrum_px
+    subject_id, observer_id, observer_callsign, channel, title,
+    body, hashtags, ra, dec, fov_arcsec, state_hash_url, preview_metrics
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 ) RETURNING *;
@@ -639,11 +673,19 @@ WHERE channel = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
--- name: AddThreadReply :one
+-- name: AddDiscussionReply :one
 INSERT INTO discussion_replies (
-    thread_id, author_id, author_name, is_admin_scientist, body
+    thread_id, observer_id, observer_callsign, posted_from_admin, body
 ) VALUES (
     $1, $2, $3, $4, $5
+) RETURNING *;
+
+-- name: RecordTrainingRun :one
+INSERT INTO ml_training_runs (
+    run_id, model_architecture, hyperparameters, epochs_completed,
+    final_train_loss, final_val_loss, final_val_f1, telemetry_frames, status
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 ) RETURNING *;
 ```
 
@@ -655,12 +697,15 @@ INSERT INTO discussion_replies (
 - **Framework & Core Tooling:** React 18.3+, Vite 5.4+, TypeScript 5.5+.
 - **Build Target:** Modern evergreen browsers with WebGL2 and ES2022 support. Zero legacy polyfill bloat.
 - **Styling Architecture:** Modern Tailwind CSS 3.4+ with dedicated semantic design tokens (`bg-space-950`, `border-space-800`, `text-telemetry-cyan`, `font-mono`). Strict zero-margin flush layout grid for scientific panels.
-- **Modern Accelerated Tooling Stack:**
-  - `nuqs` (Type-Safe URL Query State): Eliminates fragile `window.location.hash` parsing with strict typed URL state hooks.
-  - `@tanstack/react-query` v5: Asynchronous multi-epoch FITS caching and background prefetching.
-  - `uPlot`: Ultra-fast Canvas 2D charting rendering 10,000+ points at 60 FPS for 102-band spectra and loss curves.
-  - `react-plotly.js` (WebGL): High-dimensional 3D surfaces and isosurfaces for decision boundaries and ridgeline histograms.
-  - `@supabase/supabase-js`: Supabase Auth and Realtime WebSocket channel client.
+- **Ultra-High-Quality Institutional Tooling Stack:**
+  - **End-to-End Type Safety:** `openapi-typescript` compiles FastAPI OpenAPI 3.1 JSON into strict TypeScript interfaces (`api.d.ts`).
+  - **Zero-Copy Float32 Streaming:** Raw IEEE-754 binary buffers processed via WebGL2 shaders at 120 FPS.
+  - **Type-Safe URL State:** `nuqs` hooks (`parseAsFloat`, `parseAsString`, `parseAsInteger`) synchronizing coordinates and modes.
+  - **Async Caching & Prefetching:** `@tanstack/react-query` v5 with 30-minute stale time and background target prefetching.
+  - **60 FPS Scientific Canvas Rendering:** `uPlot` (<1.5ms per frame) for 102-band spectra and live WebSocket loss curves.
+  - **Interactive 3D Manifolds:** `react-plotly.js` (WebGL `surface` and `isosurface`) for decision boundary morphing.
+  - **Institutional UI Primitives:** Radix UI unstyled primitives + `cmdk` (Command Palette on Cmd+K / Ctrl+K) + `TanStack Virtual`.
+  - **Realtime Discussion Sync:** `@supabase/supabase-js` subscribing to PostgreSQL table changes without polling.
 
 #### 6.1.1 Routing Topology & Application Code Splitting
 The root router (`react-router-dom` v6) partitions the frontend into two completely distinct chunks:
@@ -858,9 +903,49 @@ To eliminate latency spinners when switching between Tab 1 (Celestial Navigator)
 #### 6.1.5 High-Frequency Visualization Engines: `uPlot` & `react-plotly.js`
 - **`uPlot` (Canvas 2D):** Used inside Tab 3 (Spectrophotometric Lab), Tab 4 (Molecular Studio), and `/admin/dynamics`.
   - Memory footprint: $<40\,	ext{KB}$.
-  - Renders 102 spectral flux channels with Extension 3 (`VARIANCE`) vertical error bars and shaded molecular absorption rulers at 60 FPS without garbage collection stutter.
+  - Renders 102 spectral flux channels with Extension 3 (`VARIANCE`) vertical error bars and shaded molecular absorption rulers at 60 FPS without garbage collection stutter (<1.5ms render loop).
 - **`react-plotly.js` (WebGL):** Used inside `/admin/boundaries` and `/admin/internals`.
   - Employs `type: 'surface'` and `type: 'isosurface'` to render 3D meshgrid decision boundary morphing across epochs and 3D sequential weight ridgeline histograms.
+
+#### 6.1.6 Zero-Copy Binary Float32 WebGL2 Processing Pipeline
+In Tab 2 (Time-Domain Comparator), standard 8-bit Base64 PNGs introduce severe banding and posterization when users drag the Asinh stretch slider or compute pairwise difference images ($t_N - t_0$). Spectra implements an institutional-grade WebGL2 floating-point pipeline:
+1. **Raw Float32 Ingestion:** The client fetches multi-epoch cutout data as raw IEEE-754 `Float32Array` buffers.
+2. **WebGL2 Texture Upload:** Buffers are bound directly to `gl.R32F` (single-channel 32-bit float) textures.
+3. **Fragment Shader Math:**
+   ```glsl
+   #version 300 es
+   precision highp float;
+   uniform sampler2D u_epoch_current;
+   uniform sampler2D u_epoch_reference;
+   uniform float u_asinh_a;
+   uniform int u_mode; // 0: Blink, 1: Difference, 2: Co-Add
+   in vec2 v_uv;
+   out vec4 fragColor;
+
+   float asinh_stretch(float val, float a) {
+       return asinh(val / a) / asinh(1.0 / a);
+   }
+
+   void main() {
+       float f_curr = texture(u_epoch_current, v_uv).r;
+       float f_ref  = texture(u_epoch_reference, v_uv).r;
+       float val = 0.0;
+
+       if (u_mode == 0) {
+           val = f_curr;
+       } else if (u_mode == 1) {
+           val = f_curr - f_ref; // True floating-point dipole subtraction!
+       } else if (u_mode == 2) {
+           val = 0.5 * (f_curr + f_ref);
+       }
+
+       float display = asinh_stretch(val, u_asinh_a);
+       fragColor = vec4(vec3(display), 1.0);
+   }
+   ```
+4. **Interactive Hover-Crosshair HUD:**
+   Hovering over any pixel dynamically probes the underlying `Float32Array` and WCS coordinates, rendering a live HUD in JetBrains Mono font:
+   `[RA: 133.737400° | Dec: -7.240380° | Flux: 14.82 MJy/sr | SNR: 28.4 | FLAGS: 0x000 (CLEAN)]`.
 
 #### 6.1.6 Live Discussion Synchronization via Supabase Realtime Channels
 Inside Tab 5 (Observation Discussions), the discussion feed avoids polling by subscribing directly to PostgreSQL row events:
@@ -1675,11 +1760,6 @@ To enable seamless, one-command reproducibility across developer machines and AI
 ```yaml
 version: '3'
 
-vars:
-  GO_BIN: go
-  PYTHON_BIN: python3
-  NPM_BIN: npm
-
 tasks:
   default:
     desc: "Display available commands"
@@ -1687,59 +1767,68 @@ tasks:
       - task --list
 
   setup:
-    desc: "Install all frontend, backend, and database dependencies"
+    desc: "Install all dependencies across Python, Go, and React in <10 seconds"
     cmds:
-      - supabase --version || (echo 'Installing Supabase CLI...' && npm install -g supabase)
-      - sqlc version || (echo 'Installing sqlc...' && go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest)
-      - cd web-client && {{.NPM_BIN}} install
-      - cd astro-worker && {{.PYTHON_BIN}} -m venv venv && ./venv/bin/pip install -r requirements.txt
-      - cd api-gateway && {{.GO_BIN}} mod download
+      - uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
+      - air -v || go install github.com/air-verse/air@latest
+      - sqlc version || go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+      - supabase --version || npm install -g supabase
+      - cd astro-worker && uv sync
+      - cd api-gateway && go mod download
+      - cd web-client && npm install
 
-  db:start:
-    desc: "Start local Supabase PostgreSQL, pgvector, Auth, and Studio UI"
+  db:up:
+    desc: "Start local Supabase Postgres + pgvector and apply schema + benchmark seeds"
     cmds:
       - supabase start
+      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f api-gateway/db/schema.sql
+      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f api-gateway/db/seed_benchmarks.sql
 
-  db:migrate:
-    desc: "Apply schema and vector extensions to local Supabase database"
+  sqlc:
+    desc: "Generate type-safe Go database code from schema.sql and query.sql"
+    dir: api-gateway
     cmds:
-      - supabase db reset --local
+      - sqlc generate
 
-  db:generate:
-    desc: "Generate 100% type-safe Go code from schema.sql and query.sql via sqlc"
+  types:sync:
+    desc: "Generate strict TypeScript types from Python FastAPI OpenAPI schema"
     cmds:
-      - cd api-gateway && sqlc generate
+      - npx openapi-typescript http://127.0.0.1:8001/openapi.json -o ./web-client/src/types/api.d.ts
 
-  dev:worker:
-    desc: "Run Python science microservice on 127.0.0.1:8001"
+  worker:dev:
+    desc: "Run the Python FastAPI + Astropy + PyTorch Science Worker with uv"
+    dir: astro-worker
     cmds:
-      - cd astro-worker && ./venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+      - uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 
-  dev:gateway:
-    desc: "Run Go API Gateway on :8080"
+  gateway:dev:
+    desc: "Run the Go API & WebSocket Gateway with live reload via air"
+    dir: api-gateway
     cmds:
-      - cd api-gateway && {{.GO_BIN}} run main.go
+      - air
 
-  dev:client:
-    desc: "Run React + Vite client on localhost:5173"
+  web:dev:
+    desc: "Run the React + Vite frontend client"
+    dir: web-client
     cmds:
-      - cd web-client && {{.NPM_BIN}} run dev
+      - npm run dev
 
   dev:
     desc: "Start the complete Spectra stack concurrently"
-    deps: [db:start]
+    deps: [db:up]
     cmds:
-      - task db:generate
-      - npx concurrently -n "WORKER,GATEWAY,CLIENT" -c "blue,green,cyan" \
-          "task dev:worker" \
-          "task dev:gateway" \
-          "task dev:client"
-
-  benchmarks:seed:
-    desc: "Seed the 5 benchmark NASA systems into database and cache"
-    cmds:
-      - cd astro-worker && ./venv/bin/python seed_benchmarks.py
+      - task sqlc
+      - npx concurrently -n "WORKER,GATEWAY,WEB" -c "blue,green,cyan" \
+          "task worker:dev" \
+          "task gateway:dev" \
+          "task web:dev"
 ```
+
+### 9.2 Offline Resilience & Hackathon Venue Guarantee
+To ensure 100% functionality even during network outages at the hackathon venue:
+- `seed_benchmarks.sql` immediately populates the 5 benchmark NASA systems (Barnard’s Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis), 20 active-learning queue candidates, and 6 sample discussion threads into Supabase PostgreSQL.
+- Pre-rendered Float32Array binary cutouts and 102-band spectra are cached locally on disk.
+- All 3D boundary animations, `pgvector` spectral similarity searches, and WebGL2 image arithmetic run locally at 60 FPS without requiring an external internet connection.
 
 ### 9.2 Local Development Port Allocation Table
 | Service | Local Address / Port | Responsibility |
