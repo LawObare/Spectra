@@ -33,6 +33,7 @@ This is the running source of truth for building the Panoptic-Beta application. 
 - **2026-10-31:** Exchange #24 recorded. Massively expounded Section 6 (Frontend Component Architecture & Workspace Specifications) in `SPECIFICATION.md`: (1) Explicit TypeScript interfaces for the global Zustand telemetry store (`useTelemetryStore`), (2) Route-level lazy loading and bundle protection code snippets, (3) Detailed UI component ASCII wireframes, mathematical formulas, and event mechanics across all 5 public tabs and the 4 admin modules, (4) Aladin Lite v3 WebGL initialization, MOC configuration, and camera dive interpolation protocols, (5) Client-side pixel arithmetic equations for blink, difference, and co-add modes, and (6) Complete Zooniverse Talk discussion forum architecture with deep-link state re-hydration.
 - **2026-10-31:** Exchange #25 recorded. Completely overhauled Section 6.4 (Admin Portal) in `SPECIFICATION.md` to implement the **5-Tab Mission Control Architecture** with real-time PyTorch/ML training observability: (1) `/admin/dynamics` (scalar learning curves, gradient norms, early-stopping detection), (2) `/admin/internals` (3D ridgeline weight histograms, layer activations, Grad-CAM saliency heatmaps), (3) `/admin/boundaries` (interactive 2D/3D meshgrid decision surface morphing), (4) `/admin/triage` (hard-negative mining, raw FITS HDU 1-6 inspection), (5) `/admin/exports` (volunteer audits, 4 data products, HDF5 PyTorch bundles), and (6) Complete Python hook-to-Go WebSocket streaming pipeline (`/api/admin/ws/training`) with 100-frame ring buffer.
 - **2026-10-31:** Exchange #26 recorded. User requested name simplification: renamed project from "SpectraScout" to **"Spectra"** across `SPECIFICATION.md` and database/token naming conventions (`spectra_ledger.db`, `spectra_admin_token`, etc.).
+- **2026-10-31:** Exchange #27 recorded. Modern type-safe stack upgrade: Replaced SQLite string boilerplate with **Supabase** (PostgreSQL 16 + `pgvector` + Supabase Auth + Supabase Realtime + Supabase Storage) and **`sqlc` + `pgx/v5`** compile-time code generation for the Go API Gateway. Implemented 102-channel spectral similarity querying via `vector(102)` cosine distance (`<=>`), instant live discussion synchronization via Supabase Realtime `postgres_changes`, JWT-based role authentication for `/admin`, type-safe URL query state (`nuqs`), asynchronous caching and prefetching (`@tanstack/react-query`), ultra-fast 60 FPS plotting (`uPlot`), 3D decision surfaces (`react-plotly.js`), and local developer orchestration via Supabase CLI (`supabase start`) and `Taskfile.yml`.
 
 ---
 
@@ -135,9 +136,9 @@ _TBD_
 - Challenge selected: SPHEREx blink/time-series web tool (NASA Space Apps).
 - *(Tech stack is still only a proposal at this point.)*
 
-## Current Direction Snapshot (as of Exchange #26; Spectra Rebrand)
+## Current Direction Snapshot (as of Exchange #27; Supabase, pgvector & Modern Type-Safe Stack)
 > Quick orientation for builders. The detailed reasoning is in the ★ sections below. Later exchanges override earlier ones.
-1. **Product Identity & Architecture:** **Spectra** (formerly SpectraScout / SPHEREx Spectral Explorers). Split into a **Dual-View Portal Architecture** sharing a unified Go API Gateway (:8080) and Python astro-worker (:8001):
+1. **Product Identity & Architecture:** **Spectra** (formerly SpectraScout / SPHEREx Spectral Explorers). Split into a **Dual-View Portal Architecture** backed by a type-safe modern backend: Supabase (PostgreSQL 16 + `pgvector` + Supabase Auth + Realtime), Go API Gateway (`api-gateway` on `:8080` with `sqlc` + `pgx/v5` and Chi router), and Python `astro-worker` (:8001):
    - **Portal A: Public Discovery Suite (`/explore`):** 5-tab workspace for citizen scientists, replacing raw ML metrics with an interactive Talk-style discussion forum.
    - **Portal B: Admin Mission Control (`/admin`):** 5-tab restricted console for the science team to monitor active-learning model convergence, inspect layer activations/weights, hard negative mining, expert candidate escalation, and dataset export. Accessible strictly via `/admin` URL with React authentication guard (`ProtectedAdminRoute`) and Go `adminAuthMiddleware` (Bearer token).
 2. **Portal A (Public) 5 Isolated Tabs:**
@@ -153,7 +154,11 @@ _TBD_
    - **Tab 4: Disagreement & Escalation Queue (`/admin/triage`):** Hard-negative mining ranked by $|P_{\text{AI}} - P_{\text{Human}}|$ divergence, raw FITS HDU 1–6 inspection, and 1-click catalog promotion.
    - **Tab 5: Calibration & Data Product Hub (`/admin/exports`):** Volunteer Bayesian reliability audits, gold-standard subject pool, and the 4 official SPHEREx community data product exports (CSV, VOTable, JSON, PyTorch HDF5 bundles).
 4. **State Synchronization:** Global telemetry store (Zustand / React Context) + URL hash reflection (`#tab=...&ra=...&dec=...`). Switching tabs preserves active coordinates, cutouts, probed pixels, and selections with zero reload.
-5. **Backend Pipeline:** Python `astro-worker` (FastAPI + Astropy + PyVO + reproject) for cutouts, WCS alignment, and spectra; Go `api-gateway` on `:8080` for caching, consensus, SQLite DB, and ML dataset export.
+5. **Backend & Persistence Pipeline:**
+   - **Database & Auth:** Supabase PostgreSQL with `pgvector` extension for 102-band spectral cosine similarity (`vector(102)`), Supabase Auth JWTs (`"role": "admin"`), and Realtime Postgres changes for Tab 5 discussions.
+   - **Go Gateway (:8080):** `sqlc` generates 100% type-safe Go structs and queries using `pgx/v5` connection pooling. In-memory `sync.RWMutex` LRU cache for <15ms cutout responses, Shannon entropy queue prioritization, and Bayesian consensus.
+   - **Python Science Worker (:8001):** FastAPI + Astropy + PyVO + reproject for MEF FITS byte-range slicing, WCS rectification, and WCS-WAVE smile inversion.
+   - **Frontend Accelerators:** `nuqs` for typed URL state, `@tanstack/react-query` v5 for background prefetching, `uPlot` for 60 FPS 2D spectra and loss curves, and `react-plotly.js` for 3D decision boundaries.
 6. **Mandatory Benchmarks:** Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis.
 
 ## Open Questions / Unresolved Items
@@ -1907,3 +1912,217 @@ mux.HandleFunc("/api/admin/export-dataset", srv.adminAuthMiddleware(srv.handleEx
   | **R Draconis** | `248.1706, +66.7535` | Mira AGB Variable | Stationary pulsing monopole (245d cycle) | Animated spectrum shows H₂O and CO bands breathing |
 
 ---
+
+---
+
+## ★ TYPE-SAFE ARCHITECTURE UPGRADE (Exchange #27): Supabase, pgvector, sqlc & Modern Frontend Accelerators
+> **Context:** The user inquired about modern developer tooling: *"can we use supabase, sqlc and any other tool that can make development easy and precise."* Gemini provided an upgraded **High-Velocity Development Stack** replacing manual SQLite strings and boilerplate with compile-time code generation, native 102-band vector similarity search, instant JWT role-based auth, live discussion sync, and high-performance frontend visualization libraries.
+
+### 1. Upgraded Core Tooling Stack & Strategic Rationale
+
+| Layer | Tool | Why It Makes Development Easy & Precise |
+|---|---|---|
+| **Database, Auth & Realtime** | **Supabase** (PostgreSQL 16 + `pgvector` + Storage + Auth + Realtime) | Managed Postgres with pre-installed extensions; instant JWT role-based auth for `/admin`; Realtime Postgres changes for the Tab 5 Discussion Feed; S3-compatible Supabase Storage for cutout caches; native `pgvector` for instant 102-band spectral similarity querying. |
+| **Go Persistence Layer** | **`sqlc` + `pgx/v5`** | Developers write pure SQL files (`schema.sql`, `query.sql`); `sqlc` generates 100% type-safe Go structs, methods, and interfaces using high-performance `pgx/v5` connection pooling. Eliminates ORM overhead and runtime `rows.Scan()` type mismatch bugs. |
+| **Spatial Sky Indexing** | **PostgreSQL `earthdistance` / `cube` (or `pg_sphere`)** | Native PostgreSQL extension pre-installed on Supabase indexing $(RA, Dec)$ spherical coordinates so cone searches (`POS=circle`) execute in $<2\,	ext{ms}$. |
+| **Go HTTP Router** | **Chi (`go-chi/chi/v5`)** | Lightweight, 100% `net/http` compatible idiomatic Go router making route grouping and Supabase JWT middleware clean and modular. |
+| **Cross-Stack Contracts** | **Pydantic v2 + OpenAPI-TS** | FastAPI automatically generates an OpenAPI 3.1 schema from Python models, which generates strict TypeScript interfaces for React in a single command. |
+| **Frontend State & Fetching** | **TanStack Query v5 + Zustand + Nuqs** | TanStack Query caches and deduplicates multi-epoch cutout fetches; Nuqs provides type-safe URL query state (`?ra=...&dec=...`) without manual `window.location` parsing; Zustand maintains runtime active session tensors. |
+| **Visualization Engines** | **`uPlot` + `react-plotly.js`** | `uPlot` (Canvas 2D) renders 10,000+ points at 60 FPS with near-zero CPU for 102-band spectra and admin loss curves; `react-plotly.js` renders 3D meshgrid decision surfaces and 3D parameter histograms. |
+| **Local Dev Runner** | **Supabase CLI + Taskfile (`Taskfile.yml`)** | Runs the entire Supabase stack locally in Docker (`supabase start`); orchestrates `sqlc generate`, Go API Gateway, Python worker, and Vite frontend with one command. |
+
+### 2. How Supabase Supercharges Specific Spectra Features
+
+#### A. 102-Band Spectral Similarity via `pgvector`
+In Tab 3 (Spectrophotometric Lab), finding "Spectral Outliers" and "Closest Known Spectral Templates" is a core scientific objective.
+Because SPHEREx delivers 102 calibrated wavelength channels, every normalized spectrum is a 102-dimensional vector (`vector(102)`).
+- Enabling `CREATE EXTENSION IF NOT EXISTS vector;` allows storing each subject's 102-band flux array directly in a `spectrum_vector vector(102)` column.
+- Finding the 5 most similar astrophysical templates across the entire catalog runs with cosine distance (`<=>`):
+  ```sql
+  SELECT subject_id, title, ra, dec, ai_predicted_class,
+         1 - (spectrum_vector <=> $1::vector) AS cosine_similarity
+  FROM subjects
+  WHERE subject_id != $2 AND spectrum_vector IS NOT NULL
+  ORDER BY spectrum_vector <=> $1::vector
+  LIMIT 5;
+  ```
+- Sub-2ms execution time; no external vector database (Pinecone, Milvus) required.
+
+#### B. Zero-Boilerplate `/admin` Security via Supabase Auth
+- Avoids custom password hashing, session cookies, and user table management.
+- Frontend uses `@supabase/supabase-js` on `/admin` to authenticate mission scientists.
+- Supabase issues a cryptographically signed JWT containing `"role": "admin"` inside `app_metadata`.
+- The Go API Gateway verifies the JWT signature in a lightweight Chi middleware, securing `/api/admin/*` and the real-time PyTorch training WebSocket (`/api/admin/ws/training`).
+
+#### C. Instant Live Discussion Feed via Supabase Realtime
+- Eliminates custom polling or custom WebSocket infrastructure for Tab 5 (Observation Discussions).
+- The React discussion client subscribes directly to PostgreSQL table changes:
+  ```typescript
+  supabase.channel('public:discussion_threads')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'discussion_threads' }, payload => {
+      // Live discovery banner pops up across all connected citizen scientists
+    })
+    .subscribe();
+  ```
+- When a user submits a candidate or an admin attaches a `[Verified by Science Team]` badge, it propagates instantly to every connected user.
+
+### 3. Implementation Blueprint: `sqlc` + Supabase + `pgx/v5`
+
+#### Step 1: `api-gateway/sqlc.yaml`
+```yaml
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "db/query.sql"
+    schema: "db/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: true
+        emit_interface: true
+        overrides:
+          - db_type: "jsonb"
+            go_type: "encoding/json.RawMessage"
+```
+
+#### Step 2: `api-gateway/db/schema.sql` (PostgreSQL 16 + pgvector)
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 1. Sky Subjects & 102-Band Vector Index
+CREATE TABLE subjects (
+    subject_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    ra DOUBLE PRECISION NOT NULL,
+    dec DOUBLE PRECISION NOT NULL,
+    fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
+    recommended_workflow TEXT NOT NULL,
+    is_calibration BOOLEAN NOT NULL DEFAULT FALSE,
+    expert_ground_truth TEXT,
+    spectrum_vector vector(102), -- Enables instant cosine similarity search across 102 bands!
+    ai_anomaly_score DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    ai_predicted_class TEXT,
+    ai_explanation TEXT,
+    classification_count INT NOT NULL DEFAULT 0,
+    consensus_class TEXT,
+    consensus_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    shannon_entropy DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_subjects_queue ON subjects(status, is_calibration, shannon_entropy DESC);
+CREATE INDEX idx_subjects_coords ON subjects(ra, dec);
+CREATE INDEX idx_subjects_spectrum_vector ON subjects USING hnsw (spectrum_vector vector_cosine_ops);
+
+-- 2. Volunteer Classifications
+CREATE TABLE classifications (
+    classification_id BIGSERIAL PRIMARY KEY,
+    subject_id TEXT NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    volunteer_id TEXT NOT NULL,
+    workflow_type TEXT NOT NULL,
+    primary_class TEXT NOT NULL,
+    sub_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    motion_vector JSONB,
+    spatial_mask JSONB,
+    confidence DOUBLE PRECISION NOT NULL,
+    insufficient_data BOOLEAN NOT NULL DEFAULT FALSE,
+    notes TEXT,
+    volunteer_weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. Observation Discussion Threads
+CREATE TABLE discussion_threads (
+    thread_id BIGSERIAL PRIMARY KEY,
+    subject_id TEXT REFERENCES subjects(subject_id) ON DELETE SET NULL,
+    author_id UUID NOT NULL,
+    author_name TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ra DOUBLE PRECISION NOT NULL,
+    dec DOUBLE PRECISION NOT NULL,
+    fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
+    workbench_state_url TEXT NOT NULL,
+    upvotes INT NOT NULL DEFAULT 0,
+    admin_status TEXT NOT NULL DEFAULT 'open',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### Step 3: `api-gateway/db/query.sql` (Type-Safe Queries for `sqlc`)
+```sql
+-- name: GetSubjectByID :one
+SELECT * FROM subjects WHERE subject_id = $1 LIMIT 1;
+
+-- name: GetNextActiveLearningSubject :one
+SELECT * FROM subjects
+WHERE recommended_workflow = $1
+  AND status = 'pending'
+ORDER BY (shannon_entropy * 0.6 + ai_anomaly_score * 0.4) DESC
+LIMIT 1;
+
+-- name: FindSimilarSpectra :many
+SELECT subject_id, title, ra, dec, ai_predicted_class,
+       1 - (spectrum_vector <=> $1::vector) AS cosine_similarity
+FROM subjects
+WHERE subject_id != $2 AND spectrum_vector IS NOT NULL
+ORDER BY spectrum_vector <=> $1::vector
+LIMIT 5;
+
+-- name: CreateClassification :one
+INSERT INTO classifications (
+    subject_id, volunteer_id, workflow_type, primary_class,
+    sub_tags, motion_vector, spatial_mask, confidence,
+    insufficient_data, notes, volunteer_weight
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+) RETURNING *;
+
+-- name: UpdateSubjectConsensus :one
+UPDATE subjects
+SET classification_count = classification_count + 1,
+    consensus_class = $2,
+    consensus_score = $3,
+    shannon_entropy = $4,
+    status = $5
+WHERE subject_id = $1
+RETURNING *;
+
+-- name: GetHardNegativeDisagreements :many
+SELECT * FROM subjects
+WHERE classification_count >= 3
+  AND consensus_class IS NOT NULL
+  AND consensus_class != ai_predicted_class
+ORDER BY consensus_score DESC
+LIMIT 50;
+
+-- name: PromoteCandidateStatus :one
+UPDATE subjects
+SET status = $2, expert_ground_truth = $3
+WHERE subject_id = $1
+RETURNING *;
+```
+
+### 4. Recommended Frontend Accelerators (React + Vite)
+- **`nuqs` (Type-Safe URL Query State):**
+  Replaces fragile `window.location.hash` string slicing with typed state synchronization:
+  ```typescript
+  const [ra, setRa] = useQueryState('ra', parseAsFloat.withDefault(133.7951));
+  const [dec, setDec] = useQueryState('dec', parseAsFloat.withDefault(-7.2451));
+  const [mode, setMode] = useQueryState('mode', parseAsString.withDefault('diff'));
+  ```
+  Slider and coordinate changes automatically reflect in the URL and persist across tabs.
+- **`@tanstack/react-query` v5 (Async Caching & Prefetching):**
+  When a user selects a target in Tab 1 (Celestial Navigator), `queryClient.prefetchQuery(['cutout', ra, dec])` retrieves multi-epoch FITS arrays in the background. Switching to Tab 2 or Tab 3 displays data instantaneously with zero loading latency.
+- **`uPlot` (Canvas 2D):**
+  Renders the 102-Band Spectrophotometer and Admin Live Loss/Gradient Curves at 60 FPS with minimal memory overhead, supporting dynamic error bars and molecular ruler bands.
+- **`react-plotly.js` (WebGL):**
+  Used exclusively inside `/admin/boundaries` and `/admin/internals` for 3D Meshgrid Decision Surfaces and 3D Ridgeline Parameter Histograms.
+- **Supabase CLI Local Development:**
+  `supabase start` provisions local Docker containers for PostgreSQL 16 with `pgvector`, Supabase Studio (UI at `localhost:54323`), Go Auth, and S3 Storage for offline development.
