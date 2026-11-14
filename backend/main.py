@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 
+from backend.api.classify import router as classify_router
 from backend.api.cutout import router as cutout_router
 from backend.api.resolve import router as resolve_router
 from fastapi import FastAPI
@@ -50,6 +51,7 @@ app.add_middleware(
 
 app.include_router(resolve_router)
 app.include_router(cutout_router)
+app.include_router(classify_router)
 
 
 @app.get("/api/health/live")
