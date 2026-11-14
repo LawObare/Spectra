@@ -16,6 +16,8 @@ import math
 import os
 import struct
 import sys
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -308,13 +310,33 @@ def _extract_spectrum_from_tensor_payload(
     }
 
 
+_MAX_DECOMPRESSED_TENSOR_CACHE = 16
+_DECOMPRESSED_TENSOR_CACHE: OrderedDict[tuple[str, int, int], bytes] = OrderedDict()
+_DECOMPRESSED_TENSOR_LOCK = threading.Lock()
+
+
 def _read_installed_tensor_bytes(tensor_path: str) -> bytes:
     path = Path(tensor_path)
     if not path.exists():
         raise FileNotFoundError(f"Installed tensor file missing: {path}")
+    stat = path.stat()
+    cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+    with _DECOMPRESSED_TENSOR_LOCK:
+        cached = _DECOMPRESSED_TENSOR_CACHE.get(cache_key)
+        if cached is not None:
+            _DECOMPRESSED_TENSOR_CACHE.move_to_end(cache_key)
+            return cached
+
     compressed = path.read_bytes()
     dctx = zstd.ZstdDecompressor()
-    return dctx.decompress(compressed)
+    payload = dctx.decompress(compressed)
+
+    with _DECOMPRESSED_TENSOR_LOCK:
+        _DECOMPRESSED_TENSOR_CACHE[cache_key] = payload
+        _DECOMPRESSED_TENSOR_CACHE.move_to_end(cache_key)
+        while len(_DECOMPRESSED_TENSOR_CACHE) > _MAX_DECOMPRESSED_TENSOR_CACHE:
+            _DECOMPRESSED_TENSOR_CACHE.popitem(last=False)
+    return payload
 
 
 def _write_installed_tensor_bytes(section_id: str, payload: bytes) -> tuple[str, int]:
@@ -804,10 +826,11 @@ async def get_installed_section_tensor(section_id: str, request: Request) -> Res
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    cache_control = "public, max-age=3600" if request.query_params.get("v") else "no-cache"
     return Response(
         content=payload,
         media_type="application/octet-stream",
-        headers={"X-Section-ID": section_id, "X-Compression": "none", "Cache-Control": "no-cache"},
+        headers={"X-Section-ID": section_id, "X-Compression": "none", "Cache-Control": cache_control},
     )
 
 
