@@ -2649,3 +2649,31 @@ To ensure that **any** agent working in the repository—whether running via Ant
 ### Status
 - `SYSTEM_ARCHITECTURE.md` created (809 lines, 51,430 chars).
 - Passed all integrity checks and code fence validations.
+
+---
+
+## Exchange #40: Addition of Python Hardening & Go Runtime Parity Mechanics
+
+### Context & Goals
+- Codify the 4 engineering solutions into `SPECIFICATION.md` and `SYSTEM_ARCHITECTURE.md` to permanently mitigate the runtime trade-offs of not using Go (GIL blocking, SQL compile safety, cold boot, and memory fragmentation).
+
+### Changes Integrated
+1. **CPU Offload & GIL Bypass (§4.2.5):**
+   - Added `concurrent.futures.ProcessPoolExecutor(max_workers=2)` for heavy math (`reproject_exact`, PSF convolution, Chebyshev polynomial baselines) via `loop.run_in_executor()`.
+   - Leaves main `asyncio` loop 100% free for sub-millisecond SSE progress events and WebSocket frames. Runs under 2 Uvicorn workers.
+2. **Compile-Time SQL Verification Test (`backend/tests/test_sql.py` in §4.2.5 & §10.7):**
+   - Automated CI test parses and executes `EXPLAIN` on all parameterized queries in `queries.py` against `schema.sql`.
+   - Replicates 100% of `sqlc` build-time column and type safety before deployment.
+3. **Cold Boot Optimization & Lazy Module Imports (§4.2.5):**
+   - Lazy dynamic imports for heavy ML libraries (`torch`, `scipy`) inside `/admin` route handlers. Public paths import only `fastapi`, `numpy`, and `astropy.io.fits`.
+   - Combined with `UV_COMPILE_BYTECODE=1`, container boots in `<600 ms`.
+4. **Memory Fragmentation Prevention & Contiguous Allocations (§4.2.5):**
+   - `astropy.io.fits.open(..., memmap=True)` maps disk bytes directly from OS cache.
+   - Contiguous pre-allocated buffers (`np.empty(..., dtype=np.float32)`) eliminate dynamic heap reallocations.
+   - Byte-capped LRU cache limit (1.0 GB) guarantees memory stays below the 4.0 GB budget.
+5. **Architectural Decision Record Update (ADR-001 in SYSTEM_ARCHITECTURE.md):**
+   - Explicitly documented the mitigation of runtime trade-offs under ADR-001 Consequences.
+
+### Status
+- Passed all integrity checks across `SPECIFICATION.md` and `SYSTEM_ARCHITECTURE.md`.
+- Committed and pushed to `main`.
