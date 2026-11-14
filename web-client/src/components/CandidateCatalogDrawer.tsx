@@ -174,7 +174,7 @@ export const CandidateCatalogDrawer: React.FC<CandidateCatalogDrawerProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md animate-fadeIn">
       <div className="relative flex h-[85vh] w-[95vw] max-w-6xl flex-col rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl overflow-hidden font-sans text-white">
         {/* Header Strip */}
-        <div className="flex flex-wrap items-center justify-between border-b border-neutral-800 bg-neutral-900/60 px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 bg-neutral-900/60 px-3 sm:px-6 py-3 sm:py-4">
           <div className="flex items-center space-x-3">
             <span className="flex h-3 w-3 items-center justify-center rounded-full bg-primary/20">
               <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
@@ -209,7 +209,7 @@ export const CandidateCatalogDrawer: React.FC<CandidateCatalogDrawerProps> = ({
         </div>
 
         {/* Filter and Search Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950/80 px-6 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950/80 px-3 sm:px-6 py-3">
           {/* Plain English Category Tabs */}
           <div className="flex flex-wrap items-center gap-1.5">
             {[
@@ -238,7 +238,7 @@ export const CandidateCatalogDrawer: React.FC<CandidateCatalogDrawerProps> = ({
           </div>
 
           {/* Search Box */}
-          <div className="relative min-w-[260px] flex-1 max-w-sm">
+          <div className="relative min-w-[200px] w-full sm:w-auto flex-1 max-w-sm">
             <input
               type="text"
               value={searchQuery}
@@ -259,8 +259,8 @@ export const CandidateCatalogDrawer: React.FC<CandidateCatalogDrawerProps> = ({
         </div>
 
         {/* Data Table */}
-        <div className="flex-1 overflow-y-auto">
-          <table className="w-full border-collapse text-left font-sans text-xs">
+        <div className="flex-1 overflow-x-auto overflow-y-auto">
+          <table className="w-full min-w-[760px] border-collapse text-left font-sans text-xs">
             <thead className="sticky top-0 z-10 border-b border-neutral-800 bg-neutral-900/95 font-semibold text-neutral-400 uppercase tracking-wider text-[11px] backdrop-blur">
               <tr>
                 <th className="py-3 pl-6 pr-3">Target &amp; Designation</th>
