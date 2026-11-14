@@ -43,3 +43,8 @@ Agents must strictly obey the phase sequence preceded by Day-0 Spikes. Never wor
 - **Targeted reads:** Read specific line ranges (`StartLine`/`EndLine`).
 - **Subagents:** Offload heavy file scanning or documentation surveys to subagents with lightweight models.
 - **Compaction:** Run `/compact` after completing each Phase milestone to reset context window.
+
+## 5. Zero-Deferral & Anti-Hallucination Execution Proof (Mandatory for Flash & All Models)
+- **Edit-Before-Claim Hard Lock:** Never claim or imply files were modified unless `edit_file` or `write_file` succeeded in the **current turn**. If no file edit occurred in the turn, start the reply with `STATUS: NO FILES MODIFIED IN THIS TURN.`
+- **Reconnaissance Cap (`<= 2` Reads):** When instructed to implement or fix code, execute at most 2 `read_file` calls before calling `edit_file`. Never spend an entire turn researching and deferring the edit.
+- **Mandatory `[EXECUTION PROOF]` Footer:** Every code-change response must end with `[EXECUTION PROOF]` quoting the exact `edit_file` line delta, build command exit code, and git commit SHA / `git status --short` from that turn.
