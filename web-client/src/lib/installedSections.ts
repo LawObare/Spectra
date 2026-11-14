@@ -19,7 +19,7 @@ export interface InstalledSection {
   updated_at?: string | null;
 }
 
-export interface DownloadingSection {
+export interface DownloadingSectionMeta {
   key: string;
   section_id?: string;
   task_id?: string;
@@ -27,15 +27,28 @@ export interface DownloadingSection {
   ra: number;
   dec: number;
   fov_arcsec: number;
+  queueState?: 'queued' | 'installing';
+}
+
+export interface DownloadingSection extends DownloadingSectionMeta {
   progress: number;
   message: string;
-  queueState?: 'queued' | 'installing';
 }
 
 interface SectionStoreSnapshot {
   installedSections: InstalledSection[];
   downloadingSections: DownloadingSection[];
   installError: string;
+}
+
+export interface InstalledSectionState {
+  installedSections: InstalledSection[];
+  installError: string;
+}
+
+export interface DownloadingSummaryState {
+  downloadingMeta: DownloadingSectionMeta[];
+  geometryKey: string;
 }
 
 const MAX_CONCURRENT_INSTALLS = 2;
@@ -51,7 +64,63 @@ let snapshot: SectionStoreSnapshot = {
   installError: '',
 };
 
+let cachedInstalledSlice: InstalledSectionState = {
+  installedSections: snapshot.installedSections,
+  installError: snapshot.installError,
+};
+
+let cachedDownloadSummarySlice: DownloadingSummaryState = {
+  downloadingMeta: [],
+  geometryKey: '',
+};
+
+function computeDownloadingGeometryKey(list: DownloadingSection[]): string {
+  return list
+    .map(
+      (s) =>
+        `${s.key}:${s.section_id || ''}:${s.queueState || ''}:${s.ra.toFixed(5)}:${s.dec.toFixed(5)}:${Math.round(s.fov_arcsec)}`
+    )
+    .sort()
+    .join('|');
+}
+
+function syncDerivedSlices() {
+  if (
+    !Object.is(cachedInstalledSlice.installedSections, snapshot.installedSections) ||
+    !Object.is(cachedInstalledSlice.installError, snapshot.installError)
+  ) {
+    cachedInstalledSlice = {
+      installedSections: snapshot.installedSections,
+      installError: snapshot.installError,
+    };
+  }
+  const nextGeometryKey = computeDownloadingGeometryKey(snapshot.downloadingSections);
+  if (nextGeometryKey !== cachedDownloadSummarySlice.geometryKey) {
+    cachedDownloadSummarySlice = {
+      downloadingMeta: snapshot.downloadingSections.map((d) => ({
+        key: d.key,
+        section_id: d.section_id,
+        task_id: d.task_id,
+        label: d.label,
+        ra: d.ra,
+        dec: d.dec,
+        fov_arcsec: d.fov_arcsec,
+        queueState: d.queueState,
+      })),
+      geometryKey: nextGeometryKey,
+    };
+  }
+}
+
+function subscribeSectionStore(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 function emitChange() {
+  syncDerivedSlices();
   listeners.forEach((listener) => listener());
 }
 
@@ -396,12 +465,44 @@ export function refreshInstalledSections(): Promise<InstalledSection[]> {
   return fetchInstalledSections();
 }
 
+export function useInstalledSectionState() {
+  const state = useSyncExternalStore(
+    subscribeSectionStore,
+    () => cachedInstalledSlice
+  );
+
+  useEffect(() => {
+    if (!hasLoadedInitialSections) {
+      void fetchInstalledSections();
+    }
+  }, []);
+
+  return {
+    ...state,
+    refreshInstalledSections,
+    startSectionInstall,
+    cancelQueuedInstall,
+    uninstallSectionById,
+  };
+}
+
+export function useDownloadingSummary() {
+  return useSyncExternalStore(
+    subscribeSectionStore,
+    () => cachedDownloadSummarySlice
+  );
+}
+
+export function useDownloadingSections() {
+  return useSyncExternalStore(
+    subscribeSectionStore,
+    () => snapshot.downloadingSections
+  );
+}
+
 export function useSectionManager() {
   const state = useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
+    subscribeSectionStore,
     () => snapshot
   );
 
