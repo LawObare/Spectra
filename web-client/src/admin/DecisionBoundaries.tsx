@@ -531,8 +531,8 @@ export const DecisionBoundaries: React.FC = () => {
       </div>
 
       {/* GRAPH CANVAS + INSPECTOR */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="relative flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        <div className="relative min-h-[340px] lg:min-h-0 flex-1 overflow-hidden">
           {loading && !graph && (
             <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground z-10">
               Computing PyTorch embedding graph...
@@ -603,7 +603,7 @@ export const DecisionBoundaries: React.FC = () => {
         </div>
 
         {/* RIGHT NODE & RELATIONSHIP INSPECTOR */}
-        <aside className="w-[340px] shrink-0 border-l border-border bg-card/40 overflow-y-auto p-4 flex flex-col gap-3">
+        <aside className="w-full lg:w-[320px] xl:w-[340px] shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-card/40 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-3">
           {selectedNode ? (
             <>
               <Card className="border-border">
