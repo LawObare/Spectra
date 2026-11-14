@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { useRealtimeDiscussions } from '../hooks/useRealtimeDiscussions';
@@ -6,7 +6,7 @@ import {
   MANDATORY_BENCHMARKS,
   SEARCHABLE_SKY_CATALOG,
 } from '../components/GlobalCommandHeader';
-import { Button, Badge, Input, Select } from '../components/ui';
+import { Badge, Button, Input } from '../components/ui';
 
 /**
  * Spectra Tab 5: Observation Discussions & External Archive Cross-Match (<ObservationDiscussions />)
@@ -155,30 +155,93 @@ export const ObservationDiscussions: React.FC = () => {
 
   const { threads, setThreads, sseConnected, isLoading, loadError } =
     useRealtimeDiscussions<DiscussionThread>([]);
-  const [scopeFilter, setScopeFilter] = useState<'ALL' | 'TARGET'>('ALL');
+  const [scopeFilter, setScopeFilter] = useState<'ALL' | 'TARGET' | 'VERIFIED'>('ALL');
+  const [feedSort, setFeedSort] = useState<'latest' | 'top'>('latest');
   const [classFilter, setClassFilter] = useState<string>('ALL');
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState<string>('');
   const [newBody, setNewBody] = useState<string>('');
   const [newClass, setNewClass] = useState<string>('moving_brown_dwarf');
   const [selectedShortcut, setSelectedShortcut] =
     useState<ClassificationShortcut | null>(null);
+  const [showMoreCategories, setShowMoreCategories] = useState<boolean>(false);
   const [newConfidence, setNewConfidence] = useState<number>(90);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [upvotedIds, setUpvotedIds] = useState<Record<string, boolean>>({});
+  const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const composerTitleRef = useRef<HTMLInputElement>(null);
+
+  const nearbyCount = useMemo(
+    () => threads.filter((t) => Math.hypot(t.ra - ra, t.dec - dec) <= 1.5).length,
+    [dec, ra, threads]
+  );
+
+  const verifiedCount = useMemo(
+    () => threads.filter((t) => t.isModerator).length,
+    [threads]
+  );
+
+  const classCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of threads) {
+      counts[t.classification] = (counts[t.classification] ?? 0) + 1;
+    }
+    return counts;
+  }, [threads]);
+
+  const trendingTopics = useMemo(() => {
+    const freq: Record<string, number> = {};
+    for (const t of threads) {
+      for (const raw of t.hashtags ?? []) {
+        const tag = raw.startsWith('#') ? raw : `#${raw}`;
+        freq[tag] = (freq[tag] ?? 0) + 1;
+      }
+    }
+    return Object.entries(freq)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 12);
+  }, [threads]);
+
+  const topDiscussions = useMemo(() => {
+    return [...threads]
+      .sort(
+        (a, b) =>
+          b.upvotes + b.replies.length - (a.upvotes + a.replies.length) ||
+          b.timestampIso.localeCompare(a.timestampIso)
+      )
+      .slice(0, 3);
+  }, [threads]);
 
   const filteredThreads = useMemo(() => {
-    return threads.filter((t) => {
-      if (scopeFilter === 'TARGET') {
-        const dist = Math.hypot(t.ra - ra, t.dec - dec);
-        if (dist > 1.5) return false;
+    const matching = threads.filter((t) => {
+      if (scopeFilter === 'TARGET' && Math.hypot(t.ra - ra, t.dec - dec) > 1.5) {
+        return false;
+      }
+      if (scopeFilter === 'VERIFIED' && !t.isModerator) {
+        return false;
       }
       if (classFilter !== 'ALL' && t.classification !== classFilter) {
         return false;
       }
+      if (
+        tagFilter &&
+        !(t.hashtags ?? []).some((tag) => (tag.startsWith('#') ? tag : `#${tag}`) === tagFilter)
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [classFilter, dec, ra, scopeFilter, threads]);
+    if (feedSort === 'top') {
+      return [...matching].sort(
+        (a, b) =>
+          b.upvotes + b.replies.length - (a.upvotes + a.replies.length) ||
+          b.timestampIso.localeCompare(a.timestampIso)
+      );
+    }
+    return matching;
+  }, [classFilter, dec, feedSort, ra, scopeFilter, tagFilter, threads]);
 
   // Submit new observation thread (attaches X-Observer-ID and X-Observer-Key per SPECIFICATION.md §3.3)
   const handleCreateThread = async (e: React.FormEvent) => {
@@ -239,6 +302,7 @@ export const ObservationDiscussions: React.FC = () => {
       setNewTitle('');
       setNewBody('');
       setSelectedShortcut(null);
+      setShowMoreCategories(false);
       setNewClass('moving_brown_dwarf');
     } catch (err: unknown) {
       setSubmitError(err instanceof Error ? err.message : 'Unable to reach forum API.');
@@ -275,8 +339,38 @@ export const ObservationDiscussions: React.FC = () => {
         );
       }
       setReplyDrafts((prev) => ({ ...prev, [threadId]: '' }));
+      setExpandedReplies((prev) => ({ ...prev, [threadId]: true }));
     } catch (err: unknown) {
       setSubmitError(err instanceof Error ? err.message : 'Unable to post reply.');
+    }
+  };
+
+  const handleUpvoteThread = async (threadId: string) => {
+    if (!/^\d+$/.test(threadId) || upvotedIds[threadId]) return;
+
+    setUpvotedIds((prev) => ({ ...prev, [threadId]: true }));
+    try {
+      const response = await fetch(`/api/forum/threads/${threadId}/upvote`, {
+        method: 'POST',
+        headers: {
+          'X-Observer-ID': identity.observerId,
+          'X-Observer-Key': identity.observerKey,
+        },
+      });
+      if (!response.ok) {
+        setUpvotedIds((prev) => ({ ...prev, [threadId]: false }));
+        return;
+      }
+      const payload = (await response.json()) as { thread?: Partial<DiscussionThread> };
+      if (payload.thread) {
+        setThreads((prev) =>
+          prev.map((item) =>
+            item.id === threadId ? { ...item, ...payload.thread, id: threadId } : item
+          )
+        );
+      }
+    } catch {
+      setUpvotedIds((prev) => ({ ...prev, [threadId]: false }));
     }
   };
 
@@ -381,415 +475,769 @@ export const ObservationDiscussions: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full w-full flex-col lg:flex-row overflow-hidden bg-background font-sans text-xs text-foreground">
-      {/* LEFT PANEL: External Archive Cross-Match & Zero-Auth Telemetry Session */}
-      <aside className="flex w-full lg:w-[320px] xl:w-[340px] shrink-0 flex-col max-h-56 lg:max-h-none border-b lg:border-b-0 lg:border-r border-border bg-card overflow-y-auto p-4 gap-4">
-        {/* Active Coordinate Cross-Match Header */}
-        <div className="rounded-sm border border-border bg-background p-3">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-foreground">
-              Active Sky Field Cross-Match
-            </span>
-            <Badge variant="sky" className="font-mono text-[10px]">
-              Community Product
-            </Badge>
-          </div>
-          <div className="mt-1.5 font-medium text-foreground">
-            {activeTargetName || 'Selected Field'}
-          </div>
-          <div className="mt-0.5 font-mono text-[11px] tabular-nums text-primary">
-            J2000 RA {ra.toFixed(5)}° · Dec {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · FoV {fovArcsec}&quot;
-          </div>
-        </div>
+    <div className="flex h-full w-full justify-center overflow-hidden bg-background font-sans text-xs text-foreground">
+      <div className="flex h-full w-full max-w-[1440px] flex-col lg:flex-row overflow-hidden">
+        {/* LEFT RAIL: Feed Views, External Archives & Zero-Auth Observer Footer */}
+        <aside
+          aria-label="Forum Navigation and Archives"
+          className="flex w-full lg:w-[236px] xl:w-[252px] shrink-0 flex-col max-h-56 lg:max-h-none border-b lg:border-b-0 lg:border-r border-border bg-card/30 overflow-y-auto px-3.5 py-4 gap-5"
+        >
+          {/* Feed Navigation Views (modeled on My Feed / Groups / Bookmarks) */}
+          <nav className="flex flex-col gap-1" aria-label="Feed Scope">
+            <button
+              type="button"
+              onClick={() => setScopeFilter('ALL')}
+              className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                scopeFilter === 'ALL'
+                  ? 'bg-secondary text-foreground'
+                  : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 12l9-8 9 8v8a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-8z" />
+                </svg>
+                All Sky Feed
+              </span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+                {threads.length}
+              </span>
+            </button>
 
-        {/* External Astronomical Archive Links */}
-        <div>
-          <h3 className="mb-2 text-xs font-semibold text-foreground">
-            External Archive Cross-Match Verification
-          </h3>
-          <div className="flex flex-col gap-1.5">
-            {externalArchives.map((arch) => (
-              <a
-                key={arch.name}
-                href={arch.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group flex flex-col rounded-sm border border-border bg-background p-2.5 transition-colors duration-150 hover:border-primary"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-foreground group-hover:text-primary">
-                    {arch.name}
-                  </span>
-                  <svg className="h-3 w-3 text-muted-foreground group-hover:text-primary transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button
+              type="button"
+              onClick={() => setScopeFilter('TARGET')}
+              className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                scopeFilter === 'TARGET'
+                  ? 'bg-secondary text-foreground'
+                  : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v3m0 12v3m9-9h-3M6 12H3m15.364 0a6.364 6.364 0 11-12.728 0 6.364 6.364 0 0112.728 0z" />
+                </svg>
+                Near Active Field
+              </span>
+              <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-amber-300">
+                {nearbyCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setScopeFilter('VERIFIED')}
+              className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                scopeFilter === 'VERIFIED'
+                  ? 'bg-secondary text-foreground'
+                  : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Moderator Verified
+              </span>
+              <span className="rounded-full bg-background/80 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+                {verifiedCount}
+              </span>
+            </button>
+          </nav>
+
+          {/* External Astronomical Archive Cross-Match */}
+          <div className="border-t border-border/70 pt-4">
+            <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Archive Cross-Match
+            </h3>
+            <div className="flex flex-col gap-1">
+              {externalArchives.map((arch) => (
+                <a
+                  key={arch.name}
+                  href={arch.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={arch.desc}
+                  className="group flex items-center justify-between rounded-md px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+                >
+                  <span className="truncate font-medium">{arch.name}</span>
+                  <svg className="h-3 w-3 shrink-0 opacity-60 group-hover:text-primary group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
-                </div>
-                <span className="mt-0.5 text-[11px] text-muted-foreground">{arch.desc}</span>
-              </a>
-            ))}
+                </a>
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Zero-Auth Telemetry Session Info */}
-        <div className="mt-auto rounded-sm border border-border bg-background p-3">
-          <div className="flex items-center justify-between">
-            <span className="font-medium text-foreground">Observer Telemetry Session</span>
-            <span className="font-mono text-[10px] text-emerald-400">
-              {sseConnected ? 'SSE Live' : 'Local Sync'}
+          {/* Bottom Observer Identity & SSE Status */}
+          <div className="mt-auto border-t border-border/70 pt-3 flex items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 border border-primary/40 font-mono text-[10px] font-semibold text-primary">
+                {identity.handle.slice(-2)}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-mono text-[11px] font-medium text-foreground">
+                  {identity.handle}
+                </div>
+                <div className="text-[10px] text-muted-foreground">Zero-Auth Session</div>
+              </div>
+            </div>
+            <span
+              className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px] ${
+                sseConnected
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-secondary text-muted-foreground border border-border'
+              }`}
+            >
+              {sseConnected ? 'SSE Live' : 'Offline'}
             </span>
           </div>
-          <div className="mt-1 text-[11px] text-muted-foreground">
-            Handle: <strong className="font-mono text-foreground">{identity.handle}</strong> (Zero-Auth UUIDv4 + SHA-256 key)
-          </div>
-        </div>
-      </aside>
+        </aside>
 
-      {/* CENTERED CHAT SECTION: Observation Note Composer & Threaded Candidate Feed */}
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden items-center">
-        {/* Top Filter Bar */}
-        <div className="w-full border-b border-border bg-card px-4 py-2.5 sm:px-6">
-          <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant={scopeFilter === 'ALL' ? 'secondary' : 'ghost'}
-                size="xs"
-                onClick={() => setScopeFilter('ALL')}
-                className={scopeFilter === 'ALL' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-              >
-                All Sky Observations ({threads.length})
-              </Button>
-              <Button
-                variant={scopeFilter === 'TARGET' ? 'secondary' : 'ghost'}
-                size="xs"
-                onClick={() => setScopeFilter('TARGET')}
-                className={scopeFilter === 'TARGET' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-              >
-                Near {ra.toFixed(2)}°, {dec.toFixed(2)}° (r ≤ 1.5°)
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label htmlFor="forum-class-filter" className="text-[11px] text-muted-foreground">
-                Classification:
-              </label>
-              <Select
-                id="forum-class-filter"
-                sizeVariant="xs"
-                value={classFilter}
-                onChange={(e) => setClassFilter(e.target.value)}
-                className="bg-background text-foreground"
-              >
-                <option value="ALL">All Classifications</option>
-                {CLASSIFICATION_CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-        </div>
-
-        <div className="w-full flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-            {/* New Observation Note Composer */}
+        {/* CENTER CHAT STREAM */}
+        <section
+          aria-label="Community Chat Stream"
+          className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+        >
+          <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4 pb-8">
+            {/* New Post / Observation Note Composer (modeled on design.webp New Post card) */}
             <form
               onSubmit={handleCreateThread}
-              className="rounded-sm border border-border bg-card p-3.5"
+              className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"
             >
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border">
-              <span className="font-semibold text-foreground">
-                Log Observation Note & Pin Current Sky State
-              </span>
-              <span className="font-mono text-[11px] tabular-nums text-primary">
-                Pinned: {activeTargetName || 'Field'} ({ra.toFixed(4)}°, {dec.toFixed(4)}° · {fovArcsec}&quot; · {renderMode})
-              </span>
-            </div>
-
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[11px] text-muted-foreground">
-                Structured classification:
-              </span>
-              {CLASSIFICATION_SHORTCUTS.map((shortcut) => (
-                <Button
-                  key={shortcut.id}
-                  type="button"
-                  variant={selectedShortcut?.id === shortcut.id ? 'secondary' : 'outline'}
-                  size="xs"
-                  aria-pressed={selectedShortcut?.id === shortcut.id}
-                  onClick={() => {
-                    setSelectedShortcut(shortcut);
-                    setNewClass(shortcut.classification);
-                  }}
-                  className="font-mono text-[10px]"
-                >
-                  {shortcut.label}
-                </Button>
-              ))}
-              {selectedShortcut && (
-                <span className="font-mono text-[10px] text-primary">
-                  {selectedShortcut.hashtag} will be attached
-                </span>
-              )}
-            </div>
-
-            <div className="mt-2.5 grid grid-cols-12 gap-2">
-              <div className="col-span-12 md:col-span-6">
-                <label htmlFor="obs-title" className="block text-[11px] text-muted-foreground">
-                  Observation Summary
-                </label>
-                <Input
+              <div className="px-4 pt-3.5 pb-2 space-y-1.5">
+                <input
+                  ref={composerTitleRef}
                   id="obs-title"
                   type="text"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="e.g. Dipole shift in D5 at MJD 61360 or H2O 3.05 µm absorption..."
-                  className="mt-1 bg-background text-xs"
+                  placeholder="Observation headline (e.g. Dipole shift in D5 at MJD 61360)..."
+                  className="w-full bg-transparent text-sm font-medium text-foreground placeholder:text-muted-foreground focus:outline-none"
                 />
-              </div>
-              <div className="col-span-8 md:col-span-4">
-                <label htmlFor="obs-class" className="block text-[11px] text-muted-foreground">
-                  Candidate Classification
+                <label htmlFor="obs-body" className="sr-only">
+                  Detailed astrophysical notes, MJD pass numbers, and band metrics
                 </label>
-                <Select
-                  id="obs-class"
-                  sizeVariant="sm"
-                  value={newClass}
-                  onChange={(e) => {
-                    setNewClass(e.target.value);
-                    setSelectedShortcut(null);
-                  }}
-                  className="mt-1 w-full bg-background"
-                >
-                  {CLASSIFICATION_CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
+                <textarea
+                  id="obs-body"
+                  rows={3}
+                  value={newBody}
+                  onChange={(e) => setNewBody(e.target.value)}
+                  placeholder="New observation note... record MJD passes, bands (D1–D6), proper motion vectors, or ice column metrics."
+                  className="w-full resize-none bg-transparent text-xs leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
+                />
+
+                <div className="flex flex-wrap items-center gap-2 pt-1 font-mono text-[10px] text-muted-foreground">
+                  <span className="rounded-md border border-border bg-background px-2 py-0.5 text-primary tabular-nums">
+                    Pin: {activeTargetName || 'Field'} ({ra.toFixed(4)}°, {dec >= 0 ? '+' : ''}{dec.toFixed(4)}° · {fovArcsec}&quot; · {renderMode})
+                  </span>
+                  <span className="rounded-md border border-border bg-background px-2 py-0.5 text-foreground/90">
+                    {CLASSIFICATION_CATEGORIES.find((c) => c.id === newClass)?.label || newClass} ({newConfidence}%)
+                  </span>
+                  {selectedShortcut && (
+                    <span className="rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-primary">
+                      {selectedShortcut.hashtag}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {showMoreCategories && (
+                <div className="border-t border-border/60 bg-background/50 px-4 py-2.5 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-muted-foreground">
+                      Select Candidate Classification
+                    </span>
+                    <label className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                      Confidence {newConfidence}%
+                      <input
+                        id="obs-conf"
+                        type="range"
+                        min={10}
+                        max={100}
+                        step={5}
+                        value={newConfidence}
+                        onChange={(e) => setNewConfidence(Number(e.target.value))}
+                        className="w-24 accent-primary"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CLASSIFICATION_CATEGORIES.map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => {
+                          setNewClass(cat.id);
+                          setSelectedShortcut(null);
+                        }}
+                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                          newClass === cat.id
+                            ? 'border-primary bg-primary/15 text-foreground font-medium'
+                            : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 bg-background/40 px-3.5 py-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {CLASSIFICATION_SHORTCUTS.map((shortcut) => (
+                    <button
+                      key={shortcut.id}
+                      type="button"
+                      aria-pressed={selectedShortcut?.id === shortcut.id}
+                      onClick={() => {
+                        if (selectedShortcut?.id === shortcut.id) {
+                          setSelectedShortcut(null);
+                        } else {
+                          setSelectedShortcut(shortcut);
+                          setNewClass(shortcut.classification);
+                        }
+                      }}
+                      className={`rounded-md border px-2 py-1 font-mono text-[10px] transition-colors ${
+                        selectedShortcut?.id === shortcut.id
+                          ? 'border-primary/60 bg-primary/15 text-primary font-medium'
+                          : 'border-transparent bg-secondary/50 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {shortcut.hashtag}
+                    </button>
                   ))}
-                </Select>
-              </div>
-              <div className="col-span-4 md:col-span-2">
-                <label htmlFor="obs-conf" className="block text-[11px] text-muted-foreground">
-                  Confidence ({newConfidence}%)
-                </label>
-                <input
-                  id="obs-conf"
-                  type="range"
-                  min={10}
-                  max={100}
-                  step={5}
-                  value={newConfidence}
-                  onChange={(e) => setNewConfidence(Number(e.target.value))}
-                  className="mt-2.5 w-full accent-primary"
-                />
-              </div>
-            </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreCategories((prev) => !prev)}
+                    className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+                      showMoreCategories
+                        ? 'bg-secondary text-foreground font-medium'
+                        : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                    }`}
+                  >
+                    Classification ▾
+                  </button>
+                </div>
 
-            <div className="mt-2">
-              <label htmlFor="obs-body" className="sr-only">
-                Detailed astrophysical notes, MJD pass numbers, and band metrics
-              </label>
-              <textarea
-                id="obs-body"
-                rows={2}
-                value={newBody}
-                onChange={(e) => setNewBody(e.target.value)}
-                placeholder="Record MJD passes, detector bands (D1–D6), proper motion vectors, or optical depth metrics..."
-                className="w-full rounded-sm border border-border bg-background p-2.5 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
-            </div>
-
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">
-                Posting as <strong className="font-mono text-foreground">{identity.handle}</strong> · Community Product
-              </span>
-              <Button
-                type="submit"
-                variant="default"
-                size="sm"
-                disabled={isSubmitting || !newTitle.trim() || !newBody.trim()}
-              >
-                {isSubmitting ? 'Publishing…' : 'Publish Observation Note'}
-              </Button>
-            </div>
-            {submitError && (
-              <p className="mt-2 font-mono text-[11px] text-destructive" role="alert">
-                {submitError}
-              </p>
-            )}
-          </form>
-
-          {/* Threaded Observations List */}
-          <div className="space-y-3.5">
-            {isLoading && (
-              <div className="rounded-sm border border-border bg-card p-6 text-center font-mono text-xs text-muted-foreground">
-                Loading community discussions from archive database…
-              </div>
-            )}
-            {!isLoading && loadError && (
-              <div className="rounded-sm border border-destructive/50 bg-card p-4 text-center font-mono text-xs text-destructive" role="alert">
-                Forum archive unavailable ({loadError}). Check database connectivity.
-              </div>
-            )}
-            {!isLoading && !loadError && filteredThreads.length === 0 && (
-              <div className="rounded-sm border border-border bg-card p-6 text-center text-xs text-muted-foreground">
-                No community observations match the active spatial or classification filter.
-              </div>
-            )}
-            {filteredThreads.map((t) => {
-              const catLabel =
-                t.classification === 'unclassified'
-                  ? 'Unclassified'
-                  : CLASSIFICATION_CATEGORIES.find((c) => c.id === t.classification)?.label ||
-                    t.classification;
-              return (
-                <article
-                  key={t.id}
-                  className="rounded-sm border border-border bg-card p-3.5"
+                <Button
+                  type="submit"
+                  variant="default"
+                  size="sm"
+                  disabled={isSubmitting || !newTitle.trim() || !newBody.trim()}
+                  className="rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold px-3"
+                  title="Publish Observation Note"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <h4 className="text-xs font-semibold text-foreground">{t.title}</h4>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                        <span className="font-mono text-foreground">{t.authorHandle}</span>
-                        {t.isModerator && (
-                          <Badge variant="amber">[Moderator]</Badge>
-                        )}
-                        <span>·</span>
-                        <Badge variant="sky">
-                          {t.confidencePct > 0 ? `${catLabel} (${t.confidencePct}%)` : catLabel}
-                        </Badge>
-                        <span>·</span>
-                        <span className="font-mono text-[10px]">
-                          {t.timestampIso.slice(0, 16).replace('T', ' ')} UTC
-                        </span>
-                      </div>
-                    </div>
+                  {isSubmitting ? 'Posting…' : 'Post'}
+                  <svg className="ml-1.5 h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 12h14m-6-6l6 6-6 6" />
+                  </svg>
+                </Button>
+              </div>
+              {submitError && (
+                <p className="border-t border-destructive/40 bg-destructive/10 px-4 py-2 font-mono text-[11px] text-destructive" role="alert">
+                  {submitError}
+                </p>
+              )}
+            </form>
 
-                    {/* Pinned State Jump Controls */}
-                    <div className="flex items-center gap-1.5">
+            {/* Sort / Filter Tabs Strip (modeled on Following | Featured | Rising) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFeedSort('latest')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    feedSort === 'latest'
+                      ? 'bg-card border border-border text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <span className="h-2 w-2 rounded-full bg-rose-400" />
+                  Latest
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFeedSort('top')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    feedSort === 'top'
+                      ? 'bg-card border border-border text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Featured
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScopeFilter(scopeFilter === 'TARGET' ? 'ALL' : 'TARGET')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    scopeFilter === 'TARGET'
+                      ? 'bg-card border border-primary/50 text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  Active Target (r ≤ 1.5°)
+                </button>
+              </div>
+
+              {(classFilter !== 'ALL' || tagFilter !== null || scopeFilter !== 'ALL') && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {classFilter !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setClassFilter('ALL')}
+                      className="rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20"
+                    >
+                      {CLASSIFICATION_CATEGORIES.find((c) => c.id === classFilter)?.label || classFilter} ×
+                    </button>
+                  )}
+                  {tagFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setTagFilter(null)}
+                      className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[10px] text-amber-300 hover:bg-amber-500/20"
+                    >
+                      {tagFilter} ×
+                    </button>
+                  )}
+                  {scopeFilter !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setScopeFilter('ALL')}
+                      className="rounded-full border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      Reset Scope ×
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Threaded Observations List */}
+            <div className="space-y-4">
+              {isLoading && (
+                <div className="rounded-xl border border-border bg-card p-6 text-center font-mono text-xs text-muted-foreground">
+                  Loading community discussions from archive database…
+                </div>
+              )}
+              {!isLoading && loadError && (
+                <div className="rounded-xl border border-destructive/50 bg-card p-4 text-center font-mono text-xs text-destructive" role="alert">
+                  Forum archive unavailable ({loadError}). Check database connectivity.
+                </div>
+              )}
+              {!isLoading && !loadError && filteredThreads.length === 0 && (
+                <div className="rounded-xl border border-border bg-card p-6 text-center text-xs text-muted-foreground">
+                  No community observations match the active filters.
+                </div>
+              )}
+              {filteredThreads.map((t) => {
+                const catLabel =
+                  t.classification === 'unclassified'
+                    ? 'Unclassified'
+                    : CLASSIFICATION_CATEGORIES.find((c) => c.id === t.classification)?.label ||
+                      t.classification;
+                const repliesOpen =
+                  expandedReplies[t.id] ?? t.replies.length > 0;
+
+                return (
+                  <article
+                    key={t.id}
+                    id={`thread-${t.id}`}
+                    className="rounded-xl border border-border bg-card p-4 space-y-3"
+                  >
+                    {/* Post Author Header */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-secondary font-mono text-[10px] font-semibold text-foreground">
+                          {t.authorHandle.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-mono text-xs font-semibold text-foreground">
+                              {t.authorHandle}
+                            </span>
+                            {t.isModerator && (
+                              <Badge variant="amber" className="text-[9px] px-1.5 py-0">
+                                [Moderator]
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="font-mono text-[10px] text-muted-foreground">
+                            {t.timestampIso.slice(0, 16).replace('T', ' ')} UTC
+                          </div>
+                        </div>
+                      </div>
+
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="xs"
                         onClick={() => handleRestorePinnedState(t, 'navigator')}
-                        className="font-mono text-[10px] tabular-nums"
-                        title="Center sky mosaic on this observation's coordinates"
+                        className="font-mono text-[10px] text-muted-foreground hover:text-foreground tabular-nums"
+                        title="Center Sky Map on this observation's coordinates"
                       >
                         Sky Map ({t.ra.toFixed(2)}°, {t.dec.toFixed(2)}°)
                       </Button>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        onClick={() => handleRestorePinnedState(t, 'comparator')}
-                        title="Open this target and render mode in Tab 2 Comparator"
-                      >
-                        Inspect in Comparator →
-                      </Button>
                     </div>
-                  </div>
 
-                  <p className="mt-2.5 text-xs leading-relaxed text-foreground/90">
-                    {t.body}
-                  </p>
-
-                  {t.hashtags && t.hashtags.length > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      {t.hashtags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-sm border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-primary"
-                        >
-                          {tag}
-                        </span>
-                      ))}
+                    {/* Title + Body */}
+                    <div className="space-y-1.5">
+                      <h4 className="text-sm font-semibold text-foreground leading-snug">
+                        {t.title}
+                      </h4>
+                      <p className="text-xs leading-relaxed text-foreground/90">
+                        {t.body}
+                      </p>
                     </div>
-                  )}
 
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
-                    <span className="mr-1 text-[10px] text-muted-foreground">
-                      Classify this observation:
-                    </span>
-                    {CLASSIFICATION_SHORTCUTS.map((shortcut) => (
-                      <Button
-                        key={shortcut.id}
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        onClick={() => void handleClassificationVote(t, shortcut)}
-                        className="font-mono text-[9px]"
-                      >
-                        {shortcut.label}
-                      </Button>
-                    ))}
-                    {CLASSIFICATION_SHORTCUTS.map((shortcut) => {
-                      const votes = t.classVotes?.[shortcut.voteKey] ?? 0;
-                      return votes > 0 ? (
-                        <span key={shortcut.voteKey} className="font-mono text-[9px] text-muted-foreground">
-                          {shortcut.voteKey} {votes}
+                    {/* Embedded Telemetry State Card (modeled on code preview + Read All ->) */}
+                    <div className="rounded-lg border border-border bg-background/90 overflow-hidden">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-secondary/30 px-3 py-1.5 font-mono text-[10px]">
+                        <span className="text-foreground/90 font-medium">
+                          {t.targetName}
                         </span>
-                      ) : null;
-                    })}
-                  </div>
-
-                  {/* Replies */}
-                  {t.replies.length > 0 && (
-                    <div className="mt-3 space-y-2 border-t border-border pt-2.5 pl-3">
-                      {t.replies.map((r) => (
-                        <div
-                          key={r.id}
-                          className="rounded-sm border border-border bg-background p-2 text-xs"
-                        >
-                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                            <span className="font-mono font-medium text-foreground">
-                              {r.authorHandle}
-                            </span>
-                            {r.isModerator && (
-                              <Badge variant="amber" className="text-[9px] px-1 py-0">[Moderator]</Badge>
-                            )}
-                            <span>·</span>
-                            <span className="font-mono">
-                              {r.timestampIso.slice(0, 16).replace('T', ' ')} UTC
-                            </span>
-                          </div>
-                          <p className="mt-1 text-xs text-foreground">{r.body}</p>
+                        <span className="text-primary">
+                          {t.confidencePct > 0 ? `${catLabel} · ${t.confidencePct}%` : catLabel}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 px-3 py-2 font-mono text-[11px] tabular-nums">
+                        <div>
+                          <div className="text-[9px] uppercase text-muted-foreground">RA (J2000)</div>
+                          <div className="text-foreground">{t.ra.toFixed(5)}°</div>
                         </div>
-                      ))}
+                        <div>
+                          <div className="text-[9px] uppercase text-muted-foreground">Dec (J2000)</div>
+                          <div className="text-foreground">
+                            {t.dec >= 0 ? `+${t.dec.toFixed(5)}` : t.dec.toFixed(5)}°
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] uppercase text-muted-foreground">FoV</div>
+                          <div className="text-foreground">{t.fovArcsec}&quot;</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] uppercase text-muted-foreground">Render Mode</div>
+                          <div className="text-amber-400">{t.renderMode}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRestorePinnedState(t, 'comparator')}
+                        className="flex w-full items-center justify-center gap-1.5 border-t border-border/70 bg-secondary/20 px-3 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary/50"
+                      >
+                        Inspect in Comparator
+                        <span aria-hidden="true">→</span>
+                      </button>
                     </div>
-                  )}
 
-                  {/* Quick Reply Input */}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void handleAddReply(t.id);
-                    }}
-                    className="mt-2.5 flex items-center gap-2"
+                    {/* Hashtags Row */}
+                    {t.hashtags && t.hashtags.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {t.hashtags.map((rawTag) => {
+                          const tag = rawTag.startsWith('#') ? rawTag : `#${rawTag}`;
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() =>
+                                setTagFilter((cur) => (cur === tag ? null : tag))
+                              }
+                              className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                                tagFilter === tag
+                                  ? 'bg-amber-500/20 text-amber-300'
+                                  : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Action / Reaction Footer Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleUpvoteThread(t.id)}
+                          disabled={Boolean(upvotedIds[t.id])}
+                          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-mono text-[11px] tabular-nums transition-colors ${
+                            upvotedIds[t.id] || t.upvotes > 0
+                              ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+                              : 'border-border bg-secondary/40 text-muted-foreground hover:text-foreground'
+                          }`}
+                          title="Upvote observation note"
+                        >
+                          <span aria-hidden="true">▲</span>
+                          <span>{t.upvotes}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedReplies((prev) => ({ ...prev, [t.id]: !repliesOpen }))
+                          }
+                          className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/40 px-2.5 py-1 font-mono text-[11px] tabular-nums text-muted-foreground transition-colors hover:text-foreground"
+                          title="Toggle verification replies"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h8m-8 4h5m-7 5l-4 1 1-4V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H6z" />
+                          </svg>
+                          <span>{t.replies.length}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRestorePinnedState(t, 'navigator')}
+                          className="flex items-center gap-1 rounded-lg border border-border bg-secondary/40 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                          title="Open field in Sky Map"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1">
+                        {CLASSIFICATION_SHORTCUTS.map((shortcut) => {
+                          const votes = t.classVotes?.[shortcut.voteKey] ?? 0;
+                          return (
+                            <button
+                              key={shortcut.id}
+                              type="button"
+                              onClick={() => void handleClassificationVote(t, shortcut)}
+                              className="rounded-md border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                            >
+                              {shortcut.hashtag}
+                              {votes > 0 ? ` · ${votes}` : ''}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Replies & Quick Reply Form */}
+                    {repliesOpen && (
+                      <div className="space-y-2 border-t border-border/70 pt-3">
+                        {t.replies.map((r) => (
+                          <div
+                            key={r.id}
+                            className="rounded-lg border border-border/80 bg-background/80 p-2.5 text-xs"
+                          >
+                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                              <span className="font-mono font-medium text-foreground">
+                                {r.authorHandle}
+                              </span>
+                              {r.isModerator && (
+                                <Badge variant="amber" className="text-[9px] px-1 py-0">
+                                  [Moderator]
+                                </Badge>
+                              )}
+                              <span>·</span>
+                              <span className="font-mono">
+                                {r.timestampIso.slice(0, 16).replace('T', ' ')} UTC
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-foreground/90">{r.body}</p>
+                          </div>
+                        ))}
+
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleAddReply(t.id);
+                          }}
+                          className="flex items-center gap-2 pt-0.5"
+                        >
+                          <Input
+                            type="text"
+                            value={replyDrafts[t.id] || ''}
+                            onChange={(e) =>
+                              setReplyDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))
+                            }
+                            placeholder="Add verification reply or ephemeris note..."
+                            className="flex-1 h-7 text-xs bg-background"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="xs"
+                            disabled={!(replyDrafts[t.id] || '').trim()}
+                          >
+                            Reply
+                          </Button>
+                        </form>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* RIGHT RAIL: Active Field Card, Classifications Filter (replaces dropdown), Trending Topics, Top Discussions */}
+        <aside
+          aria-label="Classifications and Trending Topics"
+          className="flex w-full lg:w-[276px] xl:w-[300px] shrink-0 flex-col max-h-72 lg:max-h-none border-t lg:border-t-0 lg:border-l border-border bg-card/30 overflow-y-auto p-4 gap-5"
+        >
+          {/* Active Sky Field Highlight Card (modeled on top-right promo card) */}
+          <div className="rounded-xl border border-border bg-card p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-foreground truncate">
+                {activeTargetName || 'Active Sky Field'}
+              </span>
+              <Badge variant="amber" className="shrink-0 font-mono text-[9px]">
+                Community
+              </Badge>
+            </div>
+            <p className="font-mono text-[11px] tabular-nums text-muted-foreground leading-relaxed">
+              J2000 RA {ra.toFixed(4)}° · Dec {dec >= 0 ? `+${dec.toFixed(4)}` : dec.toFixed(4)}° · FoV {fovArcsec}&quot; ({renderMode})
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-0.5">
+              <Button
+                type="button"
+                size="xs"
+                onClick={() => setTab('comparator')}
+                className="rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold"
+              >
+                Inspect Field
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                onClick={() => composerTitleRef.current?.focus()}
+                className="rounded-lg"
+              >
+                Pin Note
+              </Button>
+            </div>
+          </div>
+
+          {/* Classifications List (replaces the dropdown directly right of the chat stream) */}
+          <div role="region" aria-label="Classifications">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground">Classifications</h3>
+              {classFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => setClassFilter('ALL')}
+                  className="text-[10px] text-primary hover:underline"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                aria-pressed={classFilter === 'ALL'}
+                onClick={() => setClassFilter('ALL')}
+                className={`flex items-center justify-between rounded-lg border px-2.5 py-2 text-left text-[11px] transition-colors ${
+                  classFilter === 'ALL'
+                    ? 'border-border bg-card text-foreground font-medium'
+                    : 'border-transparent text-muted-foreground hover:bg-card/60 hover:text-foreground'
+                }`}
+              >
+                <span className="truncate">All Classifications</span>
+                <span className="ml-2 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {threads.length}
+                </span>
+              </button>
+              {CLASSIFICATION_CATEGORIES.map((cat) => {
+                const count = classCounts[cat.id] ?? 0;
+                const active = classFilter === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setClassFilter(active ? 'ALL' : cat.id)}
+                    className={`flex items-center justify-between rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition-colors ${
+                      active
+                        ? 'border-primary/50 bg-card text-foreground font-medium'
+                        : 'border-transparent text-muted-foreground hover:bg-card/60 hover:text-foreground'
+                    }`}
                   >
-                    <Input
-                      type="text"
-                      value={replyDrafts[t.id] || ''}
-                      onChange={(e) =>
-                        setReplyDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))
-                      }
-                      placeholder="Add verification reply or ephemeris cross-match note..."
-                      className="flex-1 h-7 text-xs bg-background"
-                    />
-                    <Button
-                      type="submit"
-                      variant="secondary"
-                      size="xs"
-                      disabled={!(replyDrafts[t.id] || '').trim()}
+                    <span className="truncate">{cat.label}</span>
+                    <span
+                      className={`ml-2 shrink-0 font-mono text-[10px] tabular-nums ${
+                        count > 0 ? 'text-primary' : 'text-muted-foreground/60'
+                      }`}
                     >
-                      Reply
-                    </Button>
-                  </form>
-                </article>
-              );
-            })}
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          </div>
-        </div>
-      </section>
+
+          {/* Trending Topics (dynamic tags from live archive discussions) */}
+          {trendingTopics.length > 0 && (
+            <div role="region" aria-label="Trending Topics">
+              <h3 className="mb-2 text-xs font-semibold text-foreground">Trending Topics</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {trendingTopics.map(([tag]) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    aria-pressed={tagFilter === tag}
+                    onClick={() => setTagFilter((cur) => (cur === tag ? null : tag))}
+                    className={`rounded-md border px-2 py-1 font-mono text-[10px] transition-colors ${
+                      tagFilter === tag
+                        ? 'border-amber-500/50 bg-amber-500/15 text-amber-300'
+                        : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Top Discussions */}
+          {topDiscussions.length > 0 && (
+            <div role="region" aria-label="Top Discussions">
+              <h3 className="mb-2 text-xs font-semibold text-foreground">Top Discussions</h3>
+              <div className="flex flex-col divide-y divide-border/60">
+                {topDiscussions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setClassFilter('ALL');
+                      setScopeFilter('ALL');
+                      setTagFilter(null);
+                      document.getElementById(`thread-${item.id}`)?.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'center',
+                      });
+                    }}
+                    className="py-2.5 text-left transition-colors hover:text-primary"
+                  >
+                    <div className="line-clamp-2 text-[11px] font-medium text-foreground/90 leading-snug">
+                      {item.title}
+                    </div>
+                    <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+                      {item.replies.length} replies · {item.upvotes} upvotes
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 };
