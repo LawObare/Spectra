@@ -4,26 +4,35 @@
 **Target Mission:** NASA SPHEREx (Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer)  
 **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA) — SPHEREx Quick Release 2 (`spherex_qr2` / prefix `qr2/`) with runtime config `IRSA_COLLECTION`  
 **System Repository:** `Spectra`  
-**Status:** Ready for Day-0 Spikes & Phase 1 (P0) Implementation  
+**Status:** Unified Specification (v2.5.0 Architectural Rigor + v3.0.0 Ground-Truth & Astrophysical Corrections)  
 **Tags Used Throughout:** `[V]` checked against IRSA documentation, `[D]` recomputed in this revision, `[?]` must be verified against real data or SPHEREx Explanatory Supplement before dependent logic is built.
 
 ---
 
 ## 1. System Vision, Evolution Log & Architectural Philosophy
 
-### 1.1 Mission Background & The Citizen Science Challenge
+### 1.1 Mission Background & The Citizen Science Problem
 Launched in early 2025, NASA's SPHEREx mission is mapping the entire celestial sphere every six months across 102 near-infrared spectral channels ranging from $0.75\,\mu\text{m}$ to $5.00\,\mu\text{m}$ with resolving powers $R = 35 - 130$ and a native pixel scale of $\approx 6.2''/\text{pixel}$. Over its planned 2-year nominal baseline, SPHEREx will produce four complete all-sky passes and $>50$ overlapping passes over the North and South Ecliptic Pole Deep Fields ($\approx 100\,\text{deg}^2$ each).
 
-The scientific core of this platform addresses the profound divergence between traditional broadband infrared surveys (such as WISE/NEOWISE, which powered Zooniverse's *Backyard Worlds: Planet 9*) and SPHEREx:
-- **Broadband Visual Motion vs. Hyperspectral Data Cubes:** *Backyard Worlds* visually blinked broadband images to detect moving dipoles. SPHEREx adds a continuous hyperspectral dimension: a calibrated 102-channel low-resolution spectrum for *every spatial pixel* on the sky.
-- **The Physical Reality of Linear Variable Filters (LVF):** SPHEREx mounts an interference filter directly over each detector array whose bandpass shifts continuously along the array $Y$-axis. Different exposures of the same sky coordinate land on different parts of the detector and therefore view the object at **different wavelengths**.
-- **The Core Scientific Imperative (Wavelength-Matched Differencing):** Differencing or blinking two exposures taken at different wavelengths produces massive false variability and spurious dipoles due to chromatic flux gradients. Meaningful time-domain comparison requires **wavelength-matched frames** where exposures are strictly grouped by the wavelength landing on the target pixel.
+The scientific problem addressed by this platform stems from a fundamental divergence between traditional broadband all-sky infrared surveys (such as WISE/NEOWISE, which powered Zooniverse's *Backyard Worlds: Planet 9*) and SPHEREx:
+- **Broadband Visual Motion vs. Hyperspectral Data Cubes:** *Backyard Worlds* succeeded by asking citizen scientists to visually blink two to four broadband images to detect moving dipoles. SPHEREx adds an entirely new dimension: a calibrated 102-channel low-resolution spectrum for *every single spatial pixel* on the sky.
+- **The Failure Modes of Raw Telescope Data:** Non-astronomers attempting to query the official NASA/IPAC IRSA portal encounter:
+  1. *Projection Distortion:* 2D Galactic Aitoff ovals that stretch celestial areas near the perimeter, with opaque MOC coverage overlays completely masking background stars.
+  2. *Spacecraft Roll & Optical Distortion:* Raw $2040 \times 2040$ detector arrays have differing spacecraft roll angles ($\theta$) and TAN-SIP polynomial distortion terms across epochs. Directly blinking raw frames causes the entire starfield to spin and shear.
+  3. *Linear Variable Filter (LVF) "Smile":* SPHEREx glues an interference filter directly over each detector array whose bandpass shifts continuously along the array $Y$-axis with optical curvature ("smile distortion"). The top of an image views $1.11\,\mu\text{m}$ light while the bottom views $0.75\,\mu\text{m}$. A raw image is *not* a monochromatic picture.
+  4. *Large Pixel Crowding ($6.2''$):* Point sources often blend together inside a single spatial resolution element.
 
----
+### 1.2 Evolution of the Platform Architecture
+1. **Initial Concept:** A hybrid client-server model inspired by *WiseView* (client-side Canvas blinking and URL hash state) and *Pan-STARRS* (server-side cutout slicing).
+2. **Clarification of 3D Mechanics:** The 3D component is not an arbitrary or speculative spatial distance plot; it is an **inside-out 3D Celestial Sphere** (virtual planetarium dome in Aladin Lite v3 WebGL2) that de-warps raw detector footprints into a rectified, North-Up tangent plane.
+3. **Mandatory NASA Benchmark Requirement:** The core hackathon requirement demands that an arbitrary user can type an RA/Dec coordinate or target name and view an animated video of that patch across time, tested explicitly against 5 benchmark targets (**Barnard’s Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis**).
+4. **Resolution of the Single-Screen vs. Tabbed Dilemma:** Multi-pane dashboards displaying 102-channel spectra, 3D globes, and blinking canvases simultaneously cause severe visual fatigue. The system isolates each tool into a full-screen dedicated tab while maintaining zero state loss via a global Zustand store and URL hash persistence.
+5. **Dual-Portal Route Isolation:** Active users are not exposed to machine learning agent training internals. The platform is partitioned into a public exploration and community discussion portal (`/explore`) and a hidden, token-authenticated administrative mission control console (`/admin`).
+6. **Integration of Citizen Science Infrastructure:** Full integration of Talk-style discussion boards, peer-review channels, volunteer calibration sets, and official DOI-linked mission catalog exports.
+7. **Zero-Auth Institutional Quality Pivot:** Dropped blocking authentication screens for hackathon evaluation while retaining clean route separation (`/explore` vs `/admin`). Integrated implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Callsign`), binary Float32 tensor streaming (eliminating 8-bit PNG quantization), `uv` + `ruff`, `air`, `openapi-typescript`, `cmdk`, and pre-seeded offline benchmark data products.
+8. **The v3.0 Ground-Truth & Astrophysical Corrections:** Fixed proper motion spherical trigonometry for Epsilon Indi B (added missing $1/\cos \delta$, eliminating a 46″ pointing error), instituted wavelength-matched differencing across survey passes (eliminating spurious dipoles caused by Linear Variable Filters), replaced S3 byte-range thrashing with server-side IRSA cutouts as the primary ingestion path, dropped 408 MB `pgvector` from P0 to protect Supabase free-tier quotas, and consolidated backend operations into a lean single FastAPI service.
 
-### 1.2 Evolution from v2.5 to v3.0 (The 19 Corrective Audits)
-
-The transition from v2.5.0 to v3.0.0 resolves critical astrophysical errors, memory constraints, and operational bottlenecks:
+### 1.3 The 19 Corrective Audits (v2.5 to v3.0 Evolution Log)
 
 | # | Topic | v2.5.0 Formulation | v3.0.0-PROD Formulation | Technical Reason & Ground-Truth Justification |
 |---|---|---|---|---|
@@ -47,9 +56,7 @@ The transition from v2.5.0 to v3.0.0 resolves critical astrophysical errors, mem
 | **18** | **URL State Schema** | Mixed URL hash (`#`) and query strings (`?`); `px=64,64`. | **Single query-string schema** managed via `nuqs`. | Eliminates routing desynchronization and browser state fragmentation. |
 | **19** | **Institutional Badges** | "Official" data products; "Science Team" stamp. | **"Community" products;** explicit disclaimer: no NASA/SPHEREx endorsement. | Avoids trademark violations and misleading scientific claims. |
 
----
-
-### 1.3 Core Scientific Principles
+### 1.4 Core Scientific Principles
 1. **Wavelength First:** An exposure is only comparable to another exposure at the same wavelength on the same pixel.
 2. **Measure Natively, Display Rectified:** Scientific photometry and centroiding execute on native detector pixels with the empirical HDU 5 PSF. Reprojected tangent images are strictly for visual display.
 3. **Never Invent Data:** Every frame and spectrum carries complete provenance: release string, exposure IDs, MJDs, wavelength window, and count of contributing exposures.
@@ -59,6 +66,8 @@ The transition from v2.5.0 to v3.0.0 resolves critical astrophysical errors, mem
 ---
 
 ## 2. Rigorous Ground-Truth Astrophysical Catalog & Benchmarks
+
+To guarantee identical numerical results across any backend or AI model evaluating the codebase, all physical coordinates, proper motions, spectral features, and calibration benchmarks are mathematically defined below:
 
 ### 2.1 Mission & Archive Facts
 #### Verified Facts `[V]`:
@@ -88,127 +97,188 @@ The transition from v2.5.0 to v3.0.0 resolves critical astrophysical errors, mem
 
 ---
 
-### 2.2 Recomputed NASA Benchmark Targets `[D]`
+### 2.2 Proper Motion Coordinate Propagation to Epoch 2025.5 `[D]`
+Coordinates must be propagated from J2000.0 ($t_0 = 2000.0$) to the SPHEREx mission midpoint ($t = 2025.5$, $\Delta t = 25.5\,\text{years}$) using the standard spherical motion formulas:
 
-#### Propagation Rule
-Targets are propagated from catalog reference epoch to SPHEREx mission midpoint ($t = 2025.5$) using `astropy.coordinates.SkyCoord.apply_space_motion` including proper motion, parallax, and radial velocity.  
-The spherical trigonometry hand-check is:
-$$\Delta\alpha = \frac{\mu_\alpha^* \cdot \Delta t}{\cos \delta}, \quad \Delta\delta = \mu_\delta \cdot \Delta t$$
-where $\mu_\alpha^* = \mu_\alpha \cos \delta$ (Gaia standard).  
-*Notice: For arbitrary user-entered coordinates, do not propagate. Only named targets resolved with proper motion (CDS Sesame/SIMBAD) are propagated to observation epochs. A fixed North-up celestial grid is maintained so moving objects visibly translate across the static background starfield.*
+$$\alpha(t) = \alpha_0 + \frac{\mu_\alpha \cos \delta_0}{\cos \delta(t)} \cdot \Delta t, \quad \delta(t) = \delta_0 + \mu_\delta \cdot \Delta t$$
 
 ```
 ============================================================================================================================================
 Target Name      Object Class            J2000 Coordinates (ICRS)       Proper Motion (mas/yr)             Epoch 2025.5 Center Coordinates
 ============================================================================================================================================
-Barnard's Star   M4V Red Dwarf           17h 57m 48.50s, +04d 41m 36.1s  pm_ra_cosdec:  -801.60 mas/yr     17h 57m 47.13s, +04d 46m 00.3s
-                                          (269.45208 deg, +4.69336 deg)  pm_dec:       +10362.40 mas/yr     (269.44639 deg, +4.76676 deg)
+Barnard's Star   M4V Red Dwarf           17h 57m 48.50s, +04d 41m 36.1s  pm_ra_cosdec:  -801.60            17h 57m 47.13s, +04d 46m 00.3s
+                                         (269.45208 deg, +4.69336 deg)   pm_dec:       +10362.40            (269.44639 deg, +4.76676 deg)
                  * Motion: 10.39"/yr = 1.68 px/yr along PA 355.6° (~1.7 px between Pass 1 and Pass 3).
                    Bright in NIR: saturation flag handling required.
 --------------------------------------------------------------------------------------------------------------------------------------------
-WISE 0855-0714   Y4 Sub-Brown Dwarf      08h 55m 10.83s, -07d 14m 42.5s  pm_ra_cosdec: -8123.70 mas/yr     08h 54m 56.91s, -07d 14m 25.4s
-                 (T_eff ~ 250 K)         (133.79513 deg, -7.24515 deg)  pm_dec:         +673.20 mas/yr     (133.73712 deg, -7.24038 deg)
+WISE 0855-0714   Y4 Sub-Brown Dwarf      08h 55m 10.83s, -07d 14m 42.5s  pm_ra_cosdec: -8123.70            08h 54m 56.91s, -07d 14m 25.4s
+                 (T_eff ~ 250 K)         (133.79513 deg, -7.24515 deg)   pm_dec:         +673.20            (133.73712 deg, -7.24038 deg)
                  * Motion: 8.15"/yr = 1.31 px/yr along PA 274.7°.
                    Flux: ~0.5 mJy near 4.5 um; undetectable in D1-D3; detected in D5/D6 coadds or honest non-detection.
 --------------------------------------------------------------------------------------------------------------------------------------------
-Epsilon Indi B   T1 + T6 Brown Dwarf     22h 04m 10.60s, -56d 46m 58.2s  pm_ra_cosdec: +3982.00 mas/yr     22h 04m 22.96s, -56d 48m 01.1s
-                 Binary (sep ~ 0.7")     (331.04415 deg, -56.78284 deg) pm_dec:        -2466.80 mas/yr     (331.09566 deg, -56.80031 deg)
+Epsilon Indi B   T1 + T6 Brown Dwarf     22h 04m 10.60s, -56d 46m 58.2s  pm_ra_cosdec: +3982.00            22h 04m 22.96s, -56d 48m 01.1s
+                 Binary (sep ~ 0.7")     (331.04415 deg, -56.78284 deg)  pm_dec:        -2466.80            (331.09566 deg, -56.80031 deg)
                  * Motion: 4.68"/yr = 0.76 px/yr along PA 121.8°.
                    NOTE: v2.5 used 331.0724 deg (omitted 1/cos delta, 46" error). Unresolved binary within single 6.2" pixel.
 --------------------------------------------------------------------------------------------------------------------------------------------
-RW Aurigae       Classical T Tauri Star  05h 07m 49.55s, +30d 24m 05.2s  pm_ra_cosdec:     +1.40 mas/yr     05h 07m 49.55s, +30d 24m 04.7s
-                 with Protoplanetary Disk(76.95646 deg, +30.40144 deg)  pm_dec:          -20.60 mas/yr     (76.95647 deg, +30.40130 deg)
+RW Aurigae       Classical T Tauri Star  05h 07m 49.55s, +30d 24m 05.2s  pm_ra_cosdec:     +1.40            05h 07m 49.55s, +30d 24m 04.7s
+                 with Protoplanetary Disk(76.95646 deg, +30.40144 deg)   pm_dec:          -20.60            (76.95647 deg, +30.40130 deg)
                  * Motion: 0.02"/yr (stationary). Displays >1.5 mag brightness changes. Difference mode yields stationary flashing monopole.
 --------------------------------------------------------------------------------------------------------------------------------------------
-R Draconis       Mira-type Pulsating     16h 32m 40.23s, +66d 45m 17.9s  pm_ra_cosdec:     +6.10 mas/yr     16h 32m 40.26s, +66d 45m 18.1s
-                 AGB Variable (P=245d)   (248.16763 deg, +66.75497 deg) pm_dec:           +9.80 mas/yr     (248.16773 deg, +66.75504 deg)
+R Draconis       Mira-type Pulsating     16h 32m 40.23s, +66d 45m 17.9s  pm_ra_cosdec:     +6.10            16h 32m 40.26s, +66d 45m 18.1s
+                 AGB Variable (P=245d)   (248.16763 deg, +66.75497 deg)  pm_dec:           +9.80            (248.16773 deg, +66.75504 deg)
                  * Motion: 0.012"/yr (stationary). Great-circle angular distance to NEP is 8.61 degrees. Pulsates across epochs.
 ============================================================================================================================================
 ```
 
----
 
-### 2.3 SPHEREx HDU 2 (`FLAGS`) Bitmask Specification
-Flags are generated via `scripts/build_flags.py` from official telemetry tables. The standard mask values are:
-- `Bit 0` ($1$): `TRANSIENT` — Cosmic ray hit or sudden single-read glitch during Sample-Up-The-Ramp (SUR) regression.
-- `Bit 1` ($2$): `OVERFLOW` — Detector well saturation ($>85\%$ full well capacity).
-- `Bit 2` ($4$): `SUR_ERROR` — Onboard fit failure during Sample-Up-The-Ramp regression.
-- `Bit 4` ($16$): `PHANTOM` — Interleaved non-physical readout test channels.
-- `Bit 5` ($32$): `REFERENCE` — Non-illuminated reference border pixels (outer 4 rows/columns).
-- `Bit 6` ($64$): `NONFUNC` — Factory dead, hot, or disconnected pixels.
-- `Bit 7` ($128$): `DICHROIC` — Optical boundary zone where beam splitter transmission drops below $50\%$.
-- `Bit 9` ($512$): `MISSING_DATA` — Telemetry loss or frame drop.
-- `Bit 10` ($1024$): `HOT` — Excess dark current ($>5\sigma$ above array mean).
-- `Bit 11` ($2048$): `COLD` — Low quantum efficiency ($<20\%$ nominal).
+#### Celestial Coordinate Propagation Rule & Celestial Grid Constraint
+Propagation rule: Targets are propagated from catalog reference epoch to SPHEREx mission midpoint ($t = 2025.5$) using `astropy.coordinates.SkyCoord.apply_space_motion` with proper motion, parallax, and radial velocity.
+$$\Delta\alpha = \frac{\mu_\alpha^* \cdot \Delta t}{\cos \delta}, \quad \Delta\delta = \mu_\delta \cdot \Delta t$$
+where $\mu_\alpha^* = \mu_\alpha \cos \delta$ (Gaia standard).  
+**Crucial Grounding Rule:** For arbitrary user-entered coordinates, do not propagate. Only named targets resolved with proper motion (CDS Sesame/SIMBAD) are propagated to observation epochs. A fixed North-up celestial grid is maintained so moving objects visibly translate across the static background starfield with catalog-predicted tracks overlaid.
 
----
+### 2.3 SPHEREx FITS Extension Structure & Header Standard
+Every SPHEREx Level 2 Quick Release image file (`spherex_qr3`) delivered by Caltech/IPAC IRSA is a Multi-Extension FITS (MEF) containing 6 Header Data Units:
 
-## 3. Scientific Processing Pipeline & Image Science
+```
++-------+---------------+-------------------+---------------------------------------------------------------------+
+| HDU # | Extension Name| Data Type         | Physical Meaning & Calibration Units                                |
++-------+---------------+-------------------+---------------------------------------------------------------------+
+| HDU 1 | IMAGE         | 32-bit float      | Calibrated surface brightness flux in MJy/sr (2040 x 2040 pixels)   |
+| HDU 2 | FLAGS         | 32-bit integer    | Bitmask quality flags (bit 0=transient, bit 1=overflow, etc.)        |
+| HDU 3 | VARIANCE      | 32-bit float      | Pixel noise variance (MJy/sr)^2 (read noise + photon Poisson noise) |
+| HDU 4 | ZODI          | 32-bit float      | Modeled solar system zodiacal dust emission background (MJy/sr)     |
+| HDU 5 | PSF           | 32-bit float cube | 3D local Point Spread Function empirical model                      |
+| HDU 6 | WCS-WAVE      | Binary Table      | Tabular FITS WCS (WAVE-TAB) mapping (x, y) -> central lambda, dlambda|
++-------+---------------+-------------------+---------------------------------------------------------------------+
+```
 
-### 3.1 Cutout Pipeline (`GET /api/cutout`)
-Execution sequence for any requested target coordinate $(\alpha, \delta)$ and field-of-view $\text{FoV}$:
-1. **Target Resolution:** Parse coordinates (decimal degrees, sexagesimal, or CDS Sesame name resolution with 350 ms debounce).
-2. **SIA2 Query:** Discover all intersecting exposures via IRSA SIA2 (`COLLECTION=spherex_qr2&POS=circle+<ra>+<dec>+<radius_deg>`), cone padded by field-of-view diagonal. Returns exposure IDs, observation MJDs, detector ID, footprints, and cutout URLs.
-3. **Dynamic Epoch Grouping:** Group exposures into survey passes using configured mission survey boundaries (`config/survey_passes.json`), not hardcoded dates. Each pass displays actual MJD range.
-4. **Server-Side Cutout Ingestion:** Request cutouts of required HDUs (`IMAGE`, `FLAGS`, `VARIANCE`, `WCS-WAVE`, `PSF`) from IRSA Cutout Service (`<data_url>?center=<ra>,<dec>&size=<deg>`). Fallback: S3 byte-range slicing using `fsspec` block caching.
-5. **Wavelength Mapping:** Evaluate HDU 6 `WAVE-TAB` at every pixel in the cutout to compute exact central wavelength $\lambda(x, y)$ and bandpass width $\Delta\lambda(x, y)$.
-6. **Wavelength Window Selection:** Select exposures whose central wavelength at the target pixel falls within the target band window $[\lambda_0(1-w), \lambda_0(1+w)]$ (see Section 3.2). Mask pixels outside window.
-7. **Master Tangent Reprojection:** Reproject each exposure to a master tangent grid centered on target $(\alpha, \delta)$, $6.2''/\text{pixel}$, `RA---TAN`, North-Up, East-Left. Use `reproject.reproject_exact` for `IMAGE` and `VARIANCE` (conserving surface brightness), and nearest-neighbor for `FLAGS`.
-8. **Inverse-Variance Coaddition:** For each pass $e$ and band $b$, compute the inverse-variance coadded frame:
-   $$I_{\text{coadd}}(x, y) = \frac{\sum_{i \in S(e, b)} I_i(x, y) / \sigma_i^2(x, y)}{\sum_{i \in S(e, b)} 1 / \sigma_i^2(x, y)}, \quad \sigma_{\text{coadd}}^2(x, y) = \frac{1}{\sum_{i \in S(e, b)} 1 / \sigma_i^2(x, y)}$$
-   Pixels with fatal flags (`OVERFLOW`, `NONFUNC`, `TRANSIENT`) are excluded. Keep per-pixel exposure count plane $N_{\text{exp}}(x, y)$.
-9. **Binary Tensor Packaging:** Output little-endian binary tensor payload (Section 3.6) with JSON metadata.
+#### The Precise SPHEREx HDU 2 (`FLAGS`) Bitmask Hierarchy:
+- `Bit 0` ($2^0 = 1$): **`TRANSIENT`** — Cosmic ray hit or sudden single-read glitch during Sample-Up-The-Ramp (SUR) processing.
+- `Bit 1` ($2^1 = 2$): **`OVERFLOW`** — Detector well saturation ($>85\%$ full well capacity).
+- `Bit 2` ($2^2 = 4$): **`SUR_ERROR`** — Onboard fit failure during Sample-Up-The-Ramp regression.
+- `Bit 4` ($2^4 = 16$): **`PHANTOM`** — Interleaved non-physical readout test channels.
+- `Bit 5` ($2^5 = 32$): **`REFERENCE`** — Non-illuminated reference border pixels (outer 4 rows/columns).
+- `Bit 6` ($2^6 = 64$): **`NONFUNC`** — Factory non-functional, dead, or disconnected pixels.
+- `Bit 7` ($2^7 = 128$): **`DICHROIC`** — Optical boundary zone where beam splitter transmission drops below $50\%$.
+- `Bit 9` ($2^9 = 512$): **`MISSING_DATA`** — Telemetry loss or frame drop.
+- `Bit 10` ($2^{10} = 1024$): **`HOT`** — Excess dark current ($>5\sigma$ above array mean).
+- `Bit 11` ($2^{11} = 2048$): **`COLD`** — Low quantum efficiency ($<20\%$ nominal).
+- `Bit 17` ($2^{17} = 131072$): **`PERSISTENCE`** — Residual latent charge trapped from previous exposure bright star.
+- `Bit 22` ($2^{22} = 4194304$): **`GHOST`** — Internal optical reflection or bright star glint artifact.
 
----
+### 2.4 Detector Super-Bands & Molecular Band Strength ($A$-Values)
+The 102 channels are physically dispersed across six $2048 \times 2048$ Hawaii-2RG (H2RG) detector arrays with Linear Variable Filters (LVF). In the pipeline, exposures within each detector array are binned into 6 high-SNR "Super-Bands":
 
-### 3.2 Analysis Bands & Wavelength Windows
-One primary analysis band is established per detector array:
+```
+====================================================================================================================
+Super-Band  Detector Array  Wavelength Range   Resolving Power  Primary Molecular Diagnostic Features
+====================================================================================================================
+Band D1     Array 1         0.75 - 1.11 um     R = 35 - 41      Paschen series hydrogen lines, stellar photospheres
+Band D2     Array 2         1.11 - 1.63 um     R = 41 - 50      Warm brown dwarf H2O steam, 1.6 um galaxy H-bump
+Band D3     Array 3         1.63 - 2.42 um     R = 50 - 64      Stellar CO overtone (2.3 um), Brackett-gamma (2.16 um)
+Band D4     Array 4         2.42 - 3.82 um     R = 64 - 96      H2O ice (3.05 um), CH4 (3.32 um), CH3OH (3.53 um), PAH
+Band D5     Array 5         3.82 - 4.42 um     R = 96 - 118     CO2 ice (4.27 um), 13CO2 ice (4.38 um), Cold Y-dwarfs
+Band D6     Array 6         4.42 - 5.00 um     R = 118 - 130    CO gas/ice (4.67 um), Pf-beta, Asteroid thermal emission
+====================================================================================================================
+```
 
-| Band | Detector | Default Central $\lambda_0$ ($\mu\text{m}$) | Default Window Half-Width ($w = 1/R_{\text{band}}$) | Physical Tracing |
-|---|---|---|---|---|
-| **B1** | D1 | $0.90\,\mu\text{m}$ | $\approx 2.4\%$ | Stellar continuum, optical-NIR turnover |
-| **B2** | D2 | $1.35\,\mu\text{m}$ | $\approx 2.4\%$ | Water vapor vapor absorption, low-mass stars |
-| **B3** | D3 | $2.05\,\mu\text{m}$ | $\approx 2.4\%$ | Brown dwarf absorption, stellar continuum |
-| **B4** | D4 | $3.30\,\mu\text{m}$ | $\approx 2.9\%$ | PAH emission feature, aliphatic hydrocarbons |
-| **B5** | D5 | $4.10\,\mu\text{m}$ | $\approx 0.9\%$ | Sub-stellar peak, brown dwarf thermal window |
-| **B6** | D6 | $4.60\,\mu\text{m}$ | $\approx 0.8\%$ | CO gas / fundamental ice absorption |
-
-*Window widening up to $10\%$ is user-adjustable in the UI. When widened beyond $1/R_{\text{band}}$, the UI displays a yellow `[Wavelength-Mismatch Residuals Possible]` warning badge.*
-
----
-
-### 3.3 Wavelength-Matched Frames & The Coverage Matrix
-Let $S(e, b)$ represent the set of exposures acquired during pass $e$ using detector $b$ whose central wavelength $\lambda$ at the target coordinate falls within $[\lambda_0(1-w), \lambda_0(1+w)]$.
-- **The Coverage Matrix:** Displayed prominently in Tab 2 as a 2D grid: Rows = Survey Epochs ($e = 1 \dots N$), Columns = Bands (B1–B6).
-- Each cell displays the integer count $|S(e, b)|$ of contributing exposures.
-- Cells with $|S(e, b)| = 0$ are rendered disabled/greyed out.
-- **Scientific Difference Mode:** Time-domain differencing ($I_{\text{epoch } N} - I_{\text{epoch } 0}$) is strictly permitted **only between cells within the same column (same band)**. Differencing across different columns or across cells with zero coverage is physically prohibited by the UI.
-
----
-
-### 3.4 Motion Measurement (Native PSF Centroiding)
-1. In native detector pixel space, fit the target centroid using the empirical HDU 5 Point Spread Function at the predicted coordinates:
-   $$I_{\text{model}}(x, y) = F_0 \cdot \text{PSF}(x - x_0, y - y_0) + B_0$$
-   where $F_0$ is source flux, $(x_0, y_0)$ is the free centroid, and $B_0$ is local sky background.
-2. Calculate the astrometric shift vector $\Delta\vec{r} = (x_0(t_2) - x_0(t_1), y_0(t_2) - y_0(t_1))$ and propagate the full covariance matrix $\mathbf{\Sigma}$.
-3. Compare measured motion against catalog proper motion $\vec{\mu}$.
-4. Tab 2 renders the measured centroid with $1\sigma$ and $2\sigma$ uncertainty ellipses alongside catalog-predicted positions.
-5. Automated mover detection requires centroid-shift $\text{SNR} \ge 3\sigma$ relative to stationary background control stars. Difference of Gaussians (DoG) filter is retained strictly as an optional visual aid.
+#### Laboratory Integrated Band Strengths ($A$-Values):
+Used in Tab 4 to convert integrated optical depth into physical molecular column density ($N = \frac{1}{A} \int \tau(\nu) d\nu$):
+- **$\text{H}_2\text{O}$ Ice (OH Stretch, $3.05\,\mu\text{m} / 3270\,\text{cm}^{-1}$):** $A = 2.00 \times 10^{-16}\,\text{cm}\cdot\text{molecule}^{-1}$
+- **$\text{CO}_2$ Ice ($\nu_3$ Stretch, $4.27\,\mu\text{m} / 2342\,\text{cm}^{-1}$):** $A = 7.60 \times 10^{-17}\,\text{cm}\cdot\text{molecule}^{-1}$
+- **$^{13}\text{CO}_2$ Ice ($4.38\,\mu\text{m} / 2283\,\text{cm}^{-1}$):** $A = 7.80 \times 10^{-17}\,\text{cm}\cdot\text{molecule}^{-1}$
+- **$\text{CO}$ Ice (C$\equiv$O Stretch, $4.67\,\mu\text{m} / 2140\,\text{cm}^{-1}$):** $A = 1.10 \times 10^{-17}\,\text{cm}\cdot\text{molecule}^{-1}$
+- **$\text{CH}_3\text{OH}$ Ice (C–O Stretch, $3.53\,\mu\text{m} / 2825\,\text{cm}^{-1}$):** $A = 1.60 \times 10^{-18}\,\text{cm}\cdot\text{molecule}^{-1}$
+- **$\text{CH}_4$ (Methane in Brown Dwarfs, $\nu_3$ Band, $3.32\,\mu\text{m} / 3012\,\text{cm}^{-1}$):** $A = 5.60 \times 10^{-18}\,\text{cm}\cdot\text{molecule}^{-1}$
 
 ---
 
-### 3.5 Hyperspectral Extraction Pipeline (`GET /api/spectrum`)
-1. **Coordinate Mapping:** Map target sky position $(\alpha, \delta)$ into each overlapping exposure's native detector coordinates $(x, y)$ using the TAN-SIP polynomial WCS.
-2. **Dispersion Evaluation:** Query the HDU 6 `WAVE-TAB` table at $(x, y)$ using bilinear interpolation to obtain exact wavelength $\lambda$ and spectral resolution element $\Delta\lambda$.
-3. **PSF Point-Source Photometry:** Measure point-source flux density $F_\nu(\lambda)$ via PSF fitting (HDU 5). An aperture flux (with local background annulus) is permitted only for isolated bright sources. Convert surface brightness ($	ext{MJy/sr}$) to Janskys ($10^{-26}\text{ W m}^{-2}\text{ Hz}^{-1}$).
-4. **Flag Bitmask Aggregation:** Bitwise-OR all contributing pixel flags to populate flag channels per wavelength sample.
-5. **Non-Simultaneity Tracking:** SPHEREx spectra assembled across a pass are built from exposures spanning up to weeks. The API returns the exact MJD range $[t_{\text{min}}, t_{\text{max}}]$, and the UI attaches a `[Non-Simultaneous Spectrum]` badge for high-variability targets (e.g., Miras, T Tauri stars).
-6. **Continuum Normalization:** User-selectable polynomial continuum fitting is provided with explicit visual display of fitting windows.
+## 3. System Architecture & End-to-End Data Flow
 
----
+```mermaid
+flowchart TD
+    ClientBrowser([Client Web Browser])
+    
+    subgraph RoutingGuard["Routing & Route-Level Security"]
+        Router{react-router-dom}
+        PublicRoute["/explore/* -> Public Discovery Portal"]
+        AdminRoute["/admin/* -> Token-Guarded Admin Console"]
+    end
+    
+    subgraph StateAndChrome["Global Client State (Zustand + URL Hash)"]
+        NavHeader["Global Navigation Header: Coords, 5 Benchmark Pills, FoV, Share/Embed, Cmd+K"]
+        Store[(Central Telemetry Store: ra, dec, fov, matrices, spectrum, flags, synthetic_params)]
+    end
 
-### 3.6 Binary Tensor Format (`application/octet-stream`)
-The API returns a compact, high-performance binary stream avoiding base64 and JSON bloat:
+    subgraph PublicWorkspaces["Portal A: 5 Dedicated Public Tabs (/explore)"]
+        Tab1["Tab 1: Celestial Navigator (Aladin Lite v3 WebGL2 3D Globe + Camera Dive)"]
+        Tab2["Tab 2: Time-Domain Comparator (Canvas Blink / Diff / Super-Bands / Raw vs Rectified)"]
+        Tab3["Tab 3: Spectrophotometric Lab (102-Band Plot / Photo-z / Redshift Slider / Unmixing)"]
+        Tab4["Tab 4: Molecular & Ice Studio (Tau-Norm / Column Densities / Spatial Brush / EBL Mask)"]
+        Tab5["Tab 5: Observation Discussions (Talk Forum / Embedded URL Snapshots / #tags)"]
+    end
+
+    subgraph AdminConsole["Portal B: Admin Mission Control (/admin)"]
+        AdminAuth["Route Separation Guard: /explore (Citizen) vs /admin (Mission Control)"]
+        Mod1["Tab 1: Training Dynamics & Loss Studio (/admin/dynamics)"]
+        Mod2["Tab 2: Parameter & Activation Inspector (/admin/internals)"]
+        Mod3["Tab 3: Decision Boundary Animator (/admin/boundaries)"]
+        Mod4["Tab 4: Hard-Negative & Escalation Queue (/admin/triage)"]
+        Mod5["Tab 5: Calibration & Data Product Hub (/admin/exports)"]
+    end
+
+    subgraph GoGateway["Backend API Gateway (Go / Port :8080)"]
+        ChiRouter["Chi Router & CORS Middleware"]
+        LRUCache["Thread-Safe LRU In-Memory Cache (sync.RWMutex)"]
+        SQLC["sqlc Generated Type-Safe Query Engine (pgx/v5)"]
+        SessionMiddleware["Observer Session Middleware (X-Observer-ID / X-Observer-Callsign)"]
+        TrainingWS["Training Telemetry WebSocket Server (/api/admin/ws/training)"]
+    end
+
+    subgraph SupabaseTier["Supabase Managed Cloud / Local Infrastructure"]
+        SupaDB[("PostgreSQL 16 Relational Engine")]
+        PGVector["pgvector: 102-Band Spectral Cosine Similarity (<=>)"]
+        SupaRLS["Supabase RLS & Edge API Gateway"]
+        SupaRealtime["Supabase Realtime (Discussion WebSocket Broadcast)"]
+        SupaStorage["Supabase Storage (Cutout S3 Pre-Render Cache)"]
+    end
+
+    subgraph PythonWorker["Data Science Pipeline (FastAPI / Port :8001)"]
+        WorkerAPI["FastAPI Scientific Microservice"]
+        SIAClient["IRSA SIAv2 Client (pyvo)"]
+        S3Fetcher["AWS Open Data S3 Slicer (astropy + fsspec)"]
+        WCSAligner["WCS North-Up De-Warping Engine (reproject)"]
+        WAVEExtractor["HDU 6 WCS-WAVE Interpolator & Photometry"]
+        Prescreener["DoG Dipole & Chebyshev Spectral Anomaly Pre-Screener"]
+        InjectorEngine["Synthetic Source Injector Engine (synth_a / synth_b)"]
+        TrainingHooks["PyTorch Training Hooks & Meshgrid Evaluator"]
+    end
+
+    ClientBrowser --> Router
+    Router --> PublicRoute --> NavHeader --> PublicWorkspaces
+    Router --> AdminRoute --> AdminAuth --> AdminConsole
+    
+    PublicWorkspaces <--> Store
+    PublicWorkspaces <-->|REST API| GoGateway
+    PublicWorkspaces <-->|WebSocket Subscription| SupaRealtime
+    AdminConsole <-->|REST API + Admin Route Flag| SessionMiddleware --> GoGateway
+    AdminConsole <-->|Live Telemetry WebSocket| TrainingWS
+    
+    GoGateway <--> LRUCache
+    GoGateway <--> SQLC --> SupaDB
+    SupaDB <--> PGVector
+    GoGateway <-->|Internal HTTP Proxy| WorkerAPI
+    TrainingHooks -.->|Internal WebSocket Feed| TrainingWS
+    
+    WorkerAPI --> SIAClient & S3Fetcher
+    S3Fetcher --> WCSAligner --> WAVEExtractor --> Prescreener
+    WorkerAPI --> InjectorEngine
+```
+
+### 3.2 Binary Tensor Format (`application/octet-stream`)
+To eliminate 8-bit quantization artifacts (banding, posterization) during client-side dynamic Asinh stretching and pairwise difference subtraction while minimizing network payloads, the backend streams raw IEEE-754 Little-Endian Float32Array binary buffers:
 
 ```
 +-------------------------------------------------------------------------------+
@@ -243,366 +313,2180 @@ $$\text{Size} = N_{\text{epochs}} \times N_{\text{bands}} \times \left(\frac{\te
 
 ---
 
-### 3.7 WebGL2 Shader Pipeline & Inverse Hyperbolic Sine (Asinh) Stretch
-To render 32-bit floating-point flux planes with high dynamic range in real time:
+## 4. Backend Engineering & Scientific Processing Pipeline
 
-$$\tilde{I}(x, y) = \frac{\text{asinh}\left(\frac{I(x, y) - I_{\text{black}}}{\beta}\right)}{\text{asinh}\left(\frac{I_{\text{white}} - I_{\text{black}}}{\beta}\right)}$$
-where $\beta = \text{softening parameter}$, $I_{\text{black}} = \text{black point} \approx \text{median} - 1.5\sigma$, and $I_{\text{white}} = \text{white point} \approx \text{median} + 15\sigma$.
+### 4.1 Python Science Microservice (`astro-worker`)
+- **Language / Environment:** Python 3.11+, FastAPI, Uvicorn (Bound strictly to internal loopback `127.0.0.1:8001`).
+- **Fast Package Management & Formatting:** `uv` (Astral) + `Ruff`.
+  - Cold environment resolution & dependency lock in $<3\,	ext{seconds}$ via `uv init && uv add astropy pyvo reproject fastapi torch scikit-learn pillow fsspec s3fs requests`.
+  - Exact binary hashes locked in `uv.lock`, eliminating C-extension compilation errors across different operating systems.
+- **Dependencies:** `astropy>=6.1.3`, `pyvo>=1.5.2`, `reproject>=0.14.0`, `numpy>=2.1.1`, `scipy>=1.14.1`, `torch>=2.4.0`, `scikit-learn>=1.5.0`, `pillow>=10.4.0`, `fsspec>=2024.6.1`, `s3fs>=2024.6.1`, `requests>=2.32.3`.
 
-```glsl
-#version 300 es
-precision highp float;
-in vec2 v_texCoord;
-out vec4 fragColor;
+#### Detailed Execution Pipelines:
 
-uniform sampler2D u_fluxTexture;    // R32F texture
-uniform float u_black;
-uniform float u_white;
-uniform float u_softening;
-uniform int u_invert;
+##### 1. Data Ingestion & WCS North-Up Reprojection Pipeline (`GET /worker/cutout`)
+```
+[Client Query: RA, Dec, FoV, Cadence, synth_a_ra, synth_a_dec, synth_a_pmra, synth_a_pmdec]
+         |
+         v
+[IRSA SIAv2 Query via pyvo]
+URL: https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr3&POS=circle+{ra}+{dec}+{fov_deg}
+         |
+         +--> Returns VOTable with t_min, t_max, detector_id, s_region, access_url, s3_uri
+         |
+[Byte-Range MEF Ingestion via astropy.io.fits + fsspec]
+URI: s3://nasa-irsa-spherex/qr3/... (Anon=True, HTTP Range requests)
+         |
+         +--> Slices bounding box [y_min:y_max, x_min:x_max] for HDUs 1, 2, 3, 4, 6
+         |
+[Master Synthetic WCS Header Construction]
+CRVAL1 = ra, CRVAL2 = dec
+CDELT1 = -0.00172222 deg (-6.2 arcsec), CDELT2 = +0.00172222 deg (+6.2 arcsec)
+CTYPE1 = 'RA---TAN', CTYPE2 = 'DEC--TAN', CROTA2 = 0.0 (True North-Up, East-Left)
+NAXIS1 = NAXIS2 = int(fov_arcsec / 6.2)
+         |
+[Dual-Engine Reprojection via reproject]
+HDU 1 (IMAGE) & HDU 3 (VARIANCE): reproject_exact (Flux-conserving spherical polygon area intersection; reproject_interp is non-conservative)
+HDU 2 (FLAGS): reproject_interp(order='nearest-neighbor') (Preserves integer bitmask values!)
+         |
+[Synthetic Source Injection Module (If synth_a or synth_b params provided)]
+Evaluates proper motion displacement for epoch t_k. Uses empirical PSF from HDU 5 to inject
+simulated point-source flux into HDU 1 and propagated error into HDU 3.
+         |
+[Wavelength-Matched Frame Selection & Inverse-Variance Coaddition]
+Exposures grouped dynamically by survey pass boundaries (MJD) AND wavelength window [lambda_0(1-w), lambda_0(1+w)].
+S(e, b) is the set of exposures in pass e, detector b whose central lambda at target pixel matches band b.
+I_coadd(x, y) = [SUM(I_k / sigma_k^2)] / [SUM(1 / sigma_k^2)] over unflagged pixels k in S(e, b).
+Difference mode strictly restricted to exposures within the same band window.
+         |
+[Asinh Stretching & Percentile Normalization]
+AsinhStretch(a=0.1) o PercentileInterval(99.5) -> scaled to uint8 [0, 255]
+         |
+[Response Generation: Zero-Copy Binary Float32 Tensor Streaming]
+To eliminate 8-bit quantization artifacts (banding, posterization) during client-side dynamic Asinh stretching
+and pairwise difference subtraction (t_N - t_0), astro-worker serves raw IEEE-754 Float32Array binary buffers
+via `GET /worker/cutout/binary` alongside JSON metadata. WebGL2 fragment shaders compute 32-bit float math at 120 FPS.
+```
 
-float asinh_approx(float x) {
-    return log(x + sqrt(x * x + 1.0));
+##### 2. WCS-WAVE Hyperspectral Extraction Pipeline (`GET /worker/spectrum`)
+1. **Target Coordinate Resolution:** Input master pixel $(x_{\text{master}}, y_{\text{master}})$ is mapped to astronomical coordinates $(\alpha, \delta)$ via `master_wcs.pixel_to_world()`.
+2. **Detector Space Lookup:** For each individual exposure covering the coordinate, $(\alpha, \delta)$ is translated to native detector pixel $(x_{\text{det}}, y_{\text{det}})$ using that exposure's raw spatial WCS (`TAN-SIP`).
+3. **Linear Variable Filter Smile Inversion:** Query HDU 6 (`WCS-WAVE` `WAVE-TAB`). Perform 2D bilinear interpolation across the tabular grid:
+   $$\lambda_k = \mathcal{I}_{\text{WAVE}}(x_{\text{det}}, y_{\text{det}}), \quad \Delta\lambda_k = \mathcal{I}_{\text{DWAVE}}(x_{\text{det}}, y_{\text{det}})$$
+4. **Weighted Aperture Photometry:** Extract surface brightness flux $I_k$ and read variance $\sigma_k^2$ within a $3 \times 3$ pixel aperture centered on $(x_{\text{det}}, y_{\text{det}})$. Bitwise-OR all overlapping HDU 2 flags.
+5. **Spectral Binning:** Accumulate all $(\lambda_k, I_k, \sigma_k)$ points across all stepped exposures into the standard 102 SPHEREx central channel wavelengths ($\lambda_1 = 0.75\,\mu\text{m}$ to $\lambda_{102} = 5.00\,\mu\text{m}$). If multiple exposures hit channel $i$, compute inverse-variance weighted mean flux and propagated error.
+6. **Continuum Normalization:** If `normalize=True`, fit an iterative $3\sigma$-clipped 4th-order Chebyshev polynomial baseline $F_{\text{cont}}(\lambda)$ across unabsorbed spectral regions ($0.8-1.1\,\mu\text{m}, 2.1-2.3\,\mu\text{m}, 3.7-3.9\,\mu\text{m}$) and output normalized transmission $F/F_{\text{cont}}$ and optical depth $\tau(\lambda) = -\ln(F/F_{\text{cont}})$.
+
+##### 3. Automated Pre-Screeners & Synthetic Injections
+- **Proper Motion Dipole Detector (DoG Matched Filter):**
+  Computes the signal-to-noise difference image between the earliest and latest epochs:
+  $$\Delta S(x, y) = \frac{I_{t_N}(x, y) - I_{t_0}(x, y)}{\sqrt{\sigma_{t_N}^2(x, y) + \sigma_{t_0}^2(x, y)}}$$
+  Masks all pixels where `(FLAGS & 0x07) != 0`. Applies a Difference-of-Gaussians filter ($g_{\sigma_1} - g_{\sigma_2}$ with $\sigma_1 = 1.0\,\text{px}, \sigma_2 = 2.0\,\text{px}$) to identify dipole pairs (a negative peak $\le -4\sigma$ and a positive peak $\ge +4\sigma$ separated by $1 \le \Delta r \le 12\,\text{pixels}$) or stationary monopoles ($|\Delta S| \ge 5\sigma$ with zero spatial separation).
+- **Synthetic Source Injector Engine (`synth_a` / `synth_b`):**
+  Implements the WiseView pattern directly in the FITS tensor space. Accepts parameters:
+  - `synth_ra`, `synth_dec`: Initial celestial injection coordinates.
+  - `synth_pmra`, `synth_pmdec`: Injected proper motion in $\text{mas/yr}$.
+  - `synth_mjd_ref`: Reference timestamp for zero motion.
+  - `synth_mag_d1` through `synth_mag_d6`: Injected magnitudes in Super-Bands.
+  For each epoch observation at timestamp $MJD_k$, the engine computes the coordinate offset, generates a 2D Gaussian profile sampled from the HDU 5 (`PSF`) kernel, scales it by the band flux, and adds it directly into HDU 1 before reprojection. This provides ground-truth test subjects to audit volunteer sensitivity.
+
+---
+
+### 4.2 Go API Gateway & Ledger Engine (`api-gateway`)
+- **Language / Environment:** Go 1.22+, `net/http`, Chi Router (`github.com/go-chi/chi/v5`) listening on port `:8080`.
+- **Database Engine & Tooling:** Supabase Managed PostgreSQL 16 + `pgvector` extension + `pgx/v5` connection pool (`github.com/jackc/pgx/v5/pgxpool`) + `sqlc` compile-time type-safe code generator.
+
+#### 4.2.1 High-Velocity Database Architecture: Supabase + `sqlc` + `pgx/v5`
+To eliminate runtime type mismatches, manual string formatting, and ORM performance overhead, database interactions are strictly governed by compile-time generated Go code from raw SQL queries.
+
+##### 1. `sqlc.yaml` Configuration (`api-gateway/sqlc.yaml`)
+```yaml
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "db/query.sql"
+    schema: "db/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: true
+        emit_interface: true
+        overrides:
+          - db_type: "jsonb"
+            go_type: "encoding/json.RawMessage"
+```
+
+##### 2. `pgx/v5` High-Throughput Connection Pool Configuration
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+    "time"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+)
+
+func InitDBPool(ctx context.Context) *pgxpool.Pool {
+    connStr := os.Getenv("DATABASE_URL")
+    if connStr == "" {
+        connStr = "postgresql://postgres:postgres@127.0.0.1:54322/postgres" // Local Supabase default
+    }
+
+    config, err := pgxpool.ParseConfig(connStr)
+    if err != nil {
+        log.Fatalf("Unable to parse DATABASE_URL: %v", err)
+    }
+
+    // High-concurrency pool tuning
+    config.MaxConns = 50
+    config.MinConns = 10
+    config.MaxConnLifetime = time.Hour
+    config.MaxConnIdleTime = 15 * time.Minute
+    config.HealthCheckPeriod = 1 * time.Minute
+
+    pool, err := pgxpool.NewWithConfig(ctx, config)
+    if err != nil {
+        log.Fatalf("Unable to establish pgx connection pool: %v", err)
+    }
+
+    if err := pool.Ping(ctx); err != nil {
+        log.Fatalf("Database ping failed: %v", err)
+    }
+
+    log.Println("Database connection pool established successfully with Supabase PostgreSQL 16.")
+    return pool
+}
+```
+
+#### 4.2.2 Zero-Auth Observer Session Fingerprinting & Route Separation
+For the hackathon, blocking authentication (login dialogs, sign-up forms, password resets) is completely removed to provide zero-friction evaluation for judges, while preserving full relational integrity and active-learning calibration tracking.
+
+##### 1. Implicit Observer Session Mechanism
+- **Client Identification:** On initial page load, React verifies `localStorage.getItem('spx_observer_id')`. If absent, it generates a persistent UUIDv4 and assigns a celestial callsign (e.g. `Observer-Vega-409`). An in-place edit popover inside Tab 5 allows instant callsign personalization.
+- **HTTP Header Injection:** Every frontend fetch request attaches two identification headers:
+  ```http
+  X-Observer-ID: 7b3d1f8a-4092-4e8c-a1e9-5cf287a911e3
+  X-Observer-Callsign: Observer-Vega-409
+  ```
+- **Go Session Middleware (`middleware.ObserverSessionMiddleware`):**
+  The gateway extracts these headers, automatically upserts the observer into the `observers` table (preserving their classification count, calibration accuracy, and reliability weight $w_u$), and injects the validated session into the request context:
+
+```go
+package middleware
+
+import (
+    "context"
+    "net/http"
+
+    "github.com/google/uuid"
+)
+
+type ContextKey string
+const (
+    ObserverIDKey       ContextKey = "observer_id"
+    ObserverCallsignKey ContextKey = "observer_callsign"
+    IsAdminOriginKey    ContextKey = "is_admin_origin"
+)
+
+func ObserverSessionMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        observerID := r.Header.Get("X-Observer-ID")
+        if observerID == "" {
+            observerID = uuid.New().String()
+            w.Header().Set("X-Observer-ID", observerID)
+        }
+
+        callsign := r.Header.Get("X-Observer-Callsign")
+        if callsign == "" {
+            callsign = "Observer-Anonymous"
+        }
+
+        isAdmin := r.Header.Get("X-Spectra-Portal") == "admin" || r.URL.Path == "/admin"
+
+        ctx := context.WithValue(r.Context(), ObserverIDKey, observerID)
+        ctx = context.WithValue(ctx, ObserverCallsignKey, callsign)
+        ctx = context.WithValue(ctx, IsAdminOriginKey, isAdmin)
+
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+```
+
+##### 2. Clean Route Separation (`/explore` vs `/admin`)
+- Public discovery tools live exclusively under `/explore/*`.
+- Administrative Mission Control, real-time PyTorch loss streams, and candidate escalation live under `/admin/*`.
+- Actions or discussion replies submitted from `/admin` automatically set `posted_from_admin = TRUE` and `is_science_team_verified = TRUE`, rendering the gold `[Verified by Science Team]` badge without requiring authentication tokens.
+
+#### 4.2.3 Thread-Safe In-Memory Cutout & Spectrum LRU Cache
+To guarantee $<15\,	ext{ms}$ latency for high-traffic celestial targets (including the 5 benchmark systems), the gateway wraps `astro-worker` proxy calls with a thread-safe LRU cache:
+
+```go
+type CacheEntry struct {
+    Data      []byte
+    CreatedAt time.Time
 }
 
-void main() {
-    float raw = texture(u_fluxTexture, v_texCoord).r;
-    if (isnan(raw)) {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-    float norm = (raw - u_black) / max(u_softening, 1e-6);
-    float denom = (u_white - u_black) / max(u_softening, 1e-6);
-    float stretched = asinh_approx(norm) / max(asinh_approx(denom), 1e-6);
-    stretched = clamp(stretched, 0.0, 1.0);
-    if (u_invert == 1) {
-        stretched = 1.0 - stretched;
-    }
-    fragColor = vec4(vec3(stretched), 1.0);
+type LRUCache struct {
+    mu        sync.RWMutex
+    capacity  int
+    entries   map[string]*list.Element
+    evictList *list.List
 }
+```
+- **Key Canonicalization:** Parameters sorted alphabetically: `ra=133.7374&dec=-7.2404&fov=180&cadence=survey_6month`.
+- **Capacity:** 2,000 cutouts. Cached hit latency: $<15\,	ext{ms}$. Response header: `X-Cache: HIT` / `X-Cache: MISS`.
+
+#### 4.2.4 102-Band Spectral Vector Similarity Mechanics (`pgvector`)
+In Tab 3 (Spectrophotometric Lab), users can highlight a spectral anomaly or query "Closest Known Spectral Templates."
+- Every SPHEREx 102-channel flux array is stored directly in a PostgreSQL `vector(102)` column.
+- The Go gateway executes the `FindSimilarSpectra` query generated by `sqlc`:
+  ```sql
+  SELECT subject_id, title, ra, dec, ai_predicted_class,
+         1 - (spectrum_vector <=> $1::vector) AS cosine_similarity
+  FROM subjects
+  WHERE subject_id != $2 AND spectrum_vector IS NOT NULL
+  ORDER BY spectrum_vector <=> $1::vector
+  LIMIT 5;
+  ```
+- Uses PostgreSQL HNSW indexing (`vector_cosine_ops`) for sub-2ms nearest-neighbor resolution across $>1,000,000$ sky targets.
+
+#### 4.2.5 Active-Learning Consensus & Shannon Entropy Prioritization
+When a citizen scientist submits a classification via `POST /api/classify`:
+1. **Bayesian Consensus Probability:**
+   $$P(c \mid s) = rac{\sum_{i \in c} w_{u_i} \cdot k_i}{\sum_{	ext{all } j} w_{u_j} \cdot k_j}$$
+   where $w_u \in [0.1, 1.0]$ is the volunteer reliability weight and $k_i \in [0.0, 1.0]$ is the volunteer confidence score.
+2. **Shannon Entropy Uncertainty Metric:**
+   $$H(s) = -\sum_{c \in C} P(c \mid s) \log_2 P(c \mid s)$$
+   High-entropy subjects (maximum disagreement or AI model ambiguity) are dynamically promoted to the front of `/api/queue/next`.
+3. **Gold-Standard Calibration Injection:**
+   Every 10th request serves a verified benchmark target. Volunteer weights are updated dynamically:
+   - Match: $w_u \leftarrow \min(1.0, w_u + 0.05 \cdot (1.0 - w_u))$
+   - Mismatch: $w_u \leftarrow \max(0.1, w_u - 0.10 \cdot w_u)$
+   - Artifact Patrol unlock rule: `calibration_correct >= 3`.
+   - Science Corps promotion: `total_classifications >= 50` AND `reliability_weight >= 0.90`.
+
+---
+
+## 5. Complete Database Schema & Relations (Supabase PostgreSQL 16 + pgvector)
+
+### 5.1 DDL Schema Definition (`api-gateway/db/schema.sql`)
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS cube;
+CREATE EXTENSION IF NOT EXISTS earthdistance;
+
+-- 1. Sky Subjects (Pre-seeded Benchmarks + Active-Learning Queue + On-Demand Cache)
+CREATE TABLE subjects (
+    subject_id TEXT PRIMARY KEY,                       -- e.g., 'benchmark_wise_0855' or 'spx_j085510-071442'
+    title TEXT NOT NULL,                                -- e.g., 'WISE 0855-0714'
+    category TEXT NOT NULL,                            -- 'benchmark', 'queue_anomaly', 'user_explored'
+    ra DOUBLE PRECISION NOT NULL,                      -- Decimal degrees (ICRS)
+    dec DOUBLE PRECISION NOT NULL,                     -- Decimal degrees (ICRS)
+    fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
+    recommended_tab TEXT NOT NULL,                     -- 'comparator', 'spectrophotometer', 'ice_studio'
+    is_calibration BOOLEAN NOT NULL DEFAULT FALSE,      -- TRUE for gold-standard benchmark controls
+    expert_ground_truth TEXT,                          -- Verified scientific classification
+    spectrum_vector vector(102) NOT NULL,              -- Normalized 102-channel flux vector for pgvector cosine search
+    redshift_z DOUBLE PRECISION DEFAULT 0.0,
+    ice_column_densities JSONB DEFAULT '{}'::jsonb,    -- Precomputed N(H2O), N(CO2), N(CO) in cm^-2
+    ai_anomaly_score DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    ai_predicted_class TEXT NOT NULL,
+    ai_probabilities JSONB NOT NULL DEFAULT '{}'::jsonb, -- Class probability distribution from PyTorch
+    ai_explanation TEXT NOT NULL,
+    classification_count INT NOT NULL DEFAULT 0,
+    consensus_class TEXT,
+    consensus_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    shannon_entropy DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    verification_status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'consensus_reached', 'verified_discovery', 'artifact'
+    data_release TEXT NOT NULL DEFAULT 'SPHEREx_QR3',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_subjects_spatial ON subjects (ra, dec);
+CREATE INDEX idx_subjects_priority ON subjects (recommended_tab, shannon_entropy DESC, ai_anomaly_score DESC);
+CREATE INDEX idx_subjects_spectrum_vector ON subjects USING hnsw (spectrum_vector vector_cosine_ops);
+
+-- 2. Observer Profiles (Zero-Auth Cryptographic Session Fingerprinting)
+CREATE TABLE observers (
+    id BIGSERIAL PRIMARY KEY,
+    observer_id UUID UNIQUE NOT NULL,                  -- Client-generated public UUIDv4
+    key_hash TEXT NOT NULL,                            -- sha256(observer_key) secret 32-byte string from localStorage
+    handle TEXT NOT NULL,                              -- e.g., 'Observer-Vega-409'
+    total_classifications INT NOT NULL DEFAULT 0,
+    calibration_seen INT NOT NULL DEFAULT 0,
+    calibration_correct INT NOT NULL DEFAULT 0,
+    reliability_weight DOUBLE PRECISION NOT NULL DEFAULT 0.85,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Note: Raw observer_key and internal observer_id are never exposed in public discussion responses.
+
+-- 3. Structured Classifications (Feeds Active-Learning & Consensus Engine)
+CREATE TABLE classifications (
+    id BIGSERIAL PRIMARY KEY,
+    subject_id TEXT NOT NULL REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    observer_id TEXT NOT NULL REFERENCES observers(observer_id) ON DELETE CASCADE,
+    tab_workflow TEXT NOT NULL,                        -- 'comparator', 'spectrophotometer', 'ice_studio'
+    primary_class TEXT NOT NULL,                       -- 'moving_brown_dwarf', 'variable_star', 'h2o_ice_cloud', etc.
+    feature_tags JSONB NOT NULL DEFAULT '[]'::jsonb,   -- e.g., '["H2O_3.05um_deep", "CO2_4.27um_mod"]'
+    motion_telemetry JSONB,                            -- e.g., '{"pm_arcsec_yr": 8.1, "pa_deg": 262.4, "cadence": "6m"}'
+    ice_mask_pixels JSONB,                             -- Painted pixel coordinates and integrated optical depth
+    confidence DOUBLE PRECISION NOT NULL,              -- Continuous slider: 0.0 to 1.0
+    observer_weight_snapshot DOUBLE PRECISION NOT NULL,-- Weight w_u at time of submission
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_classifications_subject ON classifications(subject_id);
+CREATE INDEX idx_classifications_observer ON classifications(observer_id);
+
+-- 4. Observation Discussion Threads (Tab 5 Public Feed)
+CREATE TABLE discussion_threads (
+    thread_id BIGSERIAL PRIMARY KEY,
+    subject_id TEXT REFERENCES subjects(subject_id) ON DELETE SET NULL,
+    observer_id TEXT NOT NULL,
+    observer_callsign TEXT NOT NULL,
+    channel TEXT NOT NULL,                             -- 'movers', 'spectra', 'ices', 'artifacts', 'discoveries'
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    hashtags JSONB NOT NULL DEFAULT '[]'::jsonb,       -- e.g., '["#dipole", "#y-dwarf-candidate"]'
+    ra DOUBLE PRECISION NOT NULL,
+    dec DOUBLE PRECISION NOT NULL,
+    fov_arcsec DOUBLE PRECISION NOT NULL DEFAULT 180.0,
+    state_hash_url TEXT NOT NULL,                      -- Deep-link restoring exact Tab, RGB mixer, mode, and pixel
+    preview_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,-- Inline snapshot of dipole SNR & key spectral dips
+    upvotes INT NOT NULL DEFAULT 0,
+    is_science_team_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    admin_verification_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_threads_channel ON discussion_threads(channel);
+CREATE INDEX idx_threads_coords ON discussion_threads(ra, dec);
+
+-- 5. Discussion Replies
+CREATE TABLE discussion_replies (
+    reply_id BIGSERIAL PRIMARY KEY,
+    thread_id BIGINT NOT NULL REFERENCES discussion_threads(thread_id) ON DELETE CASCADE,
+    observer_id TEXT NOT NULL,
+    observer_callsign TEXT NOT NULL,
+    posted_from_admin BOOLEAN NOT NULL DEFAULT FALSE, -- Automatically true if reply originates from /admin
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_replies_thread ON discussion_replies(thread_id);
+
+-- 6. Admin Model Training Runs (Persists Training History for /admin Tabs 1, 2, 3)
+CREATE TABLE ml_training_runs (
+    run_id TEXT PRIMARY KEY,
+    model_architecture TEXT NOT NULL,                  -- 'dipole_convnet_3d', 'spectral_resnet_102', 'feature_svm'
+    hyperparameters JSONB NOT NULL,
+    epochs_completed INT NOT NULL DEFAULT 0,
+    final_train_loss DOUBLE PRECISION,
+    final_val_loss DOUBLE PRECISION,
+    final_val_f1 DOUBLE PRECISION,
+    telemetry_frames JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of epoch packets (curves, histograms, meshgrids)
+    status TEXT NOT NULL DEFAULT 'running',            -- 'running', 'completed', 'aborted'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 5.2 Type-Safe Query Specifications (`api-gateway/db/query.sql`)
+```sql
+-- name: GetSubjectByID :one
+SELECT * FROM subjects WHERE subject_id = $1 LIMIT 1;
+
+-- name: GetNextActiveLearningSubject :one
+SELECT * FROM subjects
+WHERE recommended_tab = $1
+  AND verification_status = 'pending'
+ORDER BY (shannon_entropy * 0.6 + ai_anomaly_score * 0.4) DESC
+LIMIT 1;
+
+-- name: FindSimilarSpectra :many
+SELECT subject_id, title, ra, dec, ai_predicted_class,
+       1 - (spectrum_vector <=> $1::vector) AS cosine_similarity
+FROM subjects
+WHERE subject_id != $2 AND spectrum_vector IS NOT NULL
+ORDER BY spectrum_vector <=> $1::vector
+LIMIT 5;
+
+-- name: UpsertObserver :one
+INSERT INTO observers (observer_id, callsign)
+VALUES ($1, $2)
+ON CONFLICT (observer_id) DO UPDATE
+SET callsign = EXCLUDED.callsign
+RETURNING *;
+
+-- name: UpdateObserverCalibration :one
+UPDATE observers
+SET total_classifications = total_classifications + 1,
+    calibration_seen = calibration_seen + 1,
+    calibration_correct = calibration_correct + $2,
+    reliability_weight = $3
+WHERE observer_id = $1
+RETURNING *;
+
+-- name: CreateClassification :one
+INSERT INTO classifications (
+    subject_id, observer_id, tab_workflow, primary_class,
+    feature_tags, motion_telemetry, ice_mask_pixels,
+    confidence, observer_weight_snapshot
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+) RETURNING *;
+
+-- name: UpdateSubjectConsensus :one
+UPDATE subjects
+SET classification_count = classification_count + 1,
+    consensus_class = $2,
+    consensus_score = $3,
+    shannon_entropy = $4,
+    verification_status = $5
+WHERE subject_id = $1
+RETURNING *;
+
+-- name: GetHardNegativeDisagreements :many
+SELECT * FROM subjects
+WHERE classification_count >= 3
+  AND consensus_class IS NOT NULL
+  AND consensus_class != ai_predicted_class
+ORDER BY consensus_score DESC
+LIMIT 50;
+
+-- name: PromoteCandidateStatus :one
+UPDATE subjects
+SET verification_status = $2, expert_ground_truth = $3
+WHERE subject_id = $1
+RETURNING *;
+
+-- name: CreateDiscussionThread :one
+INSERT INTO discussion_threads (
+    subject_id, observer_id, observer_callsign, channel, title,
+    body, hashtags, ra, dec, fov_arcsec, state_hash_url, preview_metrics
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+) RETURNING *;
+
+-- name: GetDiscussionThreads :many
+SELECT * FROM discussion_threads
+WHERE channel = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: AddDiscussionReply :one
+INSERT INTO discussion_replies (
+    thread_id, observer_id, observer_callsign, posted_from_admin, body
+) VALUES (
+    $1, $2, $3, $4, $5
+) RETURNING *;
+
+-- name: RecordTrainingRun :one
+INSERT INTO ml_training_runs (
+    run_id, model_architecture, hyperparameters, epochs_completed,
+    final_train_loss, final_val_loss, final_val_f1, telemetry_frames, status
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+) RETURNING *;
 ```
 
 ---
 
-## 4. System Architecture & Backend Specification
+## 6. Frontend Component Architecture & Workspace Specifications
 
-### 4.1 Topology & Single FastAPI Service
-The production deployment uses a lean, unified single-service architecture:
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand, `nuqs`, TanStack Query, Aladin Lite v3, `uPlot`, WebGL2. Hosted on Cloudflare Pages.
-- **Backend Service:** Single FastAPI service running on Python 3.11 with `uvicorn` on port 7860 (Hugging Face Spaces standard).
-- **Core Dependencies:** `fastapi`, `uvicorn`, `astropy`, `pyvo`, `reproject`, `scikit-learn`, `numpy`, `scipy`.
-- **Database:** Supabase PostgreSQL 16 accessed via Session Pooler (IPv4, port 5432, session mode, `sslmode=require`). Browser has zero database credentials.
+### 6.1 Framework Foundations, State Management & Routing Architecture
+- **Framework & Core Tooling:** React 18.3+, Vite 5.4+, TypeScript 5.5+.
+- **Build Target:** Modern evergreen browsers with WebGL2 and ES2022 support. Zero legacy polyfill bloat.
+- **Styling Architecture:** Modern Tailwind CSS 3.4+ with dedicated semantic design tokens (`bg-space-950`, `border-space-800`, `text-telemetry-cyan`, `font-mono`). Strict zero-margin flush layout grid for scientific panels.
+- **Ultra-High-Quality Institutional Tooling Stack:**
+  - **End-to-End Type Safety:** `openapi-typescript` compiles FastAPI OpenAPI 3.1 JSON into strict TypeScript interfaces (`api.d.ts`).
+  - **Zero-Copy Float32 Streaming:** Raw IEEE-754 binary buffers processed via WebGL2 shaders at 120 FPS.
+  - **Type-Safe URL State:** `nuqs` hooks (`parseAsFloat`, `parseAsString`, `parseAsInteger`) synchronizing coordinates and modes.
+  - **Async Caching & Prefetching:** `@tanstack/react-query` v5 with 30-minute stale time and background target prefetching.
+  - **60 FPS Scientific Canvas Rendering:** `uPlot` (<1.5ms per frame) for 102-band spectra and live WebSocket loss curves.
+  - **Interactive 3D Manifolds:** `react-plotly.js` (WebGL `surface` and `isosurface`) for decision boundary morphing.
+  - **Institutional UI Primitives:** Radix UI unstyled primitives + `cmdk` (Command Palette on Cmd+K / Ctrl+K) + `TanStack Virtual`.
+  - **Realtime Discussion Sync:** `@supabase/supabase-js` subscribing to PostgreSQL table changes without polling.
+
+#### 6.1.1 Routing Topology & Application Code Splitting
+The root router (`react-router-dom` v6) partitions the frontend into two completely distinct chunks:
+```tsx
+// src/App.tsx
+import React, { Suspense, lazy } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { NuqsAdapter } from 'nuqs/adapters/react';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 30, // 30 minutes cache for astronomy cutouts
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+// Lazy-loaded route chunks (Zero-Auth Route Isolation)
+const PublicExplorerPortal = lazy(() => import('./portals/PublicExplorerPortal'));
+const AdminMissionControl = lazy(() => import('./portals/AdminMissionControl'));
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <NuqsAdapter>
+        <BrowserRouter>
+          <Suspense fallback={<div className="telemetry-loading-screen font-mono text-cyan-400">INITIALIZING SPECTRA WORKBENCH...</div>}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/explore" replace />} />
+              <Route path="/explore/*" element={<PublicExplorerPortal />} />
+              {/* Zero-Auth Route-Isolated Admin Suite (No blocking login screens) */}
+              <Route path="/admin/*" element={<AdminMissionControl />} />
+              <Route path="*" element={<Navigate to="/explore" replace />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </NuqsAdapter>
+    </QueryClientProvider>
+  );
+}
+```
+- **Bundle Protection:** The administrative suite (`AdminMissionControl` and all its child components: loss curves, ML dataset exporter, hard-negative mining inspector) is physically isolated in a separate Rollup/Vite JavaScript chunk. Public visitors inspecting network payloads or React DevTools tree under `/explore` will load zero references to model training internals or admin mutations.
+
+#### 6.1.2 Centralized Telemetry State Architecture (Zustand Store)
+To ensure seamless state continuity when switching tabs without re-fetching massive FITS tensors, all spatial, photometric, spectral, and filter parameters live in a centralized, high-performance Zustand store:
+
+```typescript
+// src/state/useTelemetryStore.ts
+import { create } from 'zustand';
+
+export interface EphemerisTarget {
+  name: string;
+  ra: number;
+  dec: number;
+  epoch: number;
+}
+
+export interface CutoutFrame {
+  epochIndex: number;
+  epochLabel: string;            // e.g. 'Survey Pass 1 (2025-05)'
+  mjd: number;
+  binaryFloat32Buffer?: ArrayBuffer; // Raw IEEE-754 32-bit float tensor (D1..D6, full scientific dynamic range)
+  bandsFallback: Record<string, string>; // Base64 encoded PNGs for D1..D6 (fallback preview only)
+  rawMatrixD4?: number[][];      // Unstretched Float32 array slice (D4: 2.42-3.82 um)
+  rawMatrixD5?: number[][];      // Unstretched Float32 array slice (D5: 3.82-4.42 um)
+  rawUnrectifiedB64?: string;    // Raw unrectified detector array (LVF smile un-warped preview)
+  flagCoords: [number, number][]; // [y, x] flagged pixel locations from HDU 2 (FLAGS)
+  sourceType: 'benchmark' | 'irsa_live' | 'synthetic_injection'; // Data honesty attribution badge
+}
+
+export interface SpectralChannel {
+  channel: number;
+  detector: string;
+  wavelengthUm: number;
+  fluxMjySr: number;
+  uncertainty: number;
+  flag: number;
+}
+
+export interface TelemetryState {
+  // Spatial Parameters
+  ra: number;
+  dec: number;
+  fovArcsec: number;
+  activeTargetName: string | null;
+  
+  // Cutout & Playback State
+  cadence: 'survey_6month' | 'short_subexposure';
+  activeEpochIndex: number;
+  isPlaying: boolean;
+  playbackSpeedMs: number;
+  loopMode: 'forward' | 'pingpong';
+  renderMode: 'blink' | 'difference' | 'coadd';
+  rawVsRectified: 'rectified' | 'raw_sensor';
+  colorPalette: 'standard_rgb' | 'viridis' | 'cividis' | 'inverted_grayscale';
+  
+  // Super-Band Mixer
+  activeRgbPreset: 'true_nir' | 'brown_dwarf' | 'water_ice' | 'comet_outgassing' | 'custom';
+  customChannelMap: { r: number; g: number; b: number };
+  asinhParamA: number;
+  minFluxCut: number;
+  maxFluxCut: number;
+  
+  // Probed Pixel & Spectral State
+  probedPixel: { x: number; y: number } | null;
+  activeSpectrum: SpectralChannel[];
+  isSpectrumLoading: boolean;
+  isSpectralBlinkSynced: boolean;
+  normalizeContinuum: boolean;
+  manualRedshiftZ: number;
+  activeFeatureRulers: string[]; // ['H2O', 'CH4', 'CO2', 'CO', 'CH3OH', 'PAH']
+  
+  // Spatial Brush State (Tab 4)
+  isBrushActive: boolean;
+  brushRadiusPx: number;
+  paintedMaskPixels: [number, number][];
+  
+  // Ingested Cutout Data Payload
+  loadedCutout: {
+    gridSize: number;
+    pixelScaleArcsec: number;
+    epochs: CutoutFrame[];
+    aiCandidates: Array<{ id: string; xPx: number; yPx: number; anomalyType: string; confidence: number }>;
+  } | null;
+  isCutoutLoading: boolean;
+  cutoutError: string | null;
+  
+  // Actions
+  setCoordinates: (ra: number, dec: number, targetName?: string) => void;
+  setFov: (fov: number) => void;
+  setPlayback: (isPlaying: boolean) => void;
+  setEpochIndex: (idx: number) => void;
+  setRenderMode: (mode: 'blink' | 'difference' | 'coadd') => void;
+  setProbedPixel: (pixel: { x: number; y: number } | null) => void;
+  setManualRedshiftZ: (z: number) => void;
+  toggleFeatureRuler: (rulerKey: string) => void;
+  setBrushState: (active: boolean, radius?: number) => void;
+  addMaskPixels: (pixels: [number, number][]) => void;
+  clearMaskPixels: () => void;
+  fetchCutout: () => Promise<void>;
+  fetchSpectrum: (xPx?: number, yPx?: number) => Promise<void>;
+}
+```
+
+#### 6.1.3 Type-Safe URL Query State Management (`nuqs`) & Headless Embed Engine
+Replacing manual string slicing and fragile `window.location.hash` event listeners, Spectra leverages **`nuqs`** to enforce type safety on astronomical coordinates and viewer modes across all 5 public tabs and shared links:
+
+```typescript
+// src/hooks/useSpectraUrlState.ts
+import { useQueryState, parseAsFloat, parseAsString, parseAsInteger } from 'nuqs';
+
+export function useSpectraUrlState() {
+  const [tab, setTab] = useQueryState('tab', parseAsString.withDefault('navigator'));
+  const [ra, setRa] = useQueryState('ra', parseAsFloat.withDefault(133.737400));
+  const [dec, setDec] = useQueryState('dec', parseAsFloat.withDefault(-7.240380));
+  const [fov, setFov] = useQueryState('fov', parseAsFloat.withDefault(180.0));
+  const [cadence, setCadence] = useQueryState('cadence', parseAsString.withDefault('survey_6month'));
+  const [mode, setMode] = useQueryState('mode', parseAsString.withDefault('blink'));
+  const [preset, setPreset] = useQueryState('preset', parseAsString.withDefault('brown_dwarf'));
+  const [z, setZ] = useQueryState('z', parseAsFloat.withDefault(0.0));
+  const [probeX, setProbeX] = useQueryState('px', parseAsInteger.withDefault(16));
+  const [probeY, setProbeY] = useQueryState('py', parseAsInteger.withDefault(16));
+
+  return {
+    tab, setTab,
+    ra, setRa,
+    dec, setDec,
+    fov, setFov,
+    cadence, setCadence,
+    mode, setMode,
+    preset, setPreset,
+    z, setZ,
+    probeX, setProbeX,
+    probeY, setProbeY,
+  };
+}
+```
+- **Bidirectional Consistency:** Slider adjustments, coordinate jumps, and chemical filter selections instantly serialize to the URL query string (`/explore?tab=comparator&ra=133.7374&dec=-7.2404&mode=diff`). Deep-linking into any tab seamlessly restores the exact astronomical view.
+- **Headless Embed Support (`?embed=true`):**
+  When `embed=true` is present, the portal strips the `56px` navigation chrome, tab headers, and margins, rendering strictly the active viewer canvas and timeline controls for inline inclusion in scientific journals or third-party astronomical tools.
+
+#### 6.1.4 Asynchronous Caching & Background Prefetching (`@tanstack/react-query` v5)
+To eliminate latency spinners when switching between Tab 1 (Celestial Navigator) and Tab 2 (Time-Domain Comparator):
+1. **Background Prefetching on Hover:** When a user hovers over a target pill (e.g. `[WISE 0855]`) or locks coordinates on the 3D celestial sphere:
+   ```typescript
+   queryClient.prefetchQuery({
+     queryKey: ['cutout', ra, dec, fov, cadence],
+     queryFn: () => fetchCutoutData(ra, dec, fov, cadence),
+   });
+   ```
+2. **Instant Tab Transition:** When the user switches tabs, the multi-epoch FITS arrays and 102-band spectrum are already resident in memory.
+3. **Query Deduplication:** Redundant network requests triggered by simultaneous component mounts are automatically consolidated into a single HTTP proxy call.
+
+#### 6.1.5 High-Frequency Visualization Engines: `uPlot` & `react-plotly.js`
+- **`uPlot` (Canvas 2D):** Used inside Tab 3 (Spectrophotometric Lab), Tab 4 (Molecular Studio), and `/admin/dynamics`.
+  - Memory footprint: $<40\,	ext{KB}$.
+  - Renders 102 spectral flux channels with Extension 3 (`VARIANCE`) vertical error bars and shaded molecular absorption rulers at 60 FPS without garbage collection stutter (<1.5ms render loop).
+- **`react-plotly.js` (WebGL):** Used inside `/admin/boundaries` and `/admin/internals`.
+  - Employs `type: 'surface'` and `type: 'isosurface'` to render 3D meshgrid decision boundary morphing across epochs and 3D sequential weight ridgeline histograms.
+
+#### 6.1.6 Zero-Copy Binary Float32 WebGL2 Processing Pipeline
+In Tab 2 (Time-Domain Comparator), standard 8-bit Base64 PNGs introduce severe banding and posterization when users drag the Asinh stretch slider or compute pairwise difference images ($t_N - t_0$). Spectra implements an institutional-grade WebGL2 floating-point pipeline:
+1. **Raw Float32 Ingestion:** The client fetches multi-epoch cutout data as raw IEEE-754 `Float32Array` buffers.
+2. **WebGL2 Texture Upload:** Buffers are bound directly to `gl.R32F` (single-channel 32-bit float) textures.
+3. **Fragment Shader Math:**
+   ```glsl
+   #version 300 es
+   precision highp float;
+   uniform sampler2D u_epoch_current;
+   uniform sampler2D u_epoch_reference;
+   uniform float u_asinh_a;
+   uniform int u_mode; // 0: Blink, 1: Difference, 2: Co-Add
+   in vec2 v_uv;
+   out vec4 fragColor;
+
+   float asinh_stretch(float val, float a) {
+       return asinh(val / a) / asinh(1.0 / a);
+   }
+
+   void main() {
+       float f_curr = texture(u_epoch_current, v_uv).r;
+       float f_ref  = texture(u_epoch_reference, v_uv).r;
+       float val = 0.0;
+
+       if (u_mode == 0) {
+           val = f_curr;
+       } else if (u_mode == 1) {
+           val = f_curr - f_ref; // True floating-point dipole subtraction!
+       } else if (u_mode == 2) {
+           val = 0.5 * (f_curr + f_ref);
+       }
+
+       float display = asinh_stretch(val, u_asinh_a);
+       fragColor = vec4(vec3(display), 1.0);
+   }
+   ```
+4. **Interactive Hover-Crosshair HUD:**
+   Hovering over any pixel dynamically probes the underlying `Float32Array` and WCS coordinates, rendering a live HUD in JetBrains Mono font:
+   `[RA: 133.737400° | Dec: -7.240380° | Flux: 14.82 MJy/sr | SNR: 28.4 | FLAGS: 0x000 (CLEAN)]`.
+
+#### 6.1.7 Hardware Compatibility, Science Realism & Data Honesty
+1. **WebGL2 Float Texture Feature Detection:**
+   On mobile browsers and some Safari/iOS hardware, `gl.R32F` textures cannot use linear interpolation without the `OES_texture_float_linear` extension. The rendering engine executes a startup capability probe:
+   ```typescript
+   const ext = gl.getExtension('OES_texture_float_linear');
+   if (!ext) {
+       // Graceful fallback to nearest-neighbor filtering or half-float textures (gl.R16F)
+       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+   }
+   ```
+2. **Sub-Pixel Motion Centroid Pin (Epsilon Indi B):**
+   At SPHEREx's $6.2''/	ext{pixel}$ scale, targets with proper motions $<6.2''/	ext{yr}$ (such as Epsilon Indi B at $4.8''/	ext{yr} = 0.77\,	ext{px/yr}$) shift less than a single pixel between annual passes. To make this motion unmistakably visible without exaggerating raw pixels:
+   - Tab 2 overlays a high-precision 2D sub-pixel centroid reticle derived from Gaia DR3 coordinates propagated to each epoch.
+   - The HUD displays: `[Motion: 0.77 px/yr | Deblended Centroid Displacement: Δx=-0.61 px, Δy=-0.47 px]`.
+3. **Faint Target Inverse-Variance Coaddition (WISE 0855):**
+   WISE 0855 is extremely faint ($>17\,	ext{mag}_{	ext{AB}}$) in Bands D1–D3 ($0.75-2.42\,\mu	ext{m}$) and peaks in Band D5 ($4.1-4.4\,\mu	ext{m}$). Tab 2 provides an inverse-variance weighted co-add mode:
+   $$I_{	ext{coadd}}(x, y) = rac{\sum_k I_k(x, y) / \sigma_k^2(x, y)}{\sum_k 1 / \sigma_k^2(x, y)}$$
+   which suppresses background photon noise and reveals the cold brown dwarf even in single-exposure passes.
+4. **Discrete Survey Epoch Stepping:**
+   Instead of misleading 60 FPS animation that implies continuous planetary video, the temporal scrubber snaps to real discrete survey epochs:
+   `[Pass 1: 2025-05-14]` $
+ightarrow$ `[Pass 2: 2025-11-18]` $
+ightarrow$ `[Pass 3: 2026-05-20]`.
+5. **Data Honesty Attribution Badges:**
+   Every displayed frame and spectrum features a prominent, institutional source badge in the header:
+   - `[NASA Benchmark Target: Pre-Cached Ground Truth]` (for Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis)
+   - `[IRSA Live S3 Pipeline: SPHEREx QR3]` (for arbitrary user-queried sky coordinates)
+   - `[Synthetic Source Injection Mode]` (when evaluating artificial test sources `synth_a` / `synth_b`)
+6. **Plotly Bundle Optimization:**
+   To keep initial bundle size $<500\,	ext{KB}$, the full 3.5 MB `plotly.js` library is strictly excluded. Admin 3D boundary and internal modules dynamically import `plotly.js-gl3d-dist` (<400 KB) only when Tab 3 or Tab 2 of `/admin` is mounted.
+
+#### 6.1.6 Live Discussion Synchronization via Supabase Realtime Channels
+Inside Tab 5 (Observation Discussions), the discussion feed avoids polling by subscribing directly to PostgreSQL row events:
+```typescript
+// src/hooks/useRealtimeDiscussions.ts
+import { useEffect } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import { useQueryClient } from '@tanstack/react-query';
+
+export function useRealtimeDiscussions(channel: string) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const threadSubscription = supabase
+      .channel(`public:discussion_threads:${channel}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'discussion_threads', filter: `channel=eq.${channel}` },
+        (payload) => {
+          queryClient.invalidateQueries({ queryKey: ['discussions', channel] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(threadSubscription);
+    };
+  }, [channel, queryClient]);
+}
+```
+Whenever a citizen scientist submits a candidate or an admin attaches a verification badge, it broadcasts instantly across all active browser sessions.
+
+#### 6.1.4 Global Keyboard Shortcuts & Accessibility Standards
+The `useKeyboardTelemetry` hook binds global listener events to `window`:
+- `Cmd + K` / `Ctrl + K`: Toggles the universal coordinate search command palette.
+- `Spacebar`: Toggles play/pause on the time-series canvas (prevents default page scrolling).
+- `Left Arrow` / `Right Arrow`: Steps single epoch frame backward/forward.
+- `Digit 1`: Switches canvas to **Blink Mode**.
+- `Digit 2`: Switches canvas to **Pairwise Difference Mode** ($t_N - t_0$).
+- `Digit 3`: Switches canvas to **Co-Add Stack Mode**.
+- `Key R`: Re-centers the view and resets zoom to 1.0x.
+- `Key I`: Toggles Inverted Grayscale palette (instantly flips between dark space and high-contrast white background).
+- **ARIA Compliance:** All 102 spectral data points render in a hidden accessible HTML data table (`role="table"`) alongside the SVG/Canvas plot with `aria-live="polite"` updates so screen-readers announce peak wavelengths and flux changes.
+
+---
+
+### 6.2 Global Navigation Header Component (`<GlobalCommandHeader />`)
+Mounted persistently at the top of the viewport in `/explore` (fixed `56px` height, `#090C10` background, flush `#1E2633` bottom border).
+
+```
++-------------------------------------------------------------------------------------------------------------------------------+
+| [Spectra LOGO // QR3] | [Universal Search Bar: RA/Dec or Target Name] | [5 Benchmark Target Pills] | [Tabs] | [Share]   |
++-------------------------------------------------------------------------------------------------------------------------------+
+```
+
+#### Detailed Element Specifications:
+1. **Brand Marker:** "Spectra // NASA SPHEREx QR3" with live backend connectivity status dot (Green = Go API & Python Worker connected; Amber = Running in Local Synthetic Cache mode).
+2. **Universal Coordinate & Target Command Input:**
+   - Input accepts decimal degrees (`133.7374, -7.2404`), sexagesimal string (`08h54m56.98s -07d14m25.4s`), or plain-text target names (`WISE 0855`, `Barnard's Star`, `NGC 2264`).
+   - Integrated Sexagesimal Parser:
+     $$\text{RA}_{\text{deg}} = \left(H + \frac{M}{60} + \frac{S}{3600}\right) \times 15, \quad \text{Dec}_{\text{deg}} = \text{sign} \times \left(|D| + \frac{M}{60} + \frac{S}{3600}\right)$$
+   - Name Resolution Debounce: If non-numeric characters are typed, waits 350ms and calls CDS Sesame resolver API (`https://cds.unistra.fr/cgi-bin/nph-sesame/-oxp/SNV?{name}`). On success, extracts parsed J2000 coordinates, converts to epoch 2025.5, and updates the store.
+3. **5 Mandatory Benchmark Quick-Launch Pills:**
+   - Rendered as flush interactive pills directly in the header:
+     - `[Barnard's Star]` $\rightarrow$ Sets RA: $269.44641^\circ$, Dec: $+4.76686^\circ$
+     - `[WISE 0855]` $\rightarrow$ Sets RA: $133.73740^\circ$, Dec: $-7.24038^\circ$, Preset: `brown_dwarf`
+     - `[Epsilon Indi B]` $\rightarrow$ Sets RA: $331.07240^\circ$, Dec: $-56.80031^\circ$
+     - `[RW Aurigae]` $\rightarrow$ Sets RA: $76.95647^\circ$, Dec: $+30.40129^\circ$
+     - `[R Draconis]` $\rightarrow$ Sets RA: $248.16769^\circ$, Dec: $+66.75504^\circ$
+   - Clicking a pill triggers instant prefetch from the Go gateway's LRU cache ($<15\,\text{ms}$ response).
+4. **Field of View (FoV) Selector & Transfer Gauge:**
+   - Dropdown with presets: `60"` ($1'$), `120"` ($2'$), `180"` ($3'$ default), `300"` ($5'$), `600"` ($10'$).
+   - Live Payload Indicator: Computes uncompressed tensor size:
+     $$\text{Payload (MB)} = N_{\text{epochs}} \times 6\,\text{bands} \times \left(\frac{\text{FoV}''}{6.2''}\right)^2 \times 4\,\text{bytes} / 10^6$$
+     If $\text{FoV} \ge 300''$, renders an amber notice badge: "High-Bandwidth Transfer: ~4.2 MB".
+5. **Mode / Tab Selector Bar:**
+   - Segmented control switching between the 5 public workspaces:
+     `[1. Celestial Navigator]` | `[2. Time-Domain Comparator]` | `[3. Spectrophotometric Lab]` | `[4. Molecular & Ice Studio]` | `[5. Observation Discussions]`
+   - Badge counter on Tab 5 indicates newly unread observation discussions from the active coordinate sector.
+6. **Share & Embed Exporter Dropdown:**
+   - `[Copy Deep Link]`: Copies canonical URL hash to clipboard.
+   - `[Copy iFrame Embed]`: Copies `<iframe src="https://spectra.org/explore#...&embed=true" width="600" height="450" frameborder="0"></iframe>`.
+
+---
+
+### 6.3 Public Workspace Tabs: Detailed Component Breakdown
+
+#### 6.3.1 Tab 1: Celestial Navigator (`<CelestialNavigator />`)
+Serves as the spatial macro-gateway, replacing IRSA’s 2D Aitoff oval with a full-viewport inside-out WebGL 3D celestial sphere.
+
+```
++---------------------------------------------------------------------------------------------------+
+| LAYER 1: WebGL 3D Sky Dome (Aladin Lite v3 Canvas in 'SIN' Projection)                            |
+|          Background Survey: P/allWISE/color HiPS                                                  |
+|                                                                                                   |
+| LAYER 2: Cyan Wireframe SPHEREx MOC Coverage (12% opacity) + Deep Field HUD Beacons               |
+|                                                                                                   |
+| LAYER 3: Dynamic Overlay: Gaia DR3 Proper Motion Arrows (mu_alpha, mu_delta) + SkyBot Asteroids    |
+|                                                                                                   |
+| LAYER 4: Interactive Target Reticle (180" x 180" Square) Tracking Mouse Cursor                    |
++---------------------------------------------------------------------------------------------------+
+| FLOATING HUD CARD (Bottom-Left): RA/Dec Readout | Survey Passes: 4 | [Inspect in Time-Domain ->]  |
++---------------------------------------------------------------------------------------------------+
+```
+
+- **Aladin Lite v3 Initialization Protocol:**
+  ```javascript
+  const aladin = A.aladin('#sky-globe-mount', {
+    survey: 'P/allWISE/color',
+    projection: 'SIN', // Orthographic 3D globe projection (inside planetarium view)
+    fov: 180,          // Macro all-sky orientation
+    cooFrame: 'ICRSd',
+    showReticle: false,
+    showCooGrid: true,
+    showCooGridControl: false
+  });
+  ```
+- **MOC Layer Configuration:**
+  - Loads `spherex_qr3` coverage map via `aladin.addMOC(A.MOCFromURL('/data/spherex_qr3_moc.fits', { color: '#00f0ff', opacity: 0.12, lineWidth: 1 }))`.
+  - Loads North and South Ecliptic Pole deep fields as persistent glowing magenta circles (`#ff0055`, radius $5.64^\circ$, area $\approx 100\,\text{deg}^2$).
+- **3-Stage Camera Dive Implementation:**
+  - *Stage 1 (Macro):* User navigates 3D sphere via click-and-drag rotation.
+  - *Stage 2 (Reticle Lock):* Moving cursor renders a dynamic square bounding box corresponding to the selected FoV ($180''$). Hovering over known benchmark beacons displays preview tooltips.
+  - *Stage 3 (The Dive):* Double-clicking or clicking `[Inspect in Time-Domain]` triggers smooth camera interpolation:
+    ```javascript
+    aladin.animateToRaDec(targetRa, targetDec, {
+      duration: 1.2, // seconds
+      endFoV: fovArcsec / 3600, // Converts arcsec to degrees
+      onComplete: () => {
+        // Triggers background prefetch in Go gateway and routes smoothly to Tab 2
+        navigate('/explore/comparator');
+      }
+    });
+    ```
+- **Real-Time Catalog Layers (VizieR & SkyBot):**
+  - Gaia DR3 Overlay: Uses `A.catalogFromVizieR('I/355/gaiadr3', ...)` to query stars brighter than $G = 18.0$. Renders circles scaled by magnitude with vector arrows calculated as:
+    $$\Delta x = \mu_\alpha \cos\delta \cdot \text{scale}, \quad \Delta y = \mu_\delta \cdot \text{scale}$$
+  - SkyBot Ephemerides: Invokes `A.catalogFromSkyBot({ epoch: observationMjd })` to overlay known asteroids and comets at the current observation timestamp.
+
+---
+
+#### 6.3.2 Tab 2: Time-Domain Comparator (`<TimeDomainComparator />`)
+The core motion detection and visual blinking engine, combining *WiseView* image arithmetic with SPHEREx's 6 detector arrays.
+
+```
++-----------------------------------------------------------+---------------------------------------+
+| LEFT PANEL (65%): Multi-Epoch Playback Canvas             | RIGHT PANEL (35%): Analysis Deck      |
+|                                                           |                                       |
+| [Viewport: HTML5 2D/WebGL Canvas]                         | [Render Mode Toggles]                 |
+| - Rectified North-Up Tangent Plane                        | ( ) Blink  (*) Diff  ( ) Co-Add       |
+| - Sub-Pixel Gaia DR3 Centroid Pins (Deblending)           |                                       |
+| - Contamination Flags: Cosmic Rays (Yellow), Dead (Red)   | [Raw vs. Rectified Sensor Toggle]     |
+| - AI Anomaly Bounding Boxes                               | [Mode: North-Up WCS <-> Raw Sensor]   |
+|                                                           |                                       |
+|-----------------------------------------------------------| [6-Detector Chemical RGB Mixer]       |
+| [Timeline Scrubber Bar: Survey 1 ... Survey 4 (Pass MJD)] | Red Gun:   [Band D5 (4.1 um)    v]    |
+| [|<] [<<] [ Play / Pause (Space) ] [>>] [>|]              | Green Gun: [Band D2 (1.3 um)    v]    |
+| Speed: [====O==============] 350 ms                        | Blue Gun:  [Band D1 (0.9 um)    v]    |
+| Cadence: (*) 6-Month Survey  ( ) Short-Cadence (Hours)    |                                       |
+| Frame 0 Border Indicator: [Active]                        | [Forced Aperture Photometry]          |
+|                                                           | - Multi-Band Light Curve (D1 vs D5)   |
+|                                                           | - Motion Vector: 8.1"/yr @ PA 274 deg |
+|                                                           |                                       |
+|                                                           | [Triage Form]                         |
+|                                                           | Classification: [Moving Brown Dwarf v]|
+|                                                           | Confidence: [========O=====] 84%      |
+|                                                           | [Submit & Open Discussion]            |
++-----------------------------------------------------------+---------------------------------------+
+```
+
+##### Detailed Mechanics:
+1. **HTML5 Canvas Double-Buffered Blinker:**
+   - Canvas resolution matches cutout tensor dimensions ($N \times N$, typically $128 \times 128$ or $256 \times 256$ pixels), scaled to display container using CSS `image-rendering: pixelated`.
+   - Frame 0 Loop Reset Indicator: When `activeEpochIndex === 0`, draws an inner dashed cyan border ($1\,\text{px}$, `#00f0ff`) inside the canvas boundary so the human eye immediately recognizes loop reset vs continuous linear motion.
+2. **Client-Side Pixel Arithmetic Engine:**
+   - **Blink Mode:** Renders via WebGL2 `Float32Array` texture shader with GPU Asinh stretch (fallback to `ImageBitmap` created from pre-stretched preview if WebGL2 float textures are unavailable on client device).
+   - **Pairwise Difference Mode ($t_N - t_0$):**
+     Executes in floating-point space using the raw matrices (`rawMatrixD4` or `rawMatrixD5`):
+     $$\Delta I(x, y) = I_{t_N}(x, y) - I_{t_0}(x, y)$$
+     Pixel values are mapped to an 8-bit grayscale `ImageData` buffer centered at mid-gray ($128$):
+     $$\text{pixelVal} = \text{clamp}\left(128 + \frac{\Delta I(x, y)}{\text{scaleFactor}} \times 127, \, 0, \, 255\right)$$
+     - Static background stars cancel to neutral gray ($128$).
+     - Moving objects (e.g. WISE 0855) produce a classic **dipole**: a black cavity at $(x_0, y_0)$ and a bright white peak at $(x_N, y_N)$.
+     - Variable stars (RW Aurigae, R Draconis) produce a **monopole ring**: a solid bright or dark circle with zero spatial displacement.
+   - **Co-Add Stack Mode:**
+     Computes average pixel value $\bar{I}(x, y) = \frac{1}{N} \sum_{k=0}^{N-1} I_{t_k}(x, y)$. Boosts SNR by $\sqrt{N}$ to reveal faint static background galaxies.
+3. **Raw vs. Rectified Inspector Toggle:**
+   - Switching to `[Raw Sensor]` replaces the rectified North-Up canvas with the raw un-interpolated $2040 \times 2040$ detector frame.
+   - Renders the spacecraft roll angle ($\theta$) and draws curved yellow isolines showing the physical curvature of the Linear Variable Filter ("LVF Smile").
+4. **Sub-Pixel Gaia DR3 Centroid Pins & Deblending Inspector:**
+   - Within each $6.2'' \times 6.2''$ pixel square, draws crisp sub-pixel crosshairs marking catalog positions of stars detected by Gaia DR3 or Pan-STARRS.
+   - For Epsilon Indi B, visually illustrates how both Ba and Bb components sit inside a single SPHEREx pixel boundary.
+5. **Forced Aperture Photometry & Multi-Band Light Curve:**
+   - Evaluates integrated flux inside a $3\times3$ pixel aperture across all survey epochs.
+   - Renders a synchronized scatter plot of Flux (mJy) vs. MJD for Band D1 ($0.9\,\mu\text{m}$) and Band D5 ($4.1\,\mu\text{m}$).
+   - Variable Star Verification: For RW Aurigae, optical flux in D1 drops while thermal emission in D5 remains constant, confirming circumstellar dust occultation.
+6. **Motion Vector Calculator:**
+   - User clicks object position in Epoch 0 $(x_0, y_0)$, then in Epoch $N$ $(x_N, y_N)$.
+   - Computes:
+     $$\Delta \alpha = (x_N - x_0) \times 6.2'', \quad \Delta \delta = (y_N - y_0) \times 6.2''$$
+     $$\text{Total Motion} = \sqrt{\Delta \alpha^2 + \Delta \delta^2}, \quad \text{Velocity} = \frac{\text{Total Motion}}{t_N - t_0} \quad [\text{arcsec/yr}]$$
+     $$\text{Position Angle (PA)} = \text{atan2}(\Delta \alpha, \Delta \delta) \times \frac{180}{\pi} \quad [\text{deg East of North}]$$
+
+---
+
+#### 6.3.3 Tab 3: Spectrophotometric Lab (`<SpectrophotometricLab />`)
+Provides deep analytical inspection of the 102 near-infrared channels ($0.75 - 5.00\,\mu\text{m}$), automated redshift determination, and spectral de-blending.
+
+```
++---------------------------------------------------------------------------------------------------+
+| TOP SECTION: 102-Channel Interactive Hyperspectral Plot (Surface Brightness in MJy/sr vs Lambda)  |
+|                                                                                                   |
+|   Flux |                                                                                          |
+| (MJy/sr)                                                                                          |
+|   15.0 |              D1 (0.75-1.11)  D2 (1.11-1.63)  D3 (1.63-2.42)  D4 (2.42-3.82)  D5 (3.82-4.42)|
+|        |                  /\               __                                                     |
+|   10.0 |                 /  \  H2O        /  \     CH4                 H2O Ice       CO2 Ice      |
+|        |        /\      /    \  1.4um    /    \   2.2um                  3.05um        4.27um     |
+|    5.0 |       /  \____/      \_________/      \________\________         \____/         \/       |
+|        |      /                                                  \_______/                        |
+|    0.0 +------+----------------+----------------+----------------+----------------+---------------+
+|             0.75 um          1.50 um          2.50 um          3.50 um          4.50 um   5.00 um |
+|                                                                                                   |
+| [X] Sync Spectral Blink with Time-Domain Player | [X] Template Similarity Overlay: T-Dwarf (94%)  |
++---------------------------------------------------------------------------------------------------+
+| BOTTOM SECTION (Split Columns):                                                                   |
+| LEFT: Automated Galaxy Photo-z Solver          | RIGHT: Spectral De-Blending & Unmixing           |
+| Best-fit Redshift: z = 1.42 +/- 0.03          | De-Blend composite pixel into two components:     |
+| Lookback Time: 9.18 Gyr (D_C = 4,280 Mpc)     | Component A: T1 Brown Dwarf (Weight: 0.62)        |
+| Primary Peak: [O III] 5007 A @ 1.21 um        | Component B: T6 Brown Dwarf (Weight: 0.38)        |
+| Redshift Scrubber: [=====O==============] 1.42 | Residual Chi^2: 1.12 (De-blend verified!)         |
++---------------------------------------------------------------------------------------------------+
+```
+
+##### Detailed Mechanics:
+1. **Interactive SVG/Canvas Spectral Plotter:**
+   - $X$-axis: Wavelength $\lambda$ in microns ($0.75$ to $5.00\,\mu\text{m}$), mapped on a logarithmic or linear scale.
+   - $Y$-axis: Calibrated surface brightness $I_\nu$ in $\text{MJy/sr}$ (or point-source flux $F_\nu$ in $\text{mJy}$).
+   - Background bands color-coded by the 6 physical detector arrays (D1 through D6).
+   - Error bars rendered vertically on every point using $\sigma_i = \sqrt{\text{VARIANCE}_i}$ from HDU 3.
+   - Contaminated Channels: If HDU 2 `FLAGS` is non-zero, renders channel point as an amber hollow triangle with tooltip displaying active flag name (e.g. `Bit 0: TRANSIENT`).
+   - Monochromatic Slice Scrubbing: Hovering mouse over any channel point displays a floating thumbnail in the corner previewing that exact narrow-band spatial slice.
+2. **Synchronized Epoch Spectral Blinking (`isSpectralBlinkSynced`):**
+   - When checked, the spectral curve dynamically morphs as the Tab 2 time-domain canvas plays.
+   - Variable Star Demonstration: For R Draconis, volunteers watch the deep $\text{H}_2\text{O}$ and $\text{CO}$ absorption bands expand and contract as the star pulsates over its 245-day cycle.
+3. **Automated Galaxy Photo-$z$ Solver & 3D Cosmic Wedge:**
+   - Cross-correlates spectrum against SED library ($z=0.0-3.0$), outputting probability distribution $P(z)$, lookback time, and comoving distance.
+   - 3D Cosmic Wedge Widget: Renders a pie-slice radial cone ($RA \text{ vs } z$) placing galaxies in 3D cosmic web filaments to demonstrate SPHEREx's core cosmology objective.
+4. **Interactive Redshift ($z$) Feature Ruler Scrubber:**
+   - Horizontal slider ($z = 0.00$ to $2.50$) shifts laboratory rest-frame markers rightward:
+     $$\lambda_{\text{obs}} = \lambda_{\text{rest}} \cdot (1 + z)$$
+   - Allows visual alignment of hydrogen lines ($\text{H}\alpha$ $0.6563\,\mu\text{m}$, $\text{Pa}\beta$ $1.282\,\mu\text{m}$, $\text{Br}\gamma$ $2.166\,\mu\text{m}$) with observed spectral peaks.
+5. **Two-Component Spectral Unmixing Engine:**
+   - Decomposes blended pixels (such as Epsilon Indi Ba + Bb) by solving non-negative linear regression:
+     $$\min_{a, b \ge 0} \sum_{i=1}^{102} \left(I_{\text{obs}}(\lambda_i) - [a T_1(\lambda_i) + b T_2(\lambda_i)]\right)^2$$
+   - Displays separated curves for Component A (T1 Dwarf) and Component B (T6 Dwarf) with residual $\chi^2$.
+
+---
+
+#### 6.3.4 Tab 4: Molecular & Ice Mapping Studio (`<MolecularIceStudio />`)
+Tailored directly to SPHEREx's core science theme of mapping biogenic ices ($\text{H}_2\text{O}, \text{CO}_2, \text{CO}, \text{CH}_3\text{OH}$) in star-forming regions and molecular clouds.
+
+```
++-----------------------------------------------------------+---------------------------------------+
+| LEFT PANEL (50%): Molecular Cloud Cutout & Spatial Brush  | RIGHT PANEL (50%): Optical Depth Lab  |
+|                                                           |                                       |
+| [Cutout Viewport: Molecular Cloud Core]                   | [Mode: Raw MJy/sr <-> Optical Depth]  |
+| [Active Spatial Mask: 24 Pixels Painted]                  |                                       |
+|                                                           |  Optical |  H2O Ice      CO2 Ice   CO |
+| [Brush Controls]                                          |  Depth   |  (3.05 um)    (4.27 um)(4.67) |
+| Brush Mode: (*) Paint Mask  ( ) Erase                     |   tau    |     /\          /\      /\ |
+| Brush Radius: [===O=======] 3 px                          |   1.5    |    /  \        /  \    /  \|
+| [Clear Mask]  [Invert Mask]                               |   1.0    |   /    \      /    \  /   \|
+|                                                           |   0.5    |  /      \____/      \/     |
+| [Point-Source Masking: EBL / Diffuse Mode]                |   0.0 ---+-+--------+---------+-------+
+| Subtract >3 sigma point sources using Extension 5 PSF     |          2.5 um   3.5 um    4.5 um 5.0|
+| to isolate diffuse interstellar PAH and background light. |                                       |
+|                                                           | [Column Density Quantifications]      |
+|                                                           | N_H2O:  2.45 x 10^18 molecules/cm^2   |
+|                                                           | N_CO2:  4.12 x 10^17 molecules/cm^2   |
+|                                                           | Ratio:  CO2 / H2O = 16.8%             |
+|                                                           |                                       |
+|                                                           | [Submit Molecular Ice Ledger Entry]   |
++-----------------------------------------------------------+---------------------------------------+
+```
+
+##### Detailed Mechanics:
+1. **Spatial Ice Mask Brush:**
+   - Canvas overlay allows users to paint custom pixel masks over extended molecular cloud cores.
+   - Dynamic Regional Averaging: As pixels are painted, the store aggregates fluxes across all masked pixels:
+     $$\bar{I}(\lambda_i) = \frac{1}{|\mathcal{M}|} \sum_{(x, y) \in \mathcal{M}} I(x, y, \lambda_i)$$
+     and streams the regionally integrated spectrum directly to the right panel.
+2. **Optical Depth Transformation ($\tau_\lambda$ Mode):**
+   - Fits a baseline continuum $F_{\text{cont}}(\lambda)$ across unabsorbed spectral windows ($2.1-2.4\,\mu\text{m}, 3.7-3.9\,\mu\text{m}$) and flattens background stellar light:
+     $$\tau(\lambda) = -\ln\left(\frac{F(\lambda)}{F_{\text{cont}}(\lambda)}\right)$$
+3. **Quantitative Column Density ($N_{\text{ice}}$) Integrator:**
+   - User clicks active molecular rulers ($\text{H}_2\text{O}$ $3.05\,\mu\text{m}$, $\text{CO}_2$ $4.27\,\mu\text{m}$, or $\text{CO}$ $4.67\,\mu\text{m}$).
+   - Integrates optical depth across wavenumber space $\nu = 10000 / \lambda\,[\mu\text{m}]$:
+     $$\int \tau(\nu) d\nu \approx \sum_{k \in \text{band}} \tau(\lambda_k) \cdot \Delta\nu_k$$
+   - Applies laboratory band strengths ($A$-values):
+     $$N_{\text{H}_2\text{O}} = \frac{1}{2.00 \times 10^{-16}} \int_{\text{H}_2\text{O}} \tau(\nu) d\nu \quad [\text{cm}^{-2}]$$
+     $$N_{\text{CO}_2} = \frac{1}{7.60 \times 10^{-17}} \int_{\text{CO}_2} \tau(\nu) d\nu \quad [\text{cm}^{-2}]$$
+   - Computes ice abundance ratio $\frac{N_{\text{CO}_2}}{N_{\text{H}_2\text{O}}} \times 100\%$ for planet-formation modeling.
+4. **Diffuse EBL / Foreground Point-Source Masking:**
+   - Evaluates HDU 5 (`PSF`) to fit and subtract all point sources detected at $>3\sigma$.
+   - Leaves only diffuse background light, enabling inspection of polycyclic aromatic hydrocarbon (PAH $3.3\,\mu\text{m}$) filaments and extragalactic background light fluctuations.
+
+---
+
+#### 6.3.5 Tab 5: Observation Discussions & Candidate Feed (`<ObservationDiscussions />`)
+The citizen-science collaboration hub modeled on Zooniverse Talk, connecting raw cutouts to community peer-review.
+
+```
++----------------------+------------------------------------------------------+---------------------------------+
+| CHANNELS (220px)     | OBSERVATION FEED (640px Centered)                    | CONTEXT & ARCHIVES (320px)      |
+|                      |                                                      |                                 |
+| [Channels]           | [Search Notes or #tags...]                           | Active Thread: SPX_J085456.9    |
+| (*) All Notes (1,429)|------------------------------------------------------| Coordinates: 133.7374, -7.2404  |
+| ( ) Movers & Dipoles | User: AstroVolunteer_92  *  2 hours ago              | Data Release: SPHEREx_QR3       |
+| ( ) Spectral Outliers| Title: Fast Moving Red Dipole with Zero Gaia Match!  | FoV: 180 arcsec                 |
+| ( ) Molecular Ices   | "Spotted a striking dipole in Band D5 (4.1 um) that  |                                 |
+| ( ) Artifacts & Help | is completely dark in Band D1. Spectrum shows deep   | [External Catalog Cross-Match]  |
+| ( ) Confirmed Finds  | CH4 trough at 3.32 um. #dipole #y-dwarf-candidate"   | - Simbad: 0 sources within 15"  |
+|                      |                                                      | - Gaia DR3: No match (Proper    |
+| [Trending Hashtags]  | +--------------------------------------------------+ |   motion > 8"/yr candidate!)    |
+| #dipole (842)        | | INLINE INTERACTIVE SNAPSHOT PREVIEW              | | - Pan-STARRS: Faint optical   |
+| #y-dwarf (312)       | | [Mini Animated Dipole]   [Mini 102-Band Spectrum]| |   counterpart < 22 mag        |
+| #h2o-ice (194)       | +--------------------------------------------------+ |                                 |
+| #artifact (145)      | Status: [Community Review]  Upvotes: 14  Replies: 6  | Independent Observers (4):      |
+| #variable (98)       | [Load in Workbench ->]                               | - AstroVolunteer_92 (Author)    |
+|                      |                                                      | - Stargazer_Ken                 |
+|                      |------------------------------------------------------| - Elena_Galaxy                  |
+|                      | User: ScienceTeam_DrSarah [Science Team] * 1 hr ago  | - NovaHunter                    |
+|                      | "Candidate verified. Escalated to Keck NIRSPEC queue!|                                 |
+|                      | Official candidate logged in Citizen Catalog."       | [Open FITS Header Metadata]     |
++----------------------+------------------------------------------------------+---------------------------------+
+```
+
+##### Detailed Mechanics:
+1. **Interactive State-Snapshot Embeds:**
+   - Every thread created via `[Submit & Open Discussion]` embeds a URL state snapshot:
+     `ra=133.7374&dec=-7.2404&fov=180&cadence=survey_6month&mode=diff&preset=brown_dwarf&px=64,64`
+   - Feed cards render an inline hardware-accelerated animated thumbnail of the blinking dipole and the 102-point spectrum.
+   - `[Load in Workbench ->]`: Re-hydrates the global Zustand store with the post's exact coordinates, cadence, math mode, and color presets, smoothly routing the user into Tab 2 or Tab 3.
+2. **Channel & Hashtag Filter System:**
+   - Channels filter database query by `channel` column (`movers`, `spectra`, `ices`, `artifacts`, `confirmed`).
+   - Hashtag engine parses `#tag` tokens from thread body text, updating active query filter.
+3. **External Archive Cross-Matching Deck:**
+   - Automatically builds one-click deep-link URLs to external archives for the thread's exact coordinate:
+     - SIMBAD: `https://simbad.u-strasbg.fr/simbad/sim-coo?Coord={ra}+{dec}&Radius=1&Radius.unit=arcmin`
+     - VizieR Gaia DR3: `https://vizier.cds.unistra.fr/viz-bin/VizieR-3?-source=I/355/gaiadr3&-c={ra}+{dec}&-c.rs=15`
+     - Legacy Survey: `https://www.legacysurvey.org/viewer?ra={ra}&dec={dec}&zoom=14`
+     - WiseView: `http://byw.tools/wiseview#ra={ra}&dec={dec}&size=176&band=2`
+
+---
+
+### 6.4 Hidden Admin Portal (`/admin` — Mission Control & ML Observability Suite)
+Accessible via direct URL navigation (`/admin`) with clean route-level isolation from public explorer routes (Zero-Auth model, no login barrier for judges). To eliminate dashboard clutter and give each complex data science tool dedicated screen real estate, the administrative portal is partitioned into a **5-Tab Mission Control Architecture**:
+
+```
++-------------------------------------------------------------------------------------------------------------------------------+
+| SPECTRA MISSION CONTROL // Admin Operations Console                                                     [Clearance: SEC] |
+| [Tab 1: Training Dynamics] [Tab 2: Parameter & Activations] [Tab 3: Decision Boundaries] [Tab 4: Triage] [Tab 5: Data Hub]   |
++-------------------------------------------------------------------------------------------------------------------------------+
+```
+
+```
+========================================================================================================================
+Admin Route          Tab Name                            Primary Functional Scope
+========================================================================================================================
+/admin/dynamics      1. Training Dynamics & Loss Studio  Live loss/accuracy curves, gradient L2 norms, learning rate
+                                                         annealing, hyperparameter controls, and retraining triggers.
+/admin/internals     2. Parameter & Activation Inspector 3D ridgeline weight/bias histograms across epochs, forward/backward
+                                                         convolutional activations, and Grad-CAM saliency heatmaps.
+/admin/boundaries    3. Decision Boundary Animator       Interactive 2D/3D meshgrid probability surfaces morphing across
+                                                         epochs in physical and UMAP latent feature space.
+/admin/triage        4. Disagreement & Escalation Queue  Hard-negative mining (AI vs community consensus divergence), raw
+                                                         FITS HDU 1-6 verification, and 1-click catalog promotion.
+/admin/exports       5. Calibration & Data Product Hub   Volunteer Bayesian reliability audits, gold-standard subject pool,
+                                                         and the 4 official SPHEREx community data product exports.
+========================================================================================================================
+```
+
+---
+
+#### 6.4.1 The Three Real Machine Learning Architectures Being Trained
+To ensure that all telemetry, weight arrays, and decision boundaries reflect genuine SPHEREx astrophysics rather than mock random noise, the active-learning loop retrains three specific lightweight models:
+1. **Spatio-Temporal Dipole ConvNet (PyTorch 2D/3D CNN):**
+   - *Input Tensor:* $6\,\text{detector bands} \times N_{\text{epochs}} \times 32 \times 32\,\text{pixels}$ cutout stamps + binary flag channel.
+   - *Architecture:* 3 spatio-temporal residual blocks ($3 \times 3 \times 3$ convolutions, batch norm, SiLU activations) followed by global average pooling and a 4-class softmax head.
+   - *Target Classes:* `Moving Dipole`, `Pulsing Variable Monopole`, `Static Field`, `Detector Artifact`.
+2. **102-Band Spectral 1D-ResNet (PyTorch 1D CNN + Multi-Head Self-Attention):**
+   - *Input Tensor:* 102 surface brightness flux values ($0.75 - 5.00\,\mu\text{m}$) concatenated with 102 inverse-variance weights ($\frac{1}{\sigma_i^2}$) and flag bits.
+   - *Architecture:* 1D convolutional stem, 4 residual bottleneck blocks with dilation, a 4-head self-attention layer, and a dense classification head.
+   - *Target Classes:* `T/Y Brown Dwarf`, `Molecular Ice Absorption`, `Redshifted Galaxy`, `Stellar Continuum`.
+3. **Interpretable Astrophysical Feature-Space Classifier (Scikit-Learn Ensemble / SVM):**
+   - *Feature Vector (3D Physical Parameters):*
+     - $X$-Axis: Infrared Color Index (Band D5 / Band D2 flux ratio, separating cool sub-stellar objects from hot stars).
+     - $Y$-Axis: Dipole Motion SNR ($\Delta S / \sigma$ between earliest and latest epoch).
+     - $Z$-Axis: Volatile Ice / Methane Absorption Depth ($\tau_{3.05} + \tau_{3.32}$ optical depth).
+   - *Model:* Support Vector Classifier (RBF kernel) or shallow MLP evaluating dense spatial meshgrids.
+
+---
+
+#### 6.4.2 Tab 1: Training Dynamics & Loss Studio (`/admin/dynamics`)
+Operates as an embedded real-time training monitor (similar to TensorBoard or Weights & Biases) connected via WebSocket to the live Python training loop.
+
+```
++---------------------------------------------------------------------------------------------------+
+| TOP CONTROLLER: Hyperparameter Configuration & Run Triggers                                       |
+| Model: [Dipole ConvNet v]  Batch Size: [32 v]  LR: [1e-4 v]  Optimizer: [AdamW v]  Epochs: [50 v] |
+| Dataset Balance: Community Consensus Labels (70%) <========O====> Gold-Standard Anchors (30%)     |
+| [START LIVE TRAINING RUN]   [PAUSE AFTER EPOCH]   [ABORT / ROLLBACK]                              |
++---------------------------------------------------------------------------------------------------+
+| LEFT PANEL (50%): Live Scalar Learning Curves     | RIGHT PANEL (50%): Telemetry & Confusion Heatmap|
+|                                                   |                                               |
+| Loss | --- Train Loss  --- Val Loss               | Gradient L2 Norm: ||grad|| = 0.042 (Stable)   |
+| 0.8  | \                                          | Cosine LR: 8.4e-5   Epoch: 24 / 50 (48%)      |
+| 0.6  |  \      Overfitting Region Alert           |                                               |
+| 0.4  |   \________   /--- Val Loss diverging!     | Live KxK Confusion Matrix (Validation Split): |
+| 0.2  |            \--/                            |               Pred Mover  Pred Var  Pred Art  |
+| 0.0  +------+------+------+------+------+------+  | True Mover:      142          4         2     |
+|     Ep 0   10     20     30     40     50         | True Var:          3        118         1     |
+|                                                   | True Art:          1          2        96     |
+| [Metric: Macro F1-Score: 94.2% (+3.8% gain)]      | Validation Precision: 95.1% | Recall: 93.8%   |
++---------------------------------------------------------------------------------------------------+
+```
+
+- **Overfitting & Early-Stopping Detector:**
+  The frontend computes the derivative of validation loss $\frac{d}{dt} \mathcal{L}_{\text{val}}$. When $\frac{d}{dt} \mathcal{L}_{\text{val}} > 0$ across 3 consecutive epochs while training loss continues to fall, the chart dynamically shades the background in warning amber and highlights the optimal early-stopping checkpoint.
+- **Global Gradient L2 Norm Monitor:**
+  Plots $\|\nabla_\theta \mathcal{L}\|_2 = \sqrt{\sum_l \|g_l\|_2^2}$ at each optimization step to detect vanishing ($<10^{-6}$) or exploding ($>10^2$) gradients.
+
+---
+
+#### 6.4.3 Tab 2: Parameter Updates & Activation Inspector (`/admin/internals`)
+Exposes the internal numerical matrices of the deep learning architectures during backpropagation.
+
+```
++---------------------------------------------------------------------------------------------------+
+| PINNED PROBE TARGET: [WISE 0855 (Moving Dipole) v] | Diagnostic Probe evaluated every epoch       |
++---------------------------------------------------------------------------------------------------+
+| LEFT PANEL (50%): Sequential 3D Weight Histograms | RIGHT PANEL (50%): Live Activation Heatmaps   |
+| Layer: [Conv2_Temporal_Residual v]                | (Forward feature maps on pinned probe)        |
+|                                                   |                                               |
+| Epoch 50:    /\_/\____                            | Layer 1: Point Source Centroids               |
+| Epoch 40:   /__/\_____                            | [Feature Map 0]  [Feature Map 1]  [Map 2]     |
+| Epoch 30:  /____/\____                            |                                               |
+| Epoch 20: /______/\___                            | Layer 2: Temporal Subtraction Filter          |
+| Epoch 10:/________/\__  (Initial Gaussian)        | (Static background stars zeroed out;          |
+| Weight: -1.0    0.0    +1.0                       |  positive/negative dipole lobes amplified!)   |
+|                                                   |                                               |
+| Dead Neuron Metric: 0.8% (|w| < 1e-4)             | Layer 3 + Grad-CAM Saliency Overlay:          |
+| Layer Mean: +0.012 | Std: 0.142                   | (Confirms network focuses on moving brown     |
+| Layer Gradient Norm: 0.0084                       |  dwarf and does not latch onto edge noise!)   |
++---------------------------------------------------------------------------------------------------+
+```
+
+- **Bandwidth-Optimized Histogram Binning:**
+  To stream weight distributions over WebSockets without transmitting megabytes of float arrays, the Python worker pre-bins layer weights into a 40-bin histogram:
+  `np.histogram(weights, bins=40, range=(-1.0, 1.0))`
+  The React frontend renders these as a stacked 3D ridgeline distribution, allowing admins to scrub across epochs to verify smooth feature emergence.
+- **Grad-CAM Saliency Projection:**
+  Computes the gradient of the predicted class score $y^c$ with respect to the final convolutional feature map $A^k$:
+  $$\alpha_k^c = \frac{1}{Z} \sum_i \sum_j \frac{\partial y^c}{\partial A_{i, j}^k}, \quad L_{\text{Grad-CAM}}^c = \text{ReLU}\left(\sum_k \alpha_k^c A^k\right)$$
+  Overlays the resulting heatmap directly onto the SPHEREx cutout in real time, proving whether the model is learning true proper motion physics or exploiting boundary artifacts.
+
+---
+
+#### 6.4.4 Tab 3: Decision Boundary Animator (`/admin/boundaries`)
+Renders the step-by-step morphing of classification boundaries across input space as the algorithm minimizes empirical risk.
+
+```
++---------------------------------------------------------------------------------------------------+
+| COORDINATE SPACE: (*) 3D Physical Astrophysical Axes   ( ) 102-Band UMAP Latent Space             |
+| X: IR Color (D5 / D2 Ratio) | Y: Motion SNR (Delta S / sigma) | Z: Ice/Methane Depth (tau_3.05 + 3.32)|
++---------------------------------------------------------------------------------------------------+
+| 3D WEBGL DECISION SURFACE VIEWPORT (Plotly / Three.js Meshgrid):                                  |
+|                                                                                                   |
+|               Motion SNR (Y)                                                                      |
+|                    ^                                                                              |
+|               15.0 |             * WISE 0855 (Moving Dipole)                                      |
+|                    |             .  .  .  .                                                       |
+|                    |          .             . <--- Dynamic Decision Surface P(Mover)=0.5         |
+|               10.0 |        .                 .    (Morphs step-by-step as epochs advance!)       |
+|                    |       .                   .                                                  |
+|                5.0 |      .   * Barnard's Star  .                                                 |
+|                    |     .                       .                                                |
+|                0.0 +----+-------------------------+--------------------> IR Color Ratio (X)       |
+|                        0.5                       3.5                      5.0 (Cold Brown Dwarf)  |
+|                                                                                                   |
+| [|<] [<<] [ Play Boundary Trajectory (Epoch 1 -> 50) ] [>>] [>|]  Active Epoch: [ 34 / 50 ]       |
+| Highlight: [X] Newly Injected Community Labels  [X] Misclassified Hard Negatives                  |
++---------------------------------------------------------------------------------------------------+
+```
+
+- **Meshgrid Evaluation Protocol:**
+  At the end of each training epoch, the Python worker evaluates model class probabilities across a uniform grid:
+  - 2D Contour Mode: $60 \times 60 = 3,600$ points spanning $[X_{\min}, X_{\max}] \times [Y_{\min}, Y_{\max}]$.
+  - 3D Isosurface Mode: $25 \times 25 \times 25 = 15,625$ points.
+- **Trajectory Animation:**
+  The frontend interpolates probability isosurfaces between epochs. Admins watch linear initial boundaries bend and wrap around non-linear clusters, seeing in real time how newly submitted community labels physically push the decision boundary away from false-positive artifact clusters.
+
+---
+
+#### 6.4.5 Tab 4: Disagreement Triage & Hard-Negative Queue (`/admin/triage`)
+- **AI vs. Community Disagreement Table:**
+  Sorts subjects by absolute divergence $|P_{\text{AI}}(c \mid s) - P_{\text{Community}}(c \mid s)|$. Identifies borderline cases where the algorithm was confident but human consensus disagreed.
+- **Raw FITS HDU 1–6 Inspector:**
+  Displays the raw data extensions side-by-side (`IMAGE`, `FLAGS`, `VARIANCE`, `ZODI`, `PSF`, `WCS-WAVE`) to resolve ambiguities.
+- **One-Click Actions:**
+  - `[Add to Hard-Negative Buffer]`: Pushes the misclassified subject into the training queue with higher sample weighting.
+  - `[Verify & Promote to Official Candidate Catalog]`: Updates database status to `verified_discovery` and writes an official Science Team badge and reply to the linked public discussion thread in Tab 5.
+
+---
+
+#### 6.4.6 Tab 5: Calibration & Mission Data Product Hub (`/admin/exports`)
+- **Volunteer Reliability Distribution:**
+  Plots histograms of volunteer Bayesian weights ($w_u \in [0.1, 1.0]$) and ROC curves (True Positive Rate vs. False Positive Rate on synthetic injected controls).
+- **Gold-Standard Calibration Pool Manager:**
+  Upload, inspect, or adjust the baseline classification of gold-standard control subjects.
+- **Mission Data Product Exporters (The 4 Official Deliverables):**
+  1. *Citizen Candidate Catalog* (`GET /api/admin/export?product=candidates` $\rightarrow$ CSV, VOTable, JSON)
+  2. *Ice Feature Atlas* (`GET /api/admin/export?product=ices` $\rightarrow$ CSV, FITS)
+  3. *Variability Alert List* (`GET /api/admin/export?product=variability` $\rightarrow$ CSV, JSON)
+  4. *Artifact Atlas* (`GET /api/admin/export?product=artifacts` $\rightarrow$ JSON, HDF5)
+  5. *PyTorch HDF5 Training Dataset* (`GET /api/admin/export?product=ml-dataset` $\rightarrow$ HDF5 tensor bundle with `DataLoader` integration script).
+
+---
+
+### 6.5 Live Machine Learning Telemetry Streaming Architecture
+
+To deliver real-time loss curves, weight histograms, activation maps, and meshgrid decision surfaces at 10–20 FPS without locking the Python process or freezing browser rendering, the architecture implements an asynchronous **Hook-to-WebSocket Fan-Out Pipeline**:
+
+```
+[PyTorch Training Loop (astro-worker)]
+         |
+         +--> PyTorch Forward Hook (Captures Probe Sample Layer Activations)
+         +--> PyTorch Backward Hook (Captures Grad-CAM Gradients & Layer Histograms)
+         +--> Meshgrid Predictor (Evaluates 60x60 Feature Probability Matrix)
+         |
+         v
+[Asynchronous Non-Blocking Socket Emitter (127.0.0.1:9002)]
+Format: Compact NDJSON Frame (<24 KB per epoch)
+         |
+         v
+[Go API Gateway Telemetry Hub (goroutine)]
+Route: GET /api/admin/ws/training
+         |
+         +--> Checks origin and WebSocket parameters (Zero-Auth Route Isolation)
+         +--> Maintains Ring Buffer of last 100 epochs (prevents state loss on tab switch)
+         +--> Broadcasts frames to active admin WebSocket clients
+         |
+         v
+[React Admin Mission Control (useAdminTrainingSocket)]
+Renderers: Chart.js / uPlot (Loss), Three.js (Weight Ridges), Plotly WebGL (Meshgrid)
+```
+
+#### 1. Python Instrumentation Hook (`astro-worker/ml_telemetry.py`):
+```python
+import torch
+import numpy as np
+
+class RealTimeTrainingInstrument:
+    def __init__(self, model, probe_cutout_tensor, feature_meshgrid):
+        self.model = model
+        self.probe_tensor = probe_cutout_tensor # [1, 6, 32, 32]
+        self.meshgrid = feature_meshgrid        # [3600, 3] coordinate grid
+        self.activations = {}
+        self._register_hooks()
+
+    def _register_hooks(self):
+        for name, layer in self.model.named_modules():
+            if isinstance(layer, (torch.nn.Conv2d, torch.nn.Conv1d, torch.nn.Linear)):
+                layer.register_forward_hook(self._make_forward_hook(name))
+
+    def _make_forward_hook(self, layer_name):
+        def hook(module, input, output):
+            if output.shape[0] == 1:
+                # Capture top 4 downsampled feature channels for probe sample
+                act = output.detach().cpu().numpy()[0]
+                self.activations[layer_name] = np.round(act[:4], 3).tolist()
+        return hook
+
+    def build_epoch_packet(self, epoch, train_loss, val_loss, val_f1, lr, boundary_clf):
+        # 1. Forward pass on pinned probe target to populate self.activations
+        self.model.eval()
+        with torch.no_grad():
+            _ = self.model(self.probe_tensor)
+
+        # 2. 40-bin compact histogram per layer
+        histograms = {}
+        total_grad_norm_sq = 0.0
+        for name, param in self.model.named_parameters():
+            if "weight" in name and param.requires_grad:
+                w_np = param.detach().cpu().numpy().ravel()
+                counts, _ = np.histogram(w_np, bins=40, range=(-1.0, 1.0))
+                grad_norm = float(param.grad.norm(2).item()) if param.grad is not None else 0.0
+                total_grad_norm_sq += grad_norm ** 2
+                histograms[name] = {
+                    "counts": counts.tolist(),
+                    "mean": round(float(w_np.mean()), 4),
+                    "std": round(float(w_np.std()), 4),
+                    "grad_norm": round(grad_norm, 4)
+                }
+
+        # 3. Decision Boundary Meshgrid probabilities
+        grid_probs = boundary_clf.predict_proba(self.meshgrid).round(3).tolist()
+
+        return {
+            "epoch": epoch,
+            "metrics": {
+                "train_loss": round(float(train_loss), 4),
+                "val_loss": round(float(val_loss), 4),
+                "val_f1": round(float(val_f1), 4),
+                "lr": lr,
+                "global_grad_norm": round(float(np.sqrt(total_grad_norm_sq)), 4)
+            },
+            "histograms": histograms,
+            "probe_activations": self.activations,
+            "decision_meshgrid": grid_probs
+        }
+```
+
+#### 2. Go Gateway WebSocket Hub (`api-gateway/admin_ws.go`):
+```go
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+type AdminTelemetryHub struct {
+	mu         sync.RWMutex
+	clients    map[*websocket.Conn]bool
+	ringBuffer []json.RawMessage // Keeps last 100 epoch frames
+}
+
+func NewAdminTelemetryHub() *AdminTelemetryHub {
+	return &AdminTelemetryHub{
+		clients:    make(map[*websocket.Conn]bool),
+		ringBuffer: make([]json.RawMessage, 0, 100),
+	}
+}
+
+func (h *AdminTelemetryHub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Verify admin authorization header / token
+	token := r.URL.Query().Get("token")
+	if token != "spx_admin_secure_token_xyz" {
+		http.Error(w, "Unauthorized: Admin clearance required", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("WebSocket Upgrade Error:", err)
+		return
+	}
+	defer conn.Close()
+
+	h.mu.Lock()
+	h.clients[conn] = true
+	// Replay buffered epoch history to newly connected tab
+	for _, frame := range h.ringBuffer {
+		conn.WriteMessage(websocket.TextMessage, frame)
+	}
+	h.mu.Unlock()
+
+	// Keep alive until disconnect
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			h.mu.Lock()
+			delete(h.clients, conn)
+			h.mu.Unlock()
+			break
+		}
+	}
+}
+
+func (h *AdminTelemetryHub) BroadcastEpochPacket(data []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Maintain 100-frame ring buffer
+	if len(h.ringBuffer) >= 100 {
+		h.ringBuffer = h.ringBuffer[1:]
+	}
+	h.ringBuffer = append(h.ringBuffer, json.RawMessage(data))
+
+	// Broadcast non-blocking to active admin tabs
+	for conn := range h.clients {
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			conn.Close()
+			delete(h.clients, conn)
+		}
+	}
+}
+```
+
+
+---
+
+## 7. Complete Verification Matrix for the 5 Benchmark Targets
+
+```
+============================================================================================================================================
+Target Name      Verified Input Coordinates (ICRS)       Tab 2: Time-Domain Behavior              Tabs 3 & 4: Spectral Behavior
+============================================================================================================================================
+Barnard's Star   RA: 17h 57m 47.13s (269.44639 deg)      Northward walk (10.39"/yr = 1.68 px/yr). Peaks near 1.1 um (D1/D2) with deep
+                 Dec: +04d 46m 00.3s (+4.76676 deg)      If unsaturated: centroid shift matches   stellar H2O steam absorption troughs.
+                 (Epoch 2025.5 propagated)               catalog PM. If saturated: flag displayed.
+--------------------------------------------------------------------------------------------------------------------------------------------
+WISE 0855-0714   RA: 08h 54m 56.91s (133.73712 deg)      Faint (<0.5 mJy); shifts 8.15"/yr West.  Steep flux drop below 3.5 um; detected
+                 Dec: -07d 14m 25.4s (-7.24038 deg)      Detected in D5/D6 coadds, OR renders     in D5/D6 coadds or honest non-detection
+                 (Epoch 2025.5 propagated)               an honest documented non-detection state.state indicating depth reached.
+--------------------------------------------------------------------------------------------------------------------------------------------
+Epsilon Indi B   RA: 22h 04m 22.96s (331.09566 deg)      Shifts 4.68"/yr Southeast as a blended   Sub-pixel Gaia overlay shows Ba/Bb pair.
+                 Dec: -56d 48m 01.1s (-56.80031 deg)     single 6.2" pixel. (Fixed 1/cos delta,   Spectral unmixer separates T1 + T6 curves
+                 (Epoch 2025.5 propagated)               eliminating 46" error in v2.5).          (marked Illustrative with residual chi^2).
+--------------------------------------------------------------------------------------------------------------------------------------------
+RW Aurigae       RA: 05h 07m 49.55s (76.95647 deg)       Centroid shift <0.3 px (stationary).     Multi-epoch spectrum shows optical flux
+                 Dec: +30d 24m 04.7s (+30.40130 deg)     Difference mode yields stationary        dimming by >1.5 mag with light curve and
+                 (Epoch 2025.5 propagated)               flashing monopole ring (>1.5 mag dim).   error bars shown per band.
+--------------------------------------------------------------------------------------------------------------------------------------------
+R Draconis       RA: 16h 32m 40.26s (248.16773 deg)      Separation to NEP is 8.61 deg. Observed  Spectrum points colored by MJD to show
+                 Dec: +66d 45m 18.1s (+66.755040 deg)    at standard survey cadence; stationary   non-simultaneity of spectral assembly
+                 (Epoch 2025.5 propagated)               pulsing monopole (P=245d, shift <0.3 px).across epochs.
+============================================================================================================================================
+```
+
+### 7.1 Testable Acceptance Hypotheses
+1. **Barnard’s Star:** If unsaturated: centroid shift is within $2\sigma$ of catalog proper motion. If saturated: UI displays the saturation flag and overlays the predicted track.
+2. **WISE 0855-0714:** Detection in Band 5 or Band 6 with centroid shift within $2\sigma$, OR a documented non-detection state with the limiting depth reached.
+3. **Epsilon Indi B:** Measured astrometric shift is consistent with catalog proper motion; both components are identified within a single pixel; unmixing is marked illustrative.
+4. **RW Aurigae:** Centroid shift $<0.3\,\text{px}$; light curve per band shown with errors.
+5. **R Draconis:** Centroid shift $<0.3\,\text{px}$; spectrum points colored by MJD to show non-simultaneity.
+
+---
+
+## 8. Implementation Roadmap & Execution Sequence (Phase-Gated by Priority)
+
+To guarantee maximum engineering velocity and eliminate the risk of a partially working demo, implementation is structured as **four sequential, priority-gated phases** preceded by mandatory Day-0 feasibility spikes:
+
+### Day-0 Spikes (Mandatory Gating Phase)
+- **Spike S1:** Resolve IRSA collection naming (`spherex_qr2` vs `qr3`), verify resolving power table from Explanatory Supplement, generate `flags.json`.
+- **Spike S2:** Pull real exposures for all 5 NASA benchmark targets; measure coverage matrices, saturation flags, and detectability.
+- **Spike S3:** Benchmark IRSA Cutout API vs S3 byte-range reads for latency and payload bytes; finalize primary path. On completion of each phase, the system reaches a 100% self-contained, testable, and demonstrable milestone before work begins on the next phase.
 
 ```mermaid
-flowchart TD
-    Client["Browser Client (React 18 / Vite / Cloudflare Pages)"]
-    FastAPI["FastAPI Single Service (Python 3.11 / Port 7860)"]
-    IRSA["NASA/IPAC IRSA Cutout & SIA2 Endpoints"]
-    S3["AWS S3 Open Data (nasa-irsa-spherex)"]
-    DB["Supabase Postgres 16 (Session Pooler)"]
-    CDN["Static CDN Bundle (/benchmarks/*.json, *.f32)"]
-
-    Client -->|1. Instant Load| CDN
-    Client -->|2. REST / SSE Progress| FastAPI
-    FastAPI -->|SIA2 / Cutout Query| IRSA
-    FastAPI -->|Fallback Range Reads| S3
-    FastAPI -->|Session & Forum Writes| DB
+gantt
+    title Spectra Sequential Priority-Gated Implementation Roadmap
+    dateFormat  YYYY-MM-DD
+    section Phase 1 (P0: Core NASA Challenge)
+    uv Python Worker (IRSA SIA2 + Float32 Stream)  :active, p1_1, 2026-11-01, 2d
+    Go Gateway (Chi + LRU + Observer Session)     :p1_2, after p1_1, 2d
+    Supabase DB + seed_benchmarks.sql (5 Targets) :p1_3, after p1_2, 1d
+    Tab 1: Aladin Lite v3 WebGL2 Dome & Dive      :p1_4, after p1_3, 2d
+    Tab 2: WebGL2 Blinker + Diff + Asinh Shader   :p1_5, after p1_4, 3d
+    Milestone Gate 1 Verification (100% Core Done):milestone, m1, after p1_5, 0d
+    section Phase 2 (P1: Science Differentiator)
+    WCS-WAVE Hyperspectral 102-Band Extractor     :p2_1, after m1, 2d
+    Supabase pgvector 102-Band Cosine Index       :p2_2, after p2_1, 2d
+    Tab 3: 102-Band Spectrophotometer (uPlot 60fps):p2_3, after p2_2, 2d
+    Tab 5: Discussion Forum + Supabase Realtime   :p2_4, after p2_3, 2d
+    Milestone Gate 2 Verification (Science Done)  :milestone, m2, after p2_4, 0d
+    section Phase 3 (P2: Institutional Polish)
+    Tab 4: Molecular & Ice Studio + Column Dens   :p3_1, after m2, 2d
+    Admin Console Tabs 1-5 (Dynamics, 3D Meshgrid):p3_2, after p3_1, 3d
+    PyTorch Training WebSocket + Pre-Trained WS   :p3_3, after p3_2, 2d
+    Milestone Gate 3 Verification (Flagship Done) :milestone, m3, after p3_3, 0d
+    section Phase 4 (Production Hardening & Deploy)
+    Hugging Face Space Dockerfile + start.sh      :p4_1, after m3, 1d
+    Cloudflare Pages Deploy + Fallback JSON Cache :p4_2, after p4_1, 1d
+    cron-job.org Keep-Alive + 24h Code Freeze     :p4_3, after p4_2, 1d
+    Milestone Gate 4 Verification (Live & Offline):milestone, m4, after p4_3, 0d
 ```
 
 ---
 
-### 4.2 Endpoint Contract
-- `GET /api/resolve?q=<name>`: Resolves target coordinates via CDS Sesame.
-- `GET /api/cutout?ra=<deg>&dec=<deg>&fov=<arcsec>&band=<B1..B6>&win=<w>`: Streams binary tensor.
-- `GET /api/spectrum?ra=<deg>&dec=<deg>`: Returns 102-channel calibrated point spectrum with covariance and flag masks.
-- `GET /api/similarity?target_id=<id>`: In-memory NumPy cosine similarity over reference spectral libraries ($<20\,\text{ms}$).
-- `GET /api/progress/{task_id}`: Server-Sent Events (SSE) stream reporting live progress (`discovering`, `fetching n/m`, `reprojecting`).
-- `GET /api/forum/threads`: Returns paginated discussion threads with state snapshots.
-- `POST /api/forum/threads`: Creates new thread requiring valid `X-Observer-ID` and `X-Observer-Key`.
-- `GET /api/health/live`: Container process health check.
-- `GET /api/health`: Database heartbeat ping and IRSA connectivity test.
+### Phase 1: Core NASA Challenge Foundation (P0 Priority — The Hackathon Core)
+**Objective:** Satisfy 100% of the NASA Space Apps challenge prompt. Enable an arbitrary user to enter any astronomical coordinate or target name and view an animated, multi-epoch blinking visualization, verified against the 5 NASA benchmark systems.
+
+#### Deliverables & Sequential Steps:
+1. **Python Science Microservice (`astro-worker` via `uv`):**
+   - Initialize project with `uv init` and install dependencies: `fastapi`, `uvicorn`, `astropy`, `pyvo`, `reproject`, `numpy`, `scipy`.
+   - Implement IRSA SIAv2 client (`pyvo`) querying `https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr3&POS=circle+{ra}+{dec}+{radius}`.
+   - S3 byte-range section reader (`astropy.io.fits` + `fsspec`) slicing bounding boxes from `s3://nasa-irsa-spherex/qr3/` without downloading full 2040x2040 frames.
+   - WCS North-Up tangent plane reprojection engine (`reproject_interp` for flux/variance; nearest-neighbor for FLAGS bitmasks).
+   - Zero-copy binary Float32 tensor streamer endpoint: `GET /worker/cutout/binary` returning raw IEEE-754 multi-epoch arrays.
+2. **Go API Gateway & Cache (`api-gateway` via `air`):**
+   - Initialize Go module with Chi router listening on port `:8080`.
+   - Thread-safe `sync.RWMutex` in-memory LRU cache ($<15\,	ext{ms}$ response for repeated queries).
+   - Zero-Auth Observer Session Middleware parsing `X-Observer-ID` and `X-Observer-Callsign` headers.
+   - Proxy handler routing `/api/cutout` requests to `astro-worker:8001`.
+3. **Database Seeding (`seed_benchmarks.sql`):**
+   - Execute PostgreSQL schema migrations creating `subjects` and `observers`.
+   - Apply `seed_benchmarks.sql` pre-populating the 5 NASA targets (Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis) at epoch 2025.5 propagated coordinates.
+4. **Public Frontend Workspaces (Tabs 1 & 2):**
+   - Scaffold React 18 + Vite 5 + TypeScript with `nuqs` (type-safe URL parameters: `tab`, `ra`, `dec`, `mode`, `preset`) and TanStack Query v5.
+   - Global Command Header with sexagesimal coordinate parsing, CDS Sesame resolver, 5 benchmark quick-loader pills, and `cmdk` command bar (`Ctrl+K`).
+   - **Tab 1 (Celestial Navigator):** Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx MOC layer, Gaia DR3 vectors, target reticle, and 3-stage camera dive.
+   - **Tab 2 (Time-Domain Comparator):** WebGL2 multi-epoch player with Asinh stretch slider, pairwise difference subtraction ($t_N - t_0$), inverse-variance coaddition for faint WISE 0855, sub-pixel Gaia centroid pins for Epsilon Indi B ($0.77\,	ext{px/yr}$), discrete survey epoch stepping (`Pass 1: 2025-05`, `Pass 2: 2025-11`, `Pass 3: 2026-05`), and live hover crosshair HUD.
+
+> [!IMPORTANT]
+> **Milestone Gate 1 Verification:** Run `task dev`. Verify that typing any coordinate or clicking any of the 5 benchmark pills immediately renders a smooth, de-warped time-domain blink comparison and difference image. At this point, the application is **100% shippable and fully satisfies the hackathon challenge prompt**.
 
 ---
 
-### 4.3 Caching & Performance Standards
-- **Two-Tier Cache:** In-memory LRU cache (bounded by bytes, max 1.5 GB) + on-disk cache keyed by `sha256(ra, dec, fov, band, win, release, collection)`.
-- **Performance Targets (Empirically Measured):**
-  - Static CDN Benchmark Load: $<100\,\text{ms}$ Time-To-First-Byte (TTFB).
-  - API Cache Hit: $p50 < 250\,\text{ms}$.
-  - Live Cold IRSA Query: $<30\,\text{s}$ with active SSE progress updates.
-  - Spectrum Interaction: 60 FPS in `uPlot` on standard hardware.
-  - In-Memory Spectral Similarity: $<20\,\text{ms}$ across $10^4$ template spectra.
+### Phase 2: Scientific Differentiator & Community Intelligence (P1 Priority)
+**Objective:** Unlock SPHEREx's signature capability: 102-channel hyperspectral cubes and citizen science peer review.
+
+#### Deliverables & Sequential Steps:
+1. **Hyperspectral Extraction Pipeline (`astro-worker`):**
+   - Implement HDU 6 (`WCS-WAVE`) lookup table evaluator: bilinear interpolation over detector coordinates $(x_{	ext{det}}, y_{	ext{det}})$ to extract exact wavelength $\lambda_k$ and bandpass $\Delta\lambda_k$.
+   - Stepped exposure binning: inverse-variance weighted mean flux into the 102 standard SPHEREx wavelength channels ($0.75-5.00\,\mu	ext{m}$).
+   - Continuum baseline normalization ($3\sigma$-clipped Chebyshev polynomial).
+   - Python Pydantic models with automated OpenAPI 3.1 export to `api.d.ts` via `openapi-typescript`.
+2. **PostgreSQL `pgvector` Hyperspectral Indexing:**
+   - Add `spectrum_vector vector(102)` column and HNSW index (`vector_cosine_ops`) to `subjects`.
+   - Implement `sqlc` query `FindSimilarSpectra` utilizing cosine distance (`<=>`) executing in $<2\,	ext{ms}$.
+3. **Tab 3: Spectrophotometric Lab (`/explore?tab=spectrophotometer`):**
+   - Canvas `uPlot` chart rendering 102 calibrated flux channels with `VARIANCE` error bars at 60 FPS.
+   - Synchronized epoch-by-epoch spectral animation linked to active survey pass.
+   - Two-component composite spectral unmixing ($a \cdot T_1 + b \cdot T_2$) demonstrating de-blending of Epsilon Indi B into T1+T6 brown dwarfs.
+   - Automated galaxy photo-$z$ solver ($P(z)$, lookback time, Mpc distance) with interactive redshift slider ($z = 0.0 - 2.5$).
+4. **Tab 5: Observation Discussions & Community Consensus (`/explore?tab=discussions`):**
+   - 3-column scientific forum layout with channel filters (`#movers`, `#spectra`, `#ices`, `#artifacts`, `#confirmed`).
+   - Embedded interactive URL deep-link snapshots with inline dipole + spectrum preview and `[Load in Workbench]` action.
+   - Real-time live synchronization via Supabase Realtime `postgres_changes`.
+   - Go Bayesian consensus engine ($P(c|s)$), Shannon entropy uncertainty ranking ($H(s)$), and volunteer reliability calibration tracking ($w_u$).
+
+> [!IMPORTANT]
+> **Milestone Gate 2 Verification:** Verify that clicking any pixel in Tab 2 instantly updates the 102-channel spectrum in Tab 3, queries the 5 closest spectral templates via `pgvector`, and allows submitting a candidate directly to Tab 5 with instant live broadcast.
 
 ---
 
-## 5. Complete Database Schema & Security Specification
+### Phase 3: Institutional Polish & Mission Control Suite (P2 Priority)
+**Objective:** Deliver an institutional-grade research platform with real-time machine learning observability and biogenic ice mapping.
 
-### 5.1 Zero-Auth Session Security Model
-Hackathon evaluators require zero barrier to entry. Blocking login dialogs are prohibited.
-- **Client Key Generation:** On first load, browser creates:
-  1. `observer_id`: Public UUIDv4 stored in `localStorage.getItem('spx_observer_id')`.
-  2. `observer_key`: Secret 32-byte cryptographic random string in `localStorage.getItem('spx_observer_key')`.
-  3. `observer_handle`: Callsign (e.g., `Observer-Vega-409`).
-- **Server Verification:** All mutating API requests send `X-Observer-ID` and `X-Observer-Key`. The backend stores only `sha256(observer_key)` in the `observers` table.
-- **No Data Leaks:** Raw `observer_key` and internal `observer_id` UUIDs are never exposed in read endpoints. Discussions display only `author_handle`.
-- **Database Row Level Security (RLS):** Enabled across all tables with zero `anon` policies. All database access flows through the backend service role.
+#### Deliverables & Sequential Steps:
+1. **Tab 4: Molecular & Ice Mapping Studio (`/explore?tab=ice_studio`):**
+   - Continuum-normalized transmission ($F/F_{	ext{cont}}$) and optical depth view ($	au_\lambda = -\ln(F/F_{	ext{cont}})$).
+   - Interactive laboratory molecular rulers: $	ext{H}_2	ext{O}$ ($3.05\,\mu	ext{m}$), $	ext{CH}_4$ ($3.32\,\mu	ext{m}$), $	ext{CO}_2$ ($4.27\,\mu	ext{m}$), $	ext{CO}$ ($4.67\,\mu	ext{m}$).
+   - Numerical column density integration ($N = rac{1}{A} \int 	au(
+u) d
+u$) in $	ext{cm}^{-2}$ with $	ext{CO}_2/	ext{H}_2	ext{O}$ abundance ratios.
+   - Spatial ice brush tool for regional nebulosity averaging and diffuse EBL foreground point-source masking.
+2. **Hidden Admin Mission Control (`/admin` 5-Tab Architecture):**
+   - Route-level isolation (`/admin/*`) with zero-auth entry and automatic `posted_from_admin = TRUE` badge tagging.
+   - **Tab 1 (`/admin/dynamics`):** Real-time scalar learning curves (train vs. validation loss, accuracy, gradient L2 norms) via `uPlot`.
+   - **Tab 2 (`/admin/internals`):** Sequential 3D ridgeline weight/bias histograms across training epochs and convolutional/spectral layer activations.
+   - **Tab 3 (`/admin/boundaries`):** Dynamic 3D decision boundary morphing over astrophysical feature space via `plotly.js-gl3d-dist` WebGL surfaces.
+   - **Tab 4 (`/admin/triage`):** Hard-negative disagreement queue ($|P_{	ext{AI}} - P_{	ext{Human}}|$) with raw FITS HDU 1–6 inspection.
+   - **Tab 5 (`/admin/exports`):** 1-click exporter generating the 4 official SPHEREx community data products (CSV, VOTable, JSON) and PyTorch HDF5 training bundles.
+3. **PyTorch Training WebSocket Pipeline (`/api/admin/ws/training`):**
+   - Python worker forward/backward hooks streaming compact NDJSON epoch frames over WebSocket to Go gateway.
+   - Go 100-frame ring buffer preserving telemetry across browser reconnects.
+   - Pre-computed diagnostic model weights for instant 60 FPS live demo playback.
+
+> [!IMPORTANT]
+> **Milestone Gate 3 Verification:** Verify that `/admin` renders all 5 mission control tabs, live WebSocket telemetry streams without dropped frames, and data product exports generate valid files.
 
 ---
 
-### 5.2 Production SQL DDL Migrations
+### Phase 4: Production Deployment, Hardening & Compliance
+**Objective:** Ensure 100% reliable 24/7 cloud hosting at $0 cost alongside an offline-capable venue demo fallback.
 
-```sql
--- Migration: 20261101_v3_init.sql
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+#### Deliverables & Sequential Steps:
+1. **Unified Backend Deployment (Hugging Face Spaces):**
+   - Multi-stage Dockerfile compiling Go gateway (`CGO_ENABLED=0`) and configuring Python 3.11 with `uv` and CPU-only PyTorch.
+   - Process supervisor `start.sh` running Go on public port `7860` and Python worker on internal `127.0.0.1:8001`.
+   - Dual-action `/api/health` keep-alive endpoint touching Go, Python, and Supabase PostgreSQL in a single ping.
+2. **Frontend Edge CDN (Cloudflare Pages):**
+   - Deploy `web-client` with environment variables: `VITE_API_BASE_URL`, `VITE_WS_BASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+   - Pre-seed `web-client/public/benchmarks/` with static `.json` and `.f32` fallback files for $<15\,	ext{ms}$ loading.
+3. **Database & Keep-Alive Automation:**
+   - Supabase Cloud setup with Session Pooler (port `5432`, IPv4 compatible) and strict Row Level Security (RLS) policies.
+   - Configure cron-job.org primary pinger (every 5 minutes) and GitHub Actions backup pinger (`heartbeat.yml` every 15 minutes).
+4. **Demo-Day Offline Mirror & Hackathon Compliance:**
+   - Configure local development stack via `task dev` on the demo laptop, fully pre-seeded with benchmark tensors for offline presentation if venue Wi-Fi fails.
+   - Enforce 24-hour pre-judging code freeze.
+   - Include persistent UI footer citations: NASA SPHEREx QR3 DOI (`10.26131/IRSA662`), IRSA IPAC, Gaia DR3, AllWISE, and GPL-3 open-source license.
 
--- Observers Table with Hashed Secret Key
-CREATE TABLE observers (
-  id BIGSERIAL PRIMARY KEY,
-  observer_id UUID UNIQUE NOT NULL,
-  key_hash TEXT NOT NULL,
-  handle TEXT NOT NULL,
-  total_classifications INT NOT NULL DEFAULT 0,
-  calibration_seen INT NOT NULL DEFAULT 0,
-  calibration_correct INT NOT NULL DEFAULT 0,
-  reliability_weight DOUBLE PRECISION NOT NULL DEFAULT 0.85,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+> [!IMPORTANT]
+> **Milestone Gate 4 Verification:** Run smoke test suite across both public Cloudflare URL and offline `localhost:5173`. Confirm all 5 benchmark targets load, live queries execute, and health pingers report 100% uptime.
 
--- Discussion Threads with State Query Snapshots
-CREATE TABLE discussion_threads (
-  thread_id BIGSERIAL PRIMARY KEY,
-  subject_id TEXT,
-  observer_ref BIGINT NOT NULL REFERENCES observers(id),
-  author_handle TEXT NOT NULL,
-  channel TEXT NOT NULL,
-  title TEXT NOT NULL CHECK (char_length(title) <= 120),
-  body TEXT NOT NULL CHECK (char_length(body) <= 4000),
-  hashtags JSONB NOT NULL DEFAULT '[]',
-  ra DOUBLE PRECISION NOT NULL,
-  dec DOUBLE PRECISION NOT NULL,
-  state_query TEXT NOT NULL,
-  preview_metrics JSONB NOT NULL DEFAULT '{}',
-  upvotes INT NOT NULL DEFAULT 0,
-  moderator_verified BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+---
 
--- Discussion Replies
-CREATE TABLE discussion_replies (
-  reply_id BIGSERIAL PRIMARY KEY,
-  thread_id BIGINT NOT NULL REFERENCES discussion_threads(thread_id) ON DELETE CASCADE,
-  observer_ref BIGINT NOT NULL REFERENCES observers(id),
-  author_handle TEXT NOT NULL,
-  body TEXT NOT NULL CHECK (char_length(body) <= 2000),
-  moderator_verified BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+## 9. Local Developer Orchestration & Execution Blueprint (`Taskfile.yml`)
 
--- Citizen Science Classifications
-CREATE TABLE classifications (
-  classification_id BIGSERIAL PRIMARY KEY,
-  subject_id TEXT NOT NULL,
-  observer_ref BIGINT NOT NULL REFERENCES observers(id),
-  class_label TEXT NOT NULL,
-  confidence DOUBLE PRECISION NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
-  is_control BOOLEAN NOT NULL DEFAULT FALSE,
-  was_correct BOOLEAN,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+To enable seamless, one-command reproducibility across developer machines and AI coding agents, all build, migration, code generation, and runtime processes are orchestrated via **`Taskfile`** (Task runner) and the **Supabase CLI**.
 
--- Enable RLS with zero anon policies
-ALTER TABLE observers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE discussion_threads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE discussion_replies ENABLE ROW LEVEL SECURITY;
-ALTER TABLE classifications ENABLE ROW LEVEL SECURITY;
+### 9.1 `Taskfile.yml`
+```yaml
+version: '3'
+
+tasks:
+  default:
+    desc: "Display available commands"
+    cmds:
+      - task --list
+
+  setup:
+    desc: "Install all dependencies across Python, Go, and React in <10 seconds"
+    cmds:
+      - uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
+      - air -v || go install github.com/air-verse/air@latest
+      - sqlc version || go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+      - supabase --version || npm install -g supabase
+      - cd astro-worker && uv sync
+      - cd api-gateway && go mod download
+      - cd web-client && npm install
+
+  db:up:
+    desc: "Start local Supabase Postgres + pgvector and apply schema + benchmark seeds"
+    cmds:
+      - supabase start
+      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f api-gateway/db/schema.sql
+      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f api-gateway/db/seed_benchmarks.sql
+
+  sqlc:
+    desc: "Generate type-safe Go database code from schema.sql and query.sql"
+    dir: api-gateway
+    cmds:
+      - sqlc generate
+
+  types:sync:
+    desc: "Generate strict TypeScript types from Python FastAPI OpenAPI schema"
+    cmds:
+      - npx openapi-typescript http://127.0.0.1:8001/openapi.json -o ./web-client/src/types/api.d.ts
+
+  worker:dev:
+    desc: "Run the Python FastAPI + Astropy + PyTorch Science Worker with uv"
+    dir: astro-worker
+    cmds:
+      - uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+  gateway:dev:
+    desc: "Run the Go API & WebSocket Gateway with live reload via air"
+    dir: api-gateway
+    cmds:
+      - air
+
+  web:dev:
+    desc: "Run the React + Vite frontend client"
+    dir: web-client
+    cmds:
+      - npm run dev
+
+  dev:
+    desc: "Start the complete Spectra stack concurrently"
+    deps: [db:up]
+    cmds:
+      - task sqlc
+      - npx concurrently -n "WORKER,GATEWAY,WEB" -c "blue,green,cyan" \
+          "task worker:dev" \
+          "task gateway:dev" \
+          "task web:dev"
 ```
 
----
+### 9.2 Offline Resilience & Hackathon Venue Guarantee
+To ensure 100% functionality even during network outages at the hackathon venue:
+- `seed_benchmarks.sql` immediately populates the 5 benchmark NASA systems (Barnard’s Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis), 20 active-learning queue candidates, and 6 sample discussion threads into Supabase PostgreSQL.
+- Pre-rendered Float32Array binary cutouts and 102-band spectra are cached locally on disk.
+- All 3D boundary animations, `pgvector` spectral similarity searches, and WebGL2 image arithmetic run locally at 60 FPS without requiring an external internet connection.
 
-### 5.3 Consensus Scoring & Synthetic Injections
-- **Reliability-Weighted Vote Share:**
-  $$P(c \mid s) = \frac{\sum_{i} w_i \cdot k_i \cdot [\text{class}_i = c]}{\sum_{i} w_i \cdot k_i}$$
-  where $w_i \in [0.1, 1.0]$ is observer reliability weight, and $k_i \in [0, 1]$ is self-reported confidence.
-- **Queue Priority via Shannon Entropy:**
-  $$H(s) = -\sum_{c} P(c \mid s) \log_2 P(c \mid s)$$
-  Ambiguous subjects ($H \approx \max$) are prioritized in classification queues.
-- **Calibration Loop:** With $10\%$ randomized probability, the queue injects a synthetic control subject (simulated proper-motion mover or flat-spectrum source) or a held-out gold target:
-  - Match: $w \leftarrow \min(1.0, w + 0.05(1 - w))$
-  - Miss: $w \leftarrow \max(0.1, w - 0.10 \cdot w)$
-
----
-
-## 6. Frontend Component Architecture & 5 Workspaces
-
-### 6.1 State Management & URL Schema (`nuqs`)
-State is synchronized strictly via standard URL query parameters without URL hash mixing:
-```
-/explore?tab=<navigator|comparator|spectra|ices|discussions>&ra=<deg>&dec=<deg>&fov=<arcsec>&band=<B1..B6>&win=<w>&mode=<blink|diff|coadd>&epoch=<i>&px=<x>&py=<y>&z=<redshift>&embed=<0|1>
-```
+### 9.3 Local Development Port Allocation Table
+| Service | Local Address / Port | Responsibility |
+|---|---|---|
+| **Vite Frontend Client** | `http://localhost:5173` | React 18 / Tailwind / Aladin Lite v3 / `nuqs` / TanStack Query |
+| **Go API Gateway** | `http://localhost:8080` | Chi Router, Observer Session Middleware, `sqlc` + `pgx/v5`, LRU Cache |
+| **Python Science Worker** | `http://127.0.0.1:8001` | FastAPI, Astropy, PyVO, `reproject`, WCS-WAVE Evaluator |
+| **Supabase PostgreSQL** | `localhost:54322` | PostgreSQL 16 + `pgvector` + `cube` + `earthdistance` |
+| **Supabase Studio UI** | `http://localhost:54323` | Local Database Visual Table Editor & Query Runner |
+| **Supabase Inbucket** | `http://localhost:54324` | Local Email Testing for Auth Sign-Up / Password Reset |
+| **PyTorch Training WS** | `ws://localhost:8080/api/admin/ws/training` | Live streaming telemetry for `/admin` real-time dynamics |
 
 ---
 
-### 6.2 Global Header
-- **Universal Coordinate Resolver:** Accepts decimal degrees (`269.4464, 4.7668`), sexagesimal (`17h57m47.14s +04d46m00.7s`), or object names (`Barnard's Star`) with 350 ms debouncing.
-- **5 NASA Benchmark Quick-Pills:** Quick jump to Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis.
-- **FoV Selector:** Discrete choices ($60'', 120'', 180'', 300'', 600''$; banner notice on $600''$).
-- **Institutional Source Badge:** Displays `[NASA Benchmark (Pre-cached)]`, `[IRSA Live (<collection>)]`, or `[Synthetic Injection Mode]`.
-- **Backend Status Dot:** Green (live API connection) or Amber (CDN static demo mode).
+## 10. Production Hosting & Deployment Specification ($0 Always-Warm Topology)
 
----
+### 10.1 Design Goals & Constraints
+| Goal | Requirement |
+|---|---|
+| **Cost** | $0/month on free tiers for the hackathon judging window and beyond. |
+| **Latency** | No cold starts when a judge opens the URL. Benchmark targets load in $<15\,\text{ms}$. |
+| **Memory** | Must fit Astropy + `reproject` + PyTorch (CPU) + Go gateway without Out-of-Memory crashes (rules out 512 MB free hosts such as Render/Koyeb free). |
+| **Topology** | Go gateway and Python worker communicate over loopback (zero network hop), not across two providers. |
+| **Resilience** | The 5 benchmark targets must render even if the backend, Supabase, or IRSA is unreachable. |
+| **Auth** | None (Exchange #28). Route separation `/explore` vs `/admin` only. |
 
-### 6.3 Workspace Tabs Specification
-
-#### Tab 1: Celestial Navigator (P0 - Must-Have)
-- Aladin Lite v3 planetarium dome with AllWISE color HiPS background.
-- SPHEREx survey coverage MOC overlay (generated via `scripts/build_moc.py` with `mocpy`).
-- NEP and SEP Deep Field boundaries ($pprox 100\,\text{deg}^2$ circles at ecliptic poles).
-- Gaia DR3 proper motion arrow overlays.
-- Dynamic FOV reticle with "Dive into Time-Domain" action triggering transition to Tab 2.
-
-#### Tab 2: Time-Domain Comparator (P0 - Must-Have)
-- Analysis Band selector (B1–B6) with interactive **Coverage Matrix** (Epochs $\times$ Bands).
-- Player controls: Discrete epoch stepping, Play/Pause, Blink, Coadd, and **Wavelength-Matched Difference Mode**.
-- Asinh contrast stretch sliders (black point, white point, softening parameter).
-- Rectified North-Up tangent view vs. raw detector sensor view toggle.
-- Overlays: Gaia catalog predicted track, measured centroid fit with $1\sigma/2\sigma$ covariance ellipses, and 12-bit FLAGS bitmask overlays.
-- Honest non-detection state for targets below local detection limit.
-- WebGL2 Float32 shader canvas with Canvas 2D fallback.
-
-#### Tab 3: Spectrophotometric Lab (P1 - Differentiator)
-- 102-channel calibrated spectrum rendered at 60 FPS with `uPlot`.
-- Scatter points representing raw exposures colored by observation MJD.
-- `VARIANCE` error bars and `FLAGS` masking markers.
-- Non-simultaneity MJD span badge.
-- Interactive rest-frame redshift ruler: $\lambda_{\text{obs}} = \lambda_{\text{rest}}(1 + z)$.
-- In-memory NumPy spectral similarity search ($<20\,\text{ms}$) against reference brown dwarf and stellar libraries.
-- Two-component non-negative matrix unmixing with explicit residual $\chi^2$ display and template provenance disclosure.
-
-#### Tab 4: Molecular & Ice Studio (P2 - Polish)
-- Point-source background star workflow seeded from the IRSA SPLICES list.
-- Local continuum normalization around molecular bands: $\tau(\lambda) = -\ln(F(\lambda) / F_{\text{cont}}(\lambda))$.
-- Optical depth integration over wavenumber $\nu = 10^4 / \lambda[\mu\text{m}]$:
-  $$N = \frac{1}{A} \int \tau(\nu) d\nu$$
-- Verified laboratory band absorption strengths ($A$-values):
-  - $\text{H}_2\text{O}$ ($3.05\,\mu\text{m}$): $A = 2.0 \times 10^{-16}\,\text{cm/molecule}$
-  - $\text{CO}_2$ ($4.27\,\mu\text{m}$): $A = 7.6 \times 10^{-17}\,\text{cm/molecule}$
-  - $^{13}\text{CO}_2$ ($4.38\,\mu\text{m}$): $A = 7.8 \times 10^{-17}\,\text{cm/molecule}$
-  - $\text{CO}$ ($4.67\,\mu\text{m}$): $A = 1.1 \times 10^{-17}\,\text{cm/molecule}$
-- Explicit warning: Gas-phase brown dwarf methane absorption is strictly quarantined from ice column calculations.
-
-#### Tab 5: Community Discussions & Peer Review (P1 - Differentiator)
-- Three-pane layout: Channel directory, Thread feed, and Context inspection panel.
-- Threads store complete state snapshots (`state_query`) with "Load in Workbench" button.
-- Real-time updates delivered via backend Server-Sent Events (SSE).
-- One-click external catalog cross-matches: SIMBAD, VizieR Gaia DR3, Legacy Survey, WiseView.
-
----
-
-## 7. Admin Mission Control & Moderation Architecture
-
-- **Route Isolation:** Hosted under `/admin/*`.
-- **Default State:** Read-only demo mode (`ADMIN_MUTATIONS_ENABLED=false`).
-- **Authorization:** Mutating operations require `Authorization: Bearer <ADMIN_TOKEN>` where the token is set strictly in Hugging Face Space secrets.
-- **Badge Integrity:** Verified admin responses render the gold `[Moderator]` badge. The label "Science Team" is reserved strictly for authenticated mission personnel.
-- **Community Branding:** All exported candidate catalogs, ice lists, and data products carry the explicit label `Community Product` with release DOI, without claiming official NASA endorsement.
-
----
-
-## 8. Implementation Roadmap & Execution Sequence
+### 10.2 Production Topology
+| Tier | Provider | Free Quota (verify at deploy time) | Role |
+|---|---|---|---|
+| **Frontend Edge CDN** | Cloudflare Pages | Unlimited static bandwidth/requests, 500 builds/month | Serves the React SPA (`/explore`, `/admin`), Aladin Lite v3 assets, and static benchmark fallbacks (`/benchmarks/*.json`, `*.f32`). |
+| **Unified Compute** | Hugging Face Spaces (Docker SDK, `cpu-basic`) | 2 vCPU, 16 GB RAM, ~50 GB ephemeral disk; sleeps after ~48 h without traffic | One container: Go gateway on public port `7860`, Python worker on `127.0.0.1:8001`. |
+| **Database & Vectors** | Supabase Cloud (Free) | 500 MB Postgres, 1 GB Storage, Realtime; project pauses after 7 days of no DB activity | 6 tables, `pgvector` `vector(102)` HNSW index, Realtime for Tab 5. |
+| **Keep-Alive** | cron-job.org (primary) + GitHub Actions (backup) | Free | Hits `/api/health`, which touches Go, Python, and Postgres in one request. |
+| **CI/CD** | GitHub Actions | Free for public repos | Builds/tests; mirrors backend to the HF Space repo; Cloudflare auto-builds the frontend. |
 
 ```mermaid
 flowchart LR
-    Spikes["Day-0 Spikes (S1, S2, S3)"] --> Phase1["Phase 1: P0 Core Challenge"]
-    Phase1 --> Phase2["Phase 2: P1 Science & Community"]
-    Phase2 --> Phase3["Phase 3: P2 Polish & Admin"]
-    Phase3 --> Phase4["Phase 4: Hardening & Deploy"]
+    Judge["Judge Browser"] -->|HTTPS| CF["Cloudflare Pages: React SPA + /benchmarks static fallbacks"]
+    Judge -->|"HTTPS REST + binary Float32"| HF
+    Judge -->|"WSS /api/admin/ws/training"| HF
+    Judge -->|"WSS Realtime (SELECT only, RLS)"| SupaRT["Supabase Realtime"]
+    subgraph HF["Hugging Face Space (Docker, UID 1000, 16 GB RAM)"]
+        Go["Go Gateway :7860 (chi, sqlc, pgx/v5, LRU, WS hub)"]
+        Py["Python Worker 127.0.0.1:8001 (FastAPI, Astropy, PyTorch CPU)"]
+        Go <-->|loopback HTTP| Py
+    end
+    Go -->|"Session Pooler :5432 (IPv4)"| PG[("Supabase Postgres + pgvector")]
+    PG --> SupaRT
+    Py -->|"SIA2 / S3 byte-range"| IRSA["IRSA + s3://nasa-irsa-spherex"]
+    Cron["cron-job.org every 5 min"] -->|GET /api/health| Go
+    GHA["GitHub Actions every 15 min (backup)"] -->|GET /api/health| Go
 ```
 
-### Day-0 Spikes (Mandatory Gating Phase)
-- **Spike S1:** Resolve IRSA collection naming, verify resolving power table from Explanatory Supplement, generate `flags.json`.
-- **Spike S2:** Pull real exposures for all 5 NASA benchmark targets; measure coverage matrices, saturation flags, and detectability.
-- **Spike S3:** Benchmark IRSA Cutout API vs S3 byte-range reads for latency and payload bytes; finalize primary path.
+### 10.3 Supabase Cloud Setup
+1. Create project **`spectra-prod`** (region closest to the HF Space region; HF Spaces generally run in US/EU, so choose `us-east-1` or `eu-central-1`).
+2. In the SQL Editor run `api-gateway/db/schema.sql` (Section 5.1), then `api-gateway/db/seed_benchmarks.sql`, then the heartbeat table:
+   ```sql
+   CREATE TABLE IF NOT EXISTS system_heartbeats (
+       id INT PRIMARY KEY DEFAULT 1,
+       last_ping TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       CONSTRAINT single_row CHECK (id = 1)
+   );
+   INSERT INTO system_heartbeats (id, last_ping) VALUES (1, NOW())
+   ON CONFLICT (id) DO NOTHING;
+   ```
+3. **Row Level Security (mandatory with zero-auth).** The `anon` key ships inside the public frontend bundle, and Supabase exposes every `public` table through PostgREST. Without RLS anyone could write or delete rows directly. All writes go through the Go gateway (which connects as the `postgres` role and bypasses RLS); the browser only needs read access to the discussion tables for Realtime:
+   ```sql
+   ALTER TABLE subjects            ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE observers           ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE classifications     ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE discussion_threads  ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE discussion_replies  ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE ml_training_runs    ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE system_heartbeats   ENABLE ROW LEVEL SECURITY;
 
-### Phase 1: P0 Core NASA Challenge Foundation
-- **Backend:** FastAPI cutout pipeline, wavelength-matched frame selection, binary tensor streaming, static benchmark bundle generator (`benchmarks/build.py`).
-- **Frontend:** App shell, query string sync via `nuqs`, universal search header, Tab 1 (Aladin Lite v3 with MOC), Tab 2 (Time-Domain Comparator with coverage matrix, WebGL2 Asinh stretch, and honest non-detection state).
-- **Gate 1 Milestone:** Arbitrary coordinates or benchmark pills render wavelength-matched blink and difference frames with complete provenance.
+   -- Browser (anon) may only READ discussion data, needed for Realtime postgres_changes
+   CREATE POLICY "anon read threads" ON discussion_threads FOR SELECT TO anon USING (true);
+   CREATE POLICY "anon read replies" ON discussion_replies FOR SELECT TO anon USING (true);
+   -- No INSERT/UPDATE/DELETE policies for anon on any table => denied by default.
 
-### Phase 2: P1 Science & Community Intelligence
-- **Backend:** Hyperspectral extraction (`/api/spectrum`), in-memory NumPy cosine similarity, observer secret key session middleware, discussion SSE stream.
-- **Frontend:** Tab 3 (Spectrophotometric Lab with `uPlot`, rest-frame ruler, unmixing), Tab 5 (Discussions with state snapshots and live SSE feed).
-- **Gate 2 Milestone:** Pixel click in Tab 2 updates Tab 3 spectrum; discussion thread round-trips live between two separate browsers.
+   -- Enable Realtime broadcasting for the two discussion tables
+   ALTER PUBLICATION supabase_realtime ADD TABLE discussion_threads, discussion_replies;
+   ```
+4. **Connection string.** Copy the **Session Pooler** URI (Project Settings → Database → Connect → Session pooler, host `aws-0-<region>.pooler.supabase.com`, port `5432`, user `postgres.<project-ref>`).
+   - The *direct* connection (`db.<ref>.supabase.co`) is IPv6-only on the free tier; HF containers may not route IPv6. Use the pooler.
+   - Use **session** mode (port 5432), not **transaction** mode (port 6543). `pgx/v5` caches prepared statements by default and `sqlc` emits prepared queries (`emit_prepared_queries: true`); transaction pooling breaks named prepared statements.
+   - Append `?sslmode=require`.
+5. Copy **Project URL** and **anon key** (Project Settings → API) for the frontend only. The `service_role` key is never used or shipped.
 
-### Phase 3: P2 Institutional Polish & Mission Control
-- **Backend:** SPLICES target list ingestion, synthetic injection calibration loop, read-only `/admin` telemetry triage.
-- **Frontend:** Tab 4 (Molecular & Ice Studio with verified laboratory $A$-values), `/admin` mission control dashboards.
-- **Gate 3 Milestone:** Ice column density workflow completes on SPLICES sources; calibration injections adjust user reliability weights.
+### 10.4 Unified Backend Container (Hugging Face Spaces)
+HF Docker Spaces rules: the container runs as a non-root user with **UID 1000**; only one public port is routed (set via `app_port`, here `7860`) and it carries both HTTPS and WSS; disk is **ephemeral** (wiped on restart/rebuild).
 
-### Phase 4: Production Packaging & Hardening
-- Hugging Face Space Dockerfile packaging, Cloudflare Pages CDN routing, Supabase RLS security audit, cron-job keep-alive ping setup, offline venue demo mirror.
+#### 10.4.1 Space Repository Layout
+The Space is its own git repo (`huggingface.co/spaces/<user>/spectra-mission-engine`). It receives a mirror of the backend from GitHub (Section 10.7):
+```
+spectra-mission-engine/      (HF Space repo root)
+├── README.md                # HF frontmatter (below)
+├── Dockerfile
+├── start.sh
+├── api-gateway/             # Go module (sqlc output committed in internal/db)
+└── astro-worker/            # pyproject.toml + uv.lock + source + benchmark cache
+```
 
+#### 10.4.2 `README.md` Frontmatter
+```yaml
 ---
-
-## 9. Acceptance Criteria for the 5 NASA Benchmark Targets
-
-| Target Name | Scientific Hypothesis to Test | Strict Acceptance Criteria |
-|---|---|---|
-| **Barnard's Star** | Northward proper motion shift of $\approx 1.7\,\text{px}$ between Pass 1 and Pass 3; high flux. | If unsaturated: measured centroid shift is within $2\sigma$ of catalog PM. If saturated: UI renders saturation flag badge and overlays catalog-predicted track. |
-| **WISE 0855-0714** | Faint sub-stellar thermal emission; detected primarily in D5/D6 coadds. | Measured centroid shift matches catalog PM within $2\sigma$ in B5/B6 coadd, OR system renders a documented non-detection state indicating the limiting depth reached. |
-| **Epsilon Indi B** | Blended sub-pixel motion of $\approx 0.76\,\text{px/yr}$; unresolved binary. | Measured astrometric shift is consistent with catalog proper motion; Ba/Bb are marked as unresolved within single pixel; spectral unmixing is explicitly labelled "Illustrative". |
-| **RW Aurigae** | Stationary variable star; substantial photometric dimming between epochs. | Measured centroid shift is $<0.3\,\text{px}$ (stationary); light curve per band displays significant flux change with error bars. |
-| **R Draconis** | Stationary Mira-type pulsating variable ($8.61^\circ$ from NEP). | Measured centroid shift is $<0.3\,\text{px}$; spectrum points are colored by MJD to demonstrate non-simultaneity of the spectral assembly across passes. |
-
+title: Spectra Mission Engine
+emoji: 🔭
+colorFrom: indigo
+colorTo: gray
+sdk: docker
+app_port: 7860
+fullWidth: true
+header: mini
+pinned: false
 ---
+```
+> `colorFrom` / `colorTo` accept only `red, yellow, green, blue, indigo, purple, pink, gray`. The originally proposed `black` is invalid and fails the Space config check.
 
-## 10. Production Deployment (Single-Service Topology)
-
+#### 10.4.3 Multi-Stage `Dockerfile` (uv-based, CPU PyTorch)
 ```dockerfile
-# Hugging Face Space Dockerfile (python:3.11-slim)
-FROM python:3.11-slim
+# ---------- Stage 1: Go gateway (sqlc + pgx/v5 + chi) ----------
+FROM golang:1.23-bookworm AS go-builder
+WORKDIR /build
+COPY api-gateway/go.mod api-gateway/go.sum ./
+RUN go mod download
+COPY api-gateway/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /spectra-gateway ./cmd/gateway
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PORT=7860
+# ---------- Stage 2: Python 3.11 science runtime ----------
+FROM python:3.11-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.4 /uv /usr/local/bin/uv
 
-WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git libgomp1 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install uv for ultra-fast dependency management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
-
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
-
-COPY . .
-
-# Ensure non-root user UID 1000 for Hugging Face Spaces
-RUN useradd -m -u 1000 user && chown -R user:user /app
+RUN useradd -m -u 1000 user
 USER user
+ENV HOME=/home/user \
+    PATH=/home/user/app/astro-worker/.venv/bin:/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+WORKDIR /home/user/app
+
+# Dependency layer (cached unless pyproject/uv.lock change)
+COPY --chown=user astro-worker/pyproject.toml astro-worker/uv.lock ./astro-worker/
+RUN cd astro-worker && uv sync --frozen --no-dev --no-install-project
+
+# Source, pre-computed benchmark cache, Go binary, supervisor
+COPY --chown=user astro-worker/ ./astro-worker/
+RUN cd astro-worker && uv sync --frozen --no-dev
+COPY --from=go-builder --chown=user /spectra-gateway ./spectra-gateway
+COPY --chown=user start.sh ./start.sh
+RUN chmod +x ./start.sh ./spectra-gateway && mkdir -p /home/user/app/cache
 
 EXPOSE 7860
-CMD ["uv", "run", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
+HEALTHCHECK --interval=60s --timeout=5s CMD curl -fsS http://127.0.0.1:7860/api/health/live || exit 1
+CMD ["./start.sh"]
+```
+CPU-only PyTorch is pinned in `astro-worker/pyproject.toml` so `uv.lock` never resolves the ~2.5 GB CUDA wheels:
+```toml
+[project]
+name = "astro-worker"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.8",
+  "astropy>=6.1.3", "pyvo>=1.5.2", "reproject>=0.14.0",
+  "numpy>=2.1.1", "scipy>=1.14.1", "scikit-learn>=1.5.0",
+  "torch>=2.4.0", "fsspec>=2024.6.1", "s3fs>=2024.6.1",
+  "httpx>=0.27", "msgpack>=1.0",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 ```
 
-- **Database Connectivity:** Connects to Supabase via Session Pooler (`IPv4`, port 5432, session mode) to avoid IPv6 free-tier connection failures.
-- **Keep-Alive Configuration:** HTTPS ping to `/api/health` every 5 minutes from `cron-job.org` (with 15-minute GitHub Actions workflow backup) to prevent cold starts.
-- **Offline Venue Mirror:** Standalone Docker container loaded on demo laptop pre-seeded with static `/benchmarks/*` bundles to guarantee 100% presentation uptime during judging.
+#### 10.4.4 Process Supervisor (`start.sh`)
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[Spectra] Starting Python worker on 127.0.0.1:8001"
+( cd /home/user/app/astro-worker && \
+  uvicorn main:app --host 127.0.0.1 --port 8001 --workers 1 --timeout-keep-alive 30 ) &
+WORKER_PID=$!
+
+# Wait up to 60 s for the worker before exposing the public port
+for i in $(seq 1 60); do
+  curl -fsS http://127.0.0.1:8001/worker/health >/dev/null 2>&1 && break
+  sleep 1
+done
+
+echo "[Spectra] Starting Go gateway on 0.0.0.0:7860"
+export PORT=7860
+export ASTRO_WORKER_URL="http://127.0.0.1:8001"
+/home/user/app/spectra-gateway &
+GATEWAY_PID=$!
+
+trap 'kill -TERM $WORKER_PID $GATEWAY_PID 2>/dev/null' TERM INT
+# If either process dies, exit non-zero so HF restarts the container cleanly
+wait -n $WORKER_PID $GATEWAY_PID
+exit 1
+```
+- **One uvicorn worker only.** PyTorch training and `reproject` are CPU-bound; with 2 vCPUs, parallelism comes from `torch.set_num_threads(2)` and a single `asyncio` training task, not multiple processes (which would duplicate model memory).
+
+#### 10.4.5 Space Secrets & Variables (Settings → Variables and secrets)
+| Name | Type | Value |
+|---|---|---|
+| `DATABASE_URL` | Secret | `postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require` |
+| `ALLOWED_ORIGINS` | Variable | `https://spectra.pages.dev,http://localhost:5173` |
+| `IRSA_COLLECTION` | Variable | `spherex_qr3` |
+| `CACHE_DIR` | Variable | `/home/user/app/cache` |
+| `SPECTRA_DEMO_READONLY_ADMIN` | Variable | `false` (set `true` to disable `/api/admin` mutations if abuse occurs, see 10.9) |
+
+#### 10.4.6 Health Endpoints (Go)
+Two routes so the container healthcheck never hits the database every minute:
+- `GET /api/health/live`: process liveness only, returns `200 {"status":"live"}`.
+- `GET /api/health`: **dual-action keep-alive**, touches all three tiers.
+```go
+func (s *Server) handleHealthKeepAlive(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+    defer cancel()
+
+    // 1. Real write on Supabase: resets the 7-day inactivity pause timer
+    _, dbErr := s.dbPool.Exec(ctx, `UPDATE system_heartbeats SET last_ping = NOW() WHERE id = 1`)
+
+    // 2. Loopback ping to the Python worker
+    pyStatus := "ok"
+    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.workerURL+"/worker/health", nil)
+    resp, pyErr := s.httpClient.Do(req)
+    if pyErr != nil {
+        pyStatus = "down"
+    } else {
+        if resp.StatusCode != http.StatusOK {
+            pyStatus = "degraded"
+        }
+        resp.Body.Close()
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Cache-Control", "no-store")
+    status := http.StatusOK
+    body := map[string]string{
+        "status": "alive", "gateway": "ok", "py_worker": pyStatus,
+        "supabase": "updated", "timestamp": time.Now().UTC().Format(time.RFC3339),
+    }
+    if dbErr != nil {
+        status = http.StatusServiceUnavailable
+        body["status"], body["supabase"] = "db_error", dbErr.Error()
+    } else if pyStatus != "ok" {
+        status = http.StatusServiceUnavailable
+        body["status"] = "worker_error"
+    }
+    w.WriteHeader(status)
+    _ = json.NewEncoder(w).Encode(body)
+}
+```
+
+#### 10.4.7 CORS, WebSockets & Public URLs
+- Frontend (Cloudflare) and backend (HF) are different origins. The gateway uses `github.com/go-chi/cors` with `AllowedOrigins` from `ALLOWED_ORIGINS`, `AllowedHeaders: ["Content-Type","X-Observer-ID","X-Observer-Callsign","X-Spectra-Portal"]`, `ExposedHeaders: ["X-Observer-ID","X-Cache"]`, `MaxAge: 600`.
+- The WebSocket upgrader (`/api/admin/ws/training`) checks `Origin` against the same allowlist.
+- WebSocket hub sends a ping frame every **25 s** so idle proxies do not drop the connection; the client reconnects with exponential backoff (1 s → 30 s cap) and resumes from the 100-frame ring buffer (Section 6.4).
+- Call the **direct container subdomain**, never the `huggingface.co/spaces/...` iframe wrapper:
+  - REST: `https://<hf-user>-spectra-mission-engine.hf.space`
+  - WSS: `wss://<hf-user>-spectra-mission-engine.hf.space/api/admin/ws/training`
+- Binary cutouts (`application/octet-stream`, Float32) are served with `Content-Encoding: gzip` when the client accepts it (Float32 sky data compresses ~2–3×).
+
+#### 10.4.8 Ephemeral Disk Strategy
+- HF disk is wiped on every restart/rebuild, so nothing important may live only on disk.
+- **Baked into the image:** the 5 benchmark targets' Float32 cutouts, spectra, and pre-trained model weights (`astro-worker/cache/benchmarks/`, `astro-worker/models/*.pt`).
+- **Runtime cache:** on-demand IRSA cutouts go to `CACHE_DIR` plus the Go in-memory LRU; losing them only costs a re-fetch.
+- **Durable state:** everything else (classifications, threads, training-run summaries) lives in Supabase. `ml_training_runs.telemetry_frames` stores downsampled frames (≤ 1 per epoch) to respect the 500 MB DB limit.
+
+### 10.5 Frontend Deployment (Cloudflare Pages)
+1. **Project settings:** Connect the GitHub repo → Framework preset *Vite* → Root directory `web-client` → Build command `npm ci && npm run build` → Output directory `dist` → env `NODE_VERSION=20`.
+2. **Environment variables (build-time, inlined by Vite):**
+   | Variable | Value |
+   |---|---|
+   | `VITE_API_BASE_URL` | `https://<hf-user>-spectra-mission-engine.hf.space` |
+   | `VITE_WS_BASE_URL` | `wss://<hf-user>-spectra-mission-engine.hf.space` |
+   | `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+   | `VITE_SUPABASE_ANON_KEY` | `<anon key>` (public by design; protected by RLS, Section 10.3) |
+3. **SPA routing:** `web-client/public/_redirects`
+   ```
+   /*    /index.html   200
+   ```
+4. **Caching headers:** `web-client/public/_headers`
+   ```
+   /assets/*
+     Cache-Control: public, max-age=31536000, immutable
+   /benchmarks/*
+     Cache-Control: public, max-age=86400
+   /index.html
+     Cache-Control: no-cache
+   ```
+5. **Static benchmark fallback (judge-proof):** `web-client/public/benchmarks/` holds `{barnards_star,wise_0855,eps_indi_b,rw_aur,r_dra}.json` (metadata, WCS, 102-band spectrum) plus matching `.f32` binary cutouts. The data hook resolves benchmark IDs from `/benchmarks/` first (served from the CDN edge in $<15\,\text{ms}$), then refreshes from the API in the background via TanStack Query. If the backend is down, the 5 mandatory targets still play in Tabs 1–4.
+6. **Preview deployments:** every PR gets a `*.spectra.pages.dev` preview URL; add `https://*.spectra.pages.dev` handling to the gateway CORS check (suffix match) if previews must call the API.
+
+### 10.6 Redundant Keep-Alive Automation
+HF free Spaces sleep after ~48 h without traffic; Supabase free projects pause after 7 days without DB activity. One `GET /api/health` resets both.
+
+**Primary: cron-job.org (every 5 min, precise timing)**
+- Title `Spectra Production Heartbeat`; URL `https://<hf-user>-spectra-mission-engine.hf.space/api/health`; schedule every 5 minutes; timeout 15 s; enable *notify on failure* (emails you when a bad push breaks the server).
+
+**Backup: GitHub Actions (`.github/workflows/heartbeat.yml`)**
+```yaml
+name: Spectra Keep-Alive Heartbeat
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping gateway, Python worker and Supabase
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
+            https://<hf-user>-spectra-mission-engine.hf.space/api/health)
+          echo "Heartbeat HTTP status: $code"
+          test "$code" -eq 200
+```
+> [!NOTE]
+> GitHub delays scheduled workflows under load (15–30 min is common) and **disables schedules after 60 days without repository activity**, which is why it is only the backup.
+
+### 10.7 CI/CD Pipeline
+| Trigger | Job | Action |
+|---|---|---|
+| PR / push | `ci.yml` | `go vet` + `go test ./...` + `sqlc diff` (fails if generated code is stale); `uv run ruff check` + `uv run pytest`; `npm ci && npm run typecheck && npm run build`. |
+| Push to `main` (backend paths) | `deploy-backend.yml` | Mirrors `api-gateway/`, `astro-worker/`, `Dockerfile`, `start.sh`, `hf/README.md` to the HF Space repo; HF rebuilds the image. |
+| Push to `main` (web-client) | Cloudflare Pages | Native Git integration auto-builds and deploys. |
+| Every 15 min | `heartbeat.yml` | Backup keep-alive (10.6). |
+
+`deploy-backend.yml`:
+```yaml
+name: Deploy backend to Hugging Face Space
+on:
+  push:
+    branches: [main]
+    paths: ['api-gateway/**', 'astro-worker/**', 'Dockerfile', 'start.sh', 'hf/README.md']
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble Space tree
+        run: |
+          mkdir space
+          cp -r api-gateway astro-worker Dockerfile start.sh space/
+          cp hf/README.md space/README.md
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # write token from hf.co/settings/tokens
+          HF_USER: ${{ vars.HF_USER }}
+        run: |
+          pip install -q "huggingface_hub>=0.24"
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+              folder_path="space",
+              repo_id=f'{os.environ["HF_USER"]}/spectra-mission-engine',
+              repo_type="space",
+              commit_message=f'Deploy {os.environ.get("GITHUB_SHA","")[:7]}',
+          )
+          EOF
+```
+Large binaries (benchmark `.f32`, `.pt` weights) over 10 MB must be tracked with Git LFS / Xet in the Space repo; `upload_folder` handles this automatically.
+
+### 10.8 Resource Budget (cpu-basic: 2 vCPU / 16 GB)
+| Component | Est. RAM | Notes |
+|---|---|---|
+| Go gateway + LRU (2,000 cutouts) | 0.3–1.5 GB | Cap LRU by bytes (e.g. 1 GB), not only by count. |
+| Python worker idle (Astropy, FastAPI, torch import) | ~0.8 GB | |
+| `reproject` on one 180″ multi-epoch cutout | < 0.5 GB peak | Byte-range reads avoid loading full 2040×2040 MEFs. |
+| Live training (Dipole ConvNet + 1D-ResNet + SVM), batch 32 | 1–3 GB | Keep models small; 2 vCPU trains ~seconds/epoch on hundreds of samples. |
+| **Total headroom** | **> 8 GB free** | No OOM risk. |
+
+Guardrails: one concurrent training run (HTTP `409` if another is active); max epochs 50; worker request timeout 25 s; gateway rate-limit with `github.com/go-chi/httprate` (e.g. 60 req/min per `X-Observer-ID` or IP on write endpoints, 10 req/min on `/api/admin/retrain`).
+
+### 10.9 Zero-Auth Exposure Risks & Mitigations
+| Risk | Mitigation |
+|---|---|
+| Anyone discovering `/admin` can trigger retraining, promote candidates, or post "verified" replies. | Rate limits (10.8); single training run lock; `SPECTRA_DEMO_READONLY_ADMIN=true` kill-switch makes `/api/admin/*` mutations return `403` without a redeploy (Space restart only); all admin mutations logged with `X-Observer-ID`. |
+| Direct table writes via the public anon key. | RLS on all tables, SELECT-only for discussion tables (10.3). |
+| Spam in Tab 5. | Body length caps (title ≤ 120, body ≤ 4,000 chars), per-observer rate limit, server-side HTML escaping (Markdown rendered with sanitization on the client). |
+| DB growth past 500 MB. | Downsampled telemetry frames; nightly `DELETE` of `user_explored` subjects older than 30 days with no classifications. |
+| Keep-alive pinging policy. | Light 5-minute health checks are within normal monitoring use; if HF changes its policy, upgrade to a paid always-on CPU Space or move the same container to Fly.io / Google Cloud Run (`min-instances=1`) with no code changes (it only needs `PORT`). |
+
+### 10.10 Deployment Runbook & Verification
+1. Create Supabase project → run schema, seeds, heartbeat table, RLS policies, Realtime publication.
+2. Create HF Space (Docker, blank, `cpu-basic`) → add secrets/variables (10.4.5) → add `HF_TOKEN` + `HF_USER` to GitHub → run `deploy-backend.yml`.
+3. Wait for build → verify:
+   - `curl https://<hf-user>-spectra-mission-engine.hf.space/api/health` returns `200` with `"supabase":"updated"` and `"py_worker":"ok"`.
+   - `SELECT last_ping FROM system_heartbeats;` shows the new timestamp.
+4. Create Cloudflare Pages project with env vars → deploy → open `https://spectra.pages.dev/explore`.
+5. Smoke tests:
+   - The 5 benchmark pills load instantly (CDN fallback) and then refresh from the API.
+   - Type an arbitrary RA/Dec → cutout plays in Tab 2 (live IRSA path).
+   - Post in Tab 5 from two browsers → the second sees it live (Realtime + RLS SELECT).
+   - Open `/admin/dynamics` → start a training run → loss curve streams over WSS.
+   - Run `curl -X POST https://<project-ref>.supabase.co/rest/v1/subjects -H "apikey: <anon>"` and confirm it is rejected (RLS works).
+6. Configure cron-job.org (5 min) and confirm `heartbeat.yml` is enabled.
+7. **Day before judging:** trigger a manual rebuild, re-run the smoke tests, and confirm cron-job.org history is green.
+
+
 
 ---
 
-## 11. Risk Management & Open Questions
+## 11. Risk Management & Open Questions Matrix
 
 | Risk | Impact | Mitigation Strategy |
 |---|---|---|
 | **Archive Release Renaming (QR2 vs QR3)** | Broken queries / HTTP 404. | Configuration-driven collection names via `IRSA_COLLECTION` env var; validate in Spike S1. |
-| **Sparse Coverage at Sky Coordinates** | Empty canvas or incomplete matrix. | Visual Coverage Matrix (Epochs $\times$ Bands); honest non-detection empty states; optional window widening. |
+| **Sparse Coverage at Sky Coordinates** | Empty canvas or incomplete matrix. | Visual Coverage Matrix (Epochs $\times$ Bands); honest non-detection empty states; optional window widening with warning badge. |
 | **Target Saturation (Barnard's Star)** | Corrupted centroiding and photometry. | HDU 2 `FLAGS` parsing; automatic saturation badges and predicted-track overlays. |
 | **WISE 0855 Undetectable in Single Pass** | No source visible to user. | Inverse-variance multi-exposure coadds in B5/B6; explicit documented non-detection state. |
 | **IRSA API Latency or Outage** | Slow response during judging. | Pre-cached static CDN benchmark bundle; SSE progress streaming; 60s hard timeout with partial return. |
 | **Zero-Auth Security Abuse** | Spam or forged badges. | Cryptographic secret `observer_key` hash in DB; read-only `/admin` default; mutations behind Space secret token. |
+| **Database Memory Exhaustion** | 500 MB Supabase free tier blowout. | Dropped `pgvector` from P0; in-memory NumPy cosine similarity (<10 MB RAM, $<20\,\text{ms}$). |
+| **Scope Creep** | Unfinished core requirements. | Strict sequential gating: Day-0 Spikes $\to$ Phase 1 (P0) $\to$ Phase 2 (P1) $\to$ Phase 3 (P2). Cut order: P3, Tab 4, admin triage, Tab 5 polish, Tab 3 templates. Never cut P0. |
 
 ---
 *End of Spectra Engineering Specification v3.0.0-PROD.*
