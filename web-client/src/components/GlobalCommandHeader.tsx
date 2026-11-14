@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { queryClient } from '../App';
@@ -640,17 +641,22 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
     <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-black/90 backdrop-blur-md px-4 font-sans text-xs text-foreground select-none">
       {/* 1. Official NASA Branding & Mission Status */}
       <div className="flex items-center gap-3 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <NasaMeatballSvg className="h-6 w-7 drop-shadow-sm" />
+        <Link
+          to="/"
+          aria-label="SPHEREx — return to mission home"
+          title="Return to the SPHEREx mission home page"
+          className="group flex items-center gap-2.5 rounded-md px-1 py-1 -mx-1 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+        >
+          <NasaMeatballSvg className="h-6 w-7 drop-shadow-sm transition-transform group-hover:scale-105" />
           <div className="flex flex-col">
-            <span className="text-sm font-extrabold tracking-tight text-white leading-none">
+            <span className="text-sm font-extrabold tracking-tight text-white leading-none transition-colors group-hover:text-primary">
               SPHEREx
             </span>
             <span className="hidden sm:inline text-[9px] tracking-wider uppercase text-neutral-400 font-medium">
               NASA All-Sky Survey
             </span>
           </div>
-        </div>
+        </Link>
 
         <span className="h-4 w-px bg-neutral-800" aria-hidden="true" />
 

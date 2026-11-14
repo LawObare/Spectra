@@ -6,20 +6,110 @@ interface MissionHeroProps {
   onSelectDiscovery?: (discoveryId: string) => void;
 }
 
+/**
+ * Hero background plate: ESO VLT (FORS) view of the grand-design spiral
+ * galaxy NGC 1232. Public ESO release, licensed CC BY 4.0.
+ * Swap the file at `web-client/public/images/hero-galaxy.jpg` to change it.
+ */
+const GALAXY_BACKGROUND_SRC = '/images/hero-galaxy.jpg';
+
+interface TwinkleStar {
+  id: number;
+  top: string;
+  left: string;
+  size: number;
+  duration: number;
+  delay: number;
+  minOpacity: number;
+  tint: string;
+}
+
+const STAR_TINTS = ['255, 255, 255', '198, 225, 255', '255, 238, 208', '216, 206, 255'];
+
+/** Deterministic mulberry32 PRNG so the starfield is identical on every render. */
+function buildStarfield(count: number, seed = 20250311): TwinkleStar[] {
+  let state = seed >>> 0;
+  const random = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), 1 | t);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  return Array.from({ length: count }, (_, index) => ({
+    id: index,
+    top: `${(random() * 100).toFixed(2)}%`,
+    left: `${(random() * 100).toFixed(2)}%`,
+    size: 1 + random() * 2.2,
+    duration: 2.6 + random() * 4.8,
+    delay: random() * 6,
+    minOpacity: 0.08 + random() * 0.28,
+    tint: STAR_TINTS[Math.floor(random() * STAR_TINTS.length)],
+  }));
+}
+
+const HERO_STARS = buildStarfield(120);
+
 export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation }) => {
   return (
-    <section className="relative w-full overflow-hidden bg-black text-white select-none border-b border-neutral-900">
-      {/* Background Graphic & Left Scrim Overlay */}
-      <div className="absolute inset-0 pointer-events-none">
-        {/* Subtle NASA Deep-Space Starfield & Infrared Nebular Gradient */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_80%_30%,rgba(11,61,145,0.22),transparent_70%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_90%,rgba(40,139,255,0.12),transparent_60%)]" />
+    <section
+      id="mission-hero"
+      className="relative isolate w-full overflow-hidden bg-[#04050b] text-white select-none border-b border-neutral-900"
+    >
+      {/* ----------------------------------------------------------------- */}
+      {/* Deep-space background stack: rotating galaxy plate + starfield     */}
+      {/* ----------------------------------------------------------------- */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+        {/* Base void wash so no pure-black plate edges ever read as a box */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_120%_90%_at_65%_40%,#0a1230_0%,#05060f_55%,#000000_100%)]" />
 
-        {/* Spacecraft Silhouette / Glow Accent */}
-        <div className="absolute right-[-10%] top-[-10%] w-[800px] h-[800px] rounded-full bg-[radial-gradient(circle,rgba(40,139,255,0.08)_0%,transparent_70%)] blur-3xl pointer-events-none" />
+        {/* Slowly rotating spiral galaxy (240 s per revolution) */}
+        <div className="absolute left-[68%] top-[42%] -translate-x-1/2 -translate-y-1/2">
+          <div className="relative h-[78vmax] w-[78vmax]">
+            <img
+              src={GALAXY_BACKGROUND_SRC}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              loading="eager"
+              decoding="async"
+              className="spx-galaxy-layer h-full w-full select-none object-cover opacity-90"
+            />
+          </div>
+        </div>
 
-        {/* Authentic Left Gradient Scrim (matching science.nasa.gov skrim-left) */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-transparent z-10" />
+        {/* Cool nebular veils drifting over the galactic core */}
+        <div className="spx-nebula-veil absolute inset-0 bg-[radial-gradient(circle_at_78%_28%,rgba(40,139,255,0.20),transparent_58%)]" />
+        <div className="spx-nebula-veil absolute inset-0 bg-[radial-gradient(circle_at_20%_88%,rgba(86,72,196,0.16),transparent_60%)]" />
+
+        {/* Twinkling foreground starfield */}
+        <div className="absolute inset-0">
+          {HERO_STARS.map((star) => (
+            <span
+              key={star.id}
+              className="spx-star"
+              style={
+                {
+                  top: star.top,
+                  left: star.left,
+                  width: `${star.size}px`,
+                  height: `${star.size}px`,
+                  backgroundColor: `rgb(${star.tint})`,
+                  boxShadow: `0 0 6px 1px rgba(${star.tint}, 0.7)`,
+                  animationDuration: `${star.duration.toFixed(2)}s`,
+                  animationDelay: `-${star.delay.toFixed(2)}s`,
+                  '--spx-twinkle-min': star.minOpacity,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+        </div>
+
+        {/* Left readability scrim (keeps hero copy institutional and legible) */}
+        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/70 to-transparent" />
+        {/* Bottom fade into the discoveries carousel below */}
+        <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black to-transparent" />
       </div>
 
       <div className="relative z-20 max-w-7xl mx-auto px-6 lg:px-12 pt-14 pb-12">
@@ -44,13 +134,13 @@ export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation })
 
         {/* Hero Title Block */}
         <div className="max-w-3xl mb-10">
-          <h1 className="text-5xl sm:text-6xl md:text-7xl font-extrabold tracking-tight text-white mb-4 leading-[1.05]">
+          <h1 className="text-5xl sm:text-6xl md:text-7xl font-extrabold tracking-tight text-white mb-4 leading-[1.05] drop-shadow-[0_4px_24px_rgba(0,0,0,0.85)]">
             SPHEREx
           </h1>
-          <p className="text-lg sm:text-xl font-normal text-neutral-300 leading-relaxed mb-4">
+          <p className="text-lg sm:text-xl font-normal text-neutral-200 leading-relaxed mb-4 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
             Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer
           </p>
-          <p className="text-sm sm:text-base text-neutral-400 leading-relaxed font-light">
+          <p className="text-sm sm:text-base text-neutral-300 leading-relaxed font-light drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)]">
             NASA’s all-sky infrared space observatory mapping more than 450 million galaxies and 100 million stars every six months in 102 colors of near-infrared light. Discover nearby moving worlds, cosmic water ice reservoirs, and the birth of the universe.
           </p>
 
@@ -71,7 +161,7 @@ export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation })
 
             <a
               href="#discoveries"
-              className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900/60 hover:bg-neutral-800 text-neutral-200 px-5 py-3.5 text-sm font-medium transition-colors"
+              className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900/60 backdrop-blur-sm hover:bg-neutral-800 text-neutral-200 px-5 py-3.5 text-sm font-medium transition-colors"
             >
               <span>Explore Major Discoveries</span>
               <svg className="h-3.5 w-3.5 text-neutral-400" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="2">
@@ -82,7 +172,7 @@ export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation })
         </div>
 
         {/* 4-Stat Fast-Facts Bento Deck (NASA mission-single-meta standard) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 rounded-xl border border-neutral-800 bg-neutral-950/80 backdrop-blur-md">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 rounded-xl border border-neutral-800 bg-black/60 backdrop-blur-md">
           <div className="flex flex-col border-r border-neutral-800/80 pr-4 last:border-r-0">
             <span className="text-[11px] uppercase tracking-wider font-semibold text-neutral-500 mb-1">
               Mission Type
@@ -130,6 +220,11 @@ export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation })
               Milky Way & Interstellar Ices
             </span>
           </div>
+        </div>
+
+        {/* Background plate credit (institutional attribution) */}
+        <div className="mt-4 text-right text-[10px] font-mono text-neutral-600">
+          Background plate: Spiral galaxy NGC 1232 — ESO/P. Grosbøl (CC BY 4.0)
         </div>
       </div>
     </section>
