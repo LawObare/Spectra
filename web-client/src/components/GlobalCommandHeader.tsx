@@ -274,74 +274,81 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between border-b border-[#1E2633] bg-[#090C10] px-4 font-mono text-sm text-slate-200 select-none">
-      {/* 1. Brand & Telemetry Status Indicator */}
+    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between border-b border-[#1E2530] bg-[#0F131A] px-4 font-sans text-xs text-[#E6ECF2] select-none">
+      {/* 1. Brand & Institutional Source Attribution */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <span className="font-bold tracking-wider text-[#00F0FF]">SPECTRA</span>
-          <span className="text-xs text-slate-500">//</span>
-          <span className="text-xs font-semibold text-slate-400">QR2</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-semibold tracking-tight text-[#E6ECF2]">Spectra</span>
+          <span className="text-[11px] text-[#94A3B8]">SPHEREx QR2 · Community Product</span>
         </div>
 
-        {/* Live Backend Indicator Dot */}
+        <span className="h-3.5 w-px bg-[#1E2530]" aria-hidden="true" />
+
+        {/* Backend Engine Status */}
         <div
-          className="flex items-center gap-1.5 rounded bg-slate-900/80 px-2 py-0.5 text-[11px]"
+          className="flex items-center gap-1.5 rounded-sm border border-[#1E2530] bg-[#151B24] px-2 py-0.5 text-[11px] text-[#94A3B8]"
           title={
             isBackendLive
-              ? 'Unified FastAPI Engine Connected (Port 7860)'
-              : 'Offline / Local Static Benchmark Cache Mode'
+              ? 'Unified FastAPI science engine connected (port 7860)'
+              : 'Running from pre-cached benchmark tensors'
           }
         >
-          <span
-            className={`h-2 w-2 rounded-full ${
-              isBackendLive ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-amber-400'
-            }`}
-          />
-          <span className="text-[10px] text-slate-400">
-            {isBackendLive ? 'LIVE' : 'CACHE'}
-          </span>
+          <svg className="h-2 w-2 shrink-0" viewBox="0 0 8 8" aria-hidden="true">
+            <circle
+              cx="4"
+              cy="4"
+              r="3.5"
+              fill={isBackendLive ? '#22C55E' : '#F59E0B'}
+            />
+          </svg>
+          <span>{isBackendLive ? 'Live API' : 'Local cache'}</span>
         </div>
 
-        {/* Data Honesty Source Badge */}
+        {/* Data Honesty Source Attribution */}
         <div
-          className={`rounded border px-1.5 py-0.5 text-[10px] font-medium tracking-tight ${
+          className={`hidden xl:flex items-center rounded-sm border px-2 py-0.5 font-mono text-[11px] tabular-nums ${
             sourceBadge.includes('NASA Benchmark')
-              ? 'border-cyan-500/40 bg-cyan-950/40 text-cyan-300'
+              ? 'border-[#38BDF8]/40 bg-[#151B24] text-[#E6ECF2]'
               : sourceBadge.includes('Synthetic')
-              ? 'border-purple-500/40 bg-purple-950/40 text-purple-300'
-              : 'border-slate-700 bg-slate-900 text-slate-300'
+              ? 'border-[#F59E0B]/40 bg-[#151B24] text-[#F59E0B]'
+              : 'border-[#1E2530] bg-[#151B24] text-[#94A3B8]'
           }`}
         >
           {sourceBadge}
         </div>
       </div>
 
-      {/* 2. Universal Coordinate / Target Input */}
+      {/* 2. Universal Coordinate / Target Input & Calibration Targets */}
       <div className="flex items-center gap-2">
         <div className="relative flex items-center">
+          <label htmlFor="spectra-coord-search" className="sr-only">
+            Search coordinates (decimal or sexagesimal) or target name
+          </label>
           <input
+            id="spectra-coord-search"
             type="text"
             value={searchInput}
             onChange={handleSearchChange}
             placeholder={
               activeTargetName
-                ? `${activeTargetName} (${ra.toFixed(4)}, ${dec.toFixed(4)})`
-                : 'RA/Dec or Target (e.g. WISE 0855)...'
+                ? `${activeTargetName} (${ra.toFixed(4)}°, ${dec.toFixed(4)}°)`
+                : 'RA/Dec or object name (e.g. WISE 0855)...'
             }
-            className="w-[260px] rounded border border-[#1E2633] bg-[#0c1017] px-2.5 py-1 text-xs text-slate-100 placeholder-slate-500 focus:border-[#00F0FF] focus:outline-none focus:ring-1 focus:ring-[#00F0FF]"
+            className="w-[250px] rounded-sm border border-[#1E2530] bg-[#080A0F] py-1 pl-2.5 pr-10 font-mono text-xs tabular-nums text-[#E6ECF2] placeholder-[#94A3B8] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[#38BDF8]"
           />
           <button
             type="button"
             onClick={onOpenCommandPalette}
-            className="absolute right-1.5 rounded bg-slate-800/80 px-1 py-0.5 text-[9px] text-slate-400 hover:text-cyan-300"
-            title="Open Command Palette (Cmd+K / Ctrl+K)"
+            className="absolute right-1.5 rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#94A3B8] transition-colors duration-150 hover:border-[#38BDF8] hover:text-[#E6ECF2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+            title="Open command palette (⌘K / Ctrl+K)"
+            aria-label="Open command palette"
           >
-            ⌘K
+            ⌘&nbsp;K
           </button>
         </div>
 
-        {/* 3. 5 Mandatory NASA Benchmark Quick-Launch Pills */}
-        <div className="flex items-center gap-1">
+        {/* 3. 5 Mandatory NASA Benchmark Calibration Targets */}
+        <div className="hidden lg:flex items-center gap-1" role="group" aria-label="NASA benchmark targets">
           {MANDATORY_BENCHMARKS.map((b) => {
             const isSelected =
               Math.abs(ra - b.ra) < 0.005 && Math.abs(dec - b.dec) < 0.005;
@@ -351,11 +358,11 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                 type="button"
                 onClick={() => handleBenchmarkSelect(b)}
                 onMouseEnter={() => prefetchBenchmark(b.name)}
-                title={`${b.name}: ${b.description}`}
-                className={`rounded px-2 py-1 text-xs transition-colors ${
+                title={`${b.name} — ${b.description}`}
+                className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
                   isSelected
-                    ? 'border border-cyan-400 bg-cyan-950/60 font-semibold text-cyan-300 shadow-[0_0_8px_rgba(0,240,255,0.25)]'
-                    : 'border border-transparent bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                    ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
+                    : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:border-[#94A3B8]/50 hover:text-[#E6ECF2]'
                 }`}
               >
                 {b.label}
@@ -365,18 +372,21 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         </div>
       </div>
 
-      {/* 4. FoV Selector & 14 B/px Payload Gauge */}
-      <div className="flex items-center gap-3">
+      {/* 4. FoV Selector & 14 B/px Payload Readout */}
+      <div className="flex items-center gap-2.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-slate-500">FoV:</span>
+          <label htmlFor="spectra-fov-select" className="text-[11px] text-[#94A3B8]">
+            Cutout FoV
+          </label>
           <select
+            id="spectra-fov-select"
             value={fovArcsec}
             onChange={(e) => {
               const val = Number(e.target.value);
               setFov(val);
               setUrlFov(val);
             }}
-            className="rounded border border-[#1E2633] bg-[#0c1017] px-1.5 py-0.5 text-xs text-slate-300 focus:border-[#00F0FF] focus:outline-none"
+            className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-1.5 py-1 font-mono text-xs tabular-nums text-[#E6ECF2] transition-colors duration-150 focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
           >
             {FOV_PRESETS.map((f) => (
               <option key={f} value={f}>
@@ -386,24 +396,27 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           </select>
         </div>
 
-        {/* 14 B/px Payload Indicator */}
+        {/* 14 B/px Tensor Payload Readout */}
         <div
-          className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] ${
+          className={`flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums ${
             payloadMb >= 2.0
-              ? 'border-amber-500/40 bg-amber-950/40 text-amber-300'
-              : 'border-slate-800 bg-slate-900/60 text-slate-400'
+              ? 'border-[#F59E0B] bg-[#151B24] text-[#F59E0B]'
+              : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8]'
           }`}
-          title={`Computed tensor payload: ${totalEpochs || 3} epochs × 6 bands × ${(
+          title={`Uncompressed tensor: ${totalEpochs || 3} epochs × 6 bands × ${(
             fovArcsec / 6.2
-          ).toFixed(1)}² px × 14 B`}
+          ).toFixed(1)}² px × 14 B/px`}
         >
-          <span>{payloadMb.toFixed(2)} MB</span>
-          {payloadMb >= 2.0 && <span className="text-amber-400 font-bold">⚠️</span>}
+          <span>{payloadMb.toFixed(2)}&nbsp;MB</span>
+          {payloadMb >= 2.0 && <span className="font-sans text-[10px]">High payload</span>}
         </div>
       </div>
 
       {/* 5. 5 Workspace Tab Switcher */}
-      <nav className="flex items-center gap-0.5 rounded border border-[#1E2633] bg-[#0c1017] p-0.5">
+      <nav
+        aria-label="Workspaces"
+        className="flex items-center gap-0.5 rounded-sm border border-[#1E2530] bg-[#080A0F] p-0.5"
+      >
         {TABS.map((t) => {
           const isActive = tab === t.id;
           return (
@@ -411,15 +424,16 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
-              className={`relative rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+              aria-current={isActive ? 'page' : undefined}
+              className={`relative rounded-sm px-2.5 py-1 text-xs transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8] ${
                 isActive
-                  ? 'bg-cyan-950/80 text-[#00F0FF] shadow-[0_0_6px_rgba(0,240,255,0.2)]'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'border border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
+                  : 'border border-transparent text-[#94A3B8] hover:text-[#E6ECF2]'
               }`}
             >
               {t.label}
               {t.badge && (
-                <span className="ml-1.5 rounded-full bg-cyan-500/20 px-1 text-[9px] font-bold text-cyan-300">
+                <span className="ml-1.5 rounded-sm border border-[#1E2530] bg-[#0F131A] px-1 font-mono text-[10px] tabular-nums text-[#94A3B8]">
                   {t.badge}
                 </span>
               )}
@@ -433,35 +447,36 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         <button
           type="button"
           onClick={() => setIsShareOpen(!isShareOpen)}
-          className="rounded border border-[#1E2633] bg-[#0c1017] px-2.5 py-1 text-xs text-slate-300 hover:border-slate-700 hover:text-white"
+          aria-expanded={isShareOpen}
+          className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#94A3B8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
         >
-          Share ▾
+          Share
         </button>
 
         {isShareOpen && (
-          <div className="absolute right-0 top-9 z-50 w-64 rounded-lg border border-[#1E2633] bg-[#090C10] p-3 shadow-xl">
-            <div className="mb-2 text-xs font-semibold text-slate-200">
-              Share Workspace View
+          <div className="absolute right-0 top-9 z-50 w-64 rounded-sm border border-[#1E2530] bg-[#151B24] p-3">
+            <div className="mb-2 text-xs font-medium text-[#E6ECF2]">
+              Share current view state
             </div>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1.5">
               <button
                 type="button"
                 onClick={handleCopyLink}
-                className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 text-left text-xs text-slate-300 hover:border-cyan-500 hover:text-cyan-300"
+                className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
               >
-                🔗 Copy Deep Link
+                Copy deep link URL
               </button>
               <button
                 type="button"
                 onClick={handleCopyIframe}
-                className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1.5 text-left text-xs text-slate-300 hover:border-cyan-500 hover:text-cyan-300"
+                className="w-full rounded-sm border border-[#1E2530] bg-[#0F131A] px-2.5 py-1.5 text-left text-xs text-[#E6ECF2] transition-colors duration-150 hover:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
               >
-                &lt;/&gt; Copy iFrame Embed (?embed=1)
+                Copy iframe embed (?embed=1)
               </button>
             </div>
             {shareFeedback && (
-              <div className="mt-2 text-[10px] text-emerald-400 animate-pulse">
-                ✓ {shareFeedback}
+              <div role="status" aria-live="polite" className="mt-2 text-[11px] text-[#22C55E]">
+                {shareFeedback}
               </div>
             )}
           </div>
