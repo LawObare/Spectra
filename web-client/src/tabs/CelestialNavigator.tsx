@@ -8,6 +8,12 @@ import {
   BenchmarkPill,
 } from '../components/GlobalCommandHeader';
 import { Button, Badge, Input, Select } from '../components/ui';
+import {
+  DownloadingSection,
+  findMatchingSection,
+  formatSectionBytes,
+  useSectionManager,
+} from '../lib/installedSections';
 
 // Deep Field Centers (Ecliptic Poles in J2000 coordinates, radius = 5.64 deg -> ~100 deg^2)
 const NEP_COORDS = { ra: 270.0, dec: 66.5607, radiusDeg: 5.64, label: 'NEP Deep Field (r = 5.64°)' };
@@ -122,6 +128,7 @@ const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
 
 interface IrsaExposure {
   obsId: string;
+  collection?: string;
   detector: string;
   mjd: string;
   wavelength: string;
@@ -139,15 +146,17 @@ function parseIrsaSiaResponse(payload: unknown): IrsaExposure[] {
     const values = Object.fromEntries(
       Object.entries(exposure).map(([key, value]) => [key.toLowerCase(), value])
     );
-    const accessUrl = String(values.access_url || '');
-    if (!accessUrl.startsWith('https://')) return [];
+    const sRegion = String(values.s_region || '');
+    if (!sRegion) return [];
+    const accessUrl = String(values.access_url || 'https://irsa.ipac.caltech.edu/Missions/spherex.html');
     return [{
       obsId: String(values.obs_id || `IRSA-${index + 1}`),
+      collection: values.collection ? String(values.collection) : undefined,
       detector: String(values.instrument_name || values.energy_bandpassname || 'SPHEREx'),
       mjd: String(values.t_min || ''),
       wavelength: String(values.energy_bandpassname || ''),
       accessUrl,
-      sRegion: String(values.s_region || ''),
+      sRegion,
     }];
   });
 }
@@ -330,10 +339,12 @@ export const CelestialNavigator: React.FC = () => {
   const aladinInstanceRef = useRef<any>(null);
   const footprintOverlayRef = useRef<any>(null);
   const cutoutOverlayRef = useRef<any>(null);
+  const downloadingOverlayRef = useRef<any>(null);
   const catalogOverlayRef = useRef<any>(null);
   const deepFieldOverlayRef = useRef<any>(null);
   const archiveMocsRef = useRef<any[]>([]);
   const cachedMocsRef = useRef<any[]>([]);
+  const downloadingMocsRef = useRef<any[]>([]);
   const gaiaCatalogRef = useRef<any>(null);
   const gaiaMotionOverlayRef = useRef<any>(null);
   const skybotCatalogRef = useRef<any>(null);
@@ -363,8 +374,9 @@ export const CelestialNavigator: React.FC = () => {
 
   // Layer & Filter Controls
   const [showLvfFootprints, setShowLvfFootprints] = useState<boolean>(false);
-  const [showAvailableCoverage, setShowAvailableCoverage] = useState<boolean>(true);
-  const [showCachedCoverage, setShowCachedCoverage] = useState<boolean>(true);
+  const [showAvailableCoverage, setShowAvailableCoverage] = useState<boolean>(false);
+  const [showInstalledSections, setShowInstalledSections] = useState<boolean>(true);
+  const [showCoverageCard, setShowCoverageCard] = useState<boolean>(false);
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(false);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
   const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('allwise-color');
@@ -378,8 +390,20 @@ export const CelestialNavigator: React.FC = () => {
   const [hipsError, setHipsError] = useState<boolean>(false);
   const [aladinReady, setAladinReady] = useState<boolean>(false);
   const [archiveExposures, setArchiveExposures] = useState<IrsaExposure[]>([]);
-  const [cachedRegions, setCachedRegions] = useState<Array<{ ra: number; dec: number; fov_arcsec: number }>>([]);
-  const [archiveStatus, setArchiveStatus] = useState<'loading' | 'ready' | 'partial' | 'empty' | 'error'>('loading');
+  const [fullCoverageExposures, setFullCoverageExposures] = useState<IrsaExposure[]>([]);
+  const [coverageMocs, setCoverageMocs] = useState<Record<string, { moc_order: number; moc_json: Record<string, number[]>; sky_fraction: number; cell_count: number; exposure_count: number }>>({});
+  const [deepFieldExposures, setDeepFieldExposures] = useState<IrsaExposure[]>([]);
+  const [coverageZones, setCoverageZones] = useState<Array<{ ra: number; dec: number; count: number }>>([]);
+  const {
+    installedSections,
+    downloadingSections,
+    installError,
+    refreshInstalledSections,
+    startSectionInstall,
+    cancelQueuedInstall,
+    uninstallSectionById,
+  } = useSectionManager();
+  const [archiveStatus, setArchiveStatus] = useState<'idle' | 'loading' | 'ready' | 'partial' | 'empty' | 'error'>('idle');
   const [gaiaStatus, setGaiaStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
   const [skybotStatus, setSkybotStatus] = useState<'loading' | 'live' | 'cached_only' | 'unavailable'>('loading');
   const [showSyntheticPreview, setShowSyntheticPreview] = useState<boolean>(false);
@@ -440,49 +464,170 @@ export const CelestialNavigator: React.FC = () => {
     [ra, dec, showSyntheticPreview]
   );
 
+  // Pre-load all-sky SPHEREx mission coverage footprints from database
   useEffect(() => {
-    const controller = new AbortController();
     let active = true;
-    const timer = window.setTimeout(async () => {
-      setArchiveStatus('loading');
-      const radiusDeg = Math.max(displayFovDeg / Math.SQRT2, fovArcsec / 7200, 30 / 3600);
-      const params = new URLSearchParams({
-        ra: String(ra),
-        dec: String(dec),
-        radius_deg: String(radiusDeg),
+    fetch('/api/coverage/full')
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Coverage unavailable'))))
+      .then((payload) => {
+        if (!active) return;
+        if (Array.isArray(payload.exposures)) {
+          const parsed = parseIrsaSiaResponse(payload);
+          setFullCoverageExposures(parsed);
+        }
+        if (payload.mocs && typeof payload.mocs === 'object') {
+          setCoverageMocs(payload.mocs);
+        }
+        if (Array.isArray(payload.deep_fields)) {
+          setDeepFieldExposures(parseIrsaSiaResponse({ exposures: payload.deep_fields }));
+        }
+        if (Array.isArray(payload.zones)) {
+          setCoverageZones(payload.zones);
+        }
+      })
+      .catch((err) => {
+        console.warn('Full coverage fetch error:', err);
       });
-
-      try {
-        const response = await fetch(`/api/coverage?${params}`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`Coverage API returned ${response.status}`);
-        const payload = await response.json();
-        const results = parseIrsaSiaResponse(payload);
-        const coverageStatus = (payload as { status?: string }).status;
-        if (active) {
-          setArchiveExposures(results);
-          setArchiveStatus(coverageStatus === 'partial'
-            ? 'partial'
-            : coverageStatus === 'empty' ? 'empty' : results.length > 0 ? 'ready' : 'empty');
-        }
-      } catch (error) {
-        if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
-          setArchiveExposures([]);
-          setArchiveStatus('error');
-        }
-      }
-    }, 350);
-
     return () => {
       active = false;
-      window.clearTimeout(timer);
-      controller.abort();
     };
-  }, [ra, dec, fovArcsec, displayFovDeg]);
+  }, []);
+
+  // Reset target-level exposure table when user selects a new coordinate (no auto-querying on pan)
+  useEffect(() => {
+    setArchiveExposures([]);
+    setArchiveStatus('idle');
+  }, [ra, dec, fovArcsec]);
+
+  useEffect(() => {
+    void refreshInstalledSections();
+  }, [refreshInstalledSections]);
+
+  const readyInstalledSections = useMemo(
+    () => installedSections.filter((s) => s.status === 'ready'),
+    [installedSections]
+  );
+
+  const activeDownloadingSections = useMemo<DownloadingSection[]>(() => {
+    const merged: DownloadingSection[] = [...downloadingSections];
+    installedSections.forEach((sec) => {
+      if (sec.status !== 'installing') return;
+      const alreadyTracked = merged.some(
+        (d) =>
+          (d.section_id && d.section_id === sec.section_id) ||
+          (Math.abs(d.ra - sec.ra) < 0.002 &&
+            Math.abs(d.dec - sec.dec) < 0.002 &&
+            Math.abs(d.fov_arcsec - sec.fov_arcsec) <= 1)
+      );
+      if (!alreadyTracked) {
+        merged.push({
+          key: sec.section_id,
+          section_id: sec.section_id,
+          task_id: sec.task_id || undefined,
+          label: sec.label,
+          ra: sec.ra,
+          dec: sec.dec,
+          fov_arcsec: sec.fov_arcsec,
+          progress: 0.15,
+          message: 'Downloading cutout section…',
+        });
+      }
+    });
+    return merged;
+  }, [downloadingSections, installedSections]);
+
+  const matchedInstalledSection = useMemo(
+    () => findMatchingSection(installedSections, ra, dec, fovArcsec),
+    [installedSections, ra, dec, fovArcsec]
+  );
+
+  const matchingDownloadingSection = useMemo(
+    () =>
+      activeDownloadingSections.find(
+        (d) =>
+          Math.abs(d.ra - ra) < 0.002 &&
+          Math.abs(d.dec - dec) < 0.002 &&
+          Math.abs(d.fov_arcsec - fovArcsec) <= 1
+      ) || null,
+    [activeDownloadingSections, ra, dec, fovArcsec]
+  );
+
+  const checkSelectedCoverage = useCallback(async () => {
+    setArchiveStatus('loading');
+    const radiusDeg = Math.min(Math.max((fovArcsec * 1.5) / 3600, 0.04), 0.12);
+    const params = new URLSearchParams({
+      ra: String(ra),
+      dec: String(dec),
+      radius_deg: String(radiusDeg),
+    });
+    try {
+      const response = await fetch(`/api/coverage?${params}`);
+      if (!response.ok) throw new Error(`Coverage API returned ${response.status}`);
+      const payload = await response.json();
+      const results = parseIrsaSiaResponse(payload);
+      const coverageStatus = (payload as { status?: string }).status;
+      setArchiveExposures(results);
+      setArchiveStatus(
+        coverageStatus === 'partial'
+          ? 'partial'
+          : coverageStatus === 'empty'
+            ? 'empty'
+            : results.length > 0
+              ? 'ready'
+              : 'empty'
+      );
+    } catch {
+      setArchiveExposures([]);
+      setArchiveStatus('error');
+    }
+  }, [ra, dec, fovArcsec]);
+
+  const handleInstallSection = useCallback(() => {
+    void startSectionInstall({
+      ra,
+      dec,
+      fovArcsec,
+      label: activeTargetName || undefined,
+    });
+  }, [ra, dec, fovArcsec, activeTargetName, startSectionInstall]);
+
+  const handleUninstallSection = useCallback(
+    async (sectionId: string) => {
+      try {
+        await uninstallSectionById(sectionId);
+      } catch (err) {
+        console.warn('Uninstall error:', err);
+      }
+    },
+    [uninstallSectionById]
+  );
 
   const filteredExposures = useMemo(() => {
     if (selectedBandFilter === 'ALL') return allExposures;
     return allExposures.filter((e) => e.detector.id === selectedBandFilter);
   }, [allExposures, selectedBandFilter]);
+
+  const filteredArchiveExposures = useMemo(() => {
+    if (selectedBandFilter === 'ALL') return archiveExposures;
+    return archiveExposures.filter(
+      (exp) =>
+        exp.detector.toUpperCase().includes(selectedBandFilter) ||
+        exp.wavelength.toUpperCase().includes(selectedBandFilter)
+    );
+  }, [archiveExposures, selectedBandFilter]);
+
+  const detectorCounts = useMemo(() => {
+    const counts: Record<string, number> = { D1: 0, D2: 0, D3: 0, D4: 0, D5: 0, D6: 0 };
+    archiveExposures.forEach((exp) => {
+      const detText = `${exp.detector} ${exp.wavelength}`.toUpperCase();
+      SPHEREX_DETECTORS.forEach((det) => {
+        if (detText.includes(det.id)) {
+          counts[det.id] = (counts[det.id] || 0) + 1;
+        }
+      });
+    });
+    return counts;
+  }, [archiveExposures]);
 
   const activeExposure = useMemo(() => {
     const id = hoveredObsId || selectedObsId;
@@ -558,6 +703,14 @@ export const CelestialNavigator: React.FC = () => {
             });
             instance.addOverlay(cutoutOverlay);
             cutoutOverlayRef.current = cutoutOverlay;
+
+            const downloadingOverlay = A.graphicOverlay({
+              name: 'Downloading Cutouts',
+              color: '#F97316',
+              lineWidth: 2.5,
+            });
+            instance.addOverlay(downloadingOverlay);
+            downloadingOverlayRef.current = downloadingOverlay;
           }
         } catch (e) {
           console.warn('Aladin cutoutOverlay init:', e);
@@ -739,87 +892,179 @@ export const CelestialNavigator: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createHiPSSurvey]);
 
-  // Draw only coverage polygons returned by the real SPHEREx QR2 archive query.
+  // Draw all-sky SPHEREx mission coverage HEALPix MOC mesh from the database
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladinReady || !aladin) return;
 
-    archiveMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
+    archiveMocsRef.current.forEach((moc) => {
+      try {
+        aladin.removeOverlay?.(moc);
+      } catch (e) {
+        // Safe cleanup
+      }
+    });
     archiveMocsRef.current = [];
     if (!showAvailableCoverage) return;
 
-    archiveExposures.forEach((exposure) => {
-      const polygon = parseStcsPolygon(exposure.sRegion);
+    const addPolygonMoc = (sRegion: string, opts: { color: string; opacity: number; lineWidth: number }) => {
+      const polygon = parseStcsPolygon(sRegion);
       if (!polygon || typeof A.MOCFromPolygon !== 'function') return;
       try {
-        const moc = A.MOCFromPolygon(polygon, {
-          color: '#FACC15',
-          opacity: 0.16,
-          lineWidth: 1,
-        });
+        const moc = A.MOCFromPolygon(polygon, opts);
         aladin.addMOC(moc);
         archiveMocsRef.current.push(moc);
       } catch (error) {
-        console.warn('Could not render an IRSA exposure coverage polygon:', error);
+        console.warn('Could not render coverage polygon MOC:', error);
       }
+    };
+
+    const mocEntries: Array<[string, string, number]> = [
+      ['spherex_dr1', '#38bdf8', 0.14],
+      ['spherex_qr3', '#FACC15', 0.16],
+      ['spherex_qr2', '#818cf8', 0.12],
+    ];
+    let renderedReleaseMoc = false;
+    if (typeof A.MOCFromJSON === 'function') {
+      mocEntries.forEach(([collection, color, opacity]) => {
+        const entry = coverageMocs[collection];
+        if (!entry || !entry.moc_json || entry.cell_count === 0) return;
+        try {
+          const moc = A.MOCFromJSON(entry.moc_json, {
+            color,
+            opacity,
+            lineWidth: 1.2,
+            name: collection.toUpperCase().replace('_', ' '),
+          });
+          aladin.addMOC(moc);
+          archiveMocsRef.current.push(moc);
+          renderedReleaseMoc = true;
+        } catch (error) {
+          console.warn(`Could not render ${collection} HEALPix MOC:`, error);
+        }
+      });
+    }
+
+    // Fallback to individual DB footprint polygons if precomputed release MOCs are empty
+    if (!renderedReleaseMoc) {
+      fullCoverageExposures.forEach((exposure) => {
+        addPolygonMoc(exposure.sRegion, {
+          color: exposure.collection === 'spherex_dr1' || exposure.collection === 'spherex_qr2' ? '#38bdf8' : '#FACC15',
+          opacity: 0.16,
+          lineWidth: 1.2,
+        });
+      });
+    }
+
+    // Always overlay NEP/SEP Deep Field 5.64 deg boundary rings
+    deepFieldExposures.forEach((field) => {
+      addPolygonMoc(field.sRegion, {
+        color: '#f59e0b',
+        opacity: 0.08,
+        lineWidth: 1.5,
+      });
     });
 
     return () => {
-      archiveMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
+      archiveMocsRef.current.forEach((moc) => {
+        try {
+          aladin.removeOverlay?.(moc);
+        } catch (e) {
+          // Safe cleanup
+        }
+      });
       archiveMocsRef.current = [];
     };
-  }, [archiveExposures, aladinReady, showAvailableCoverage]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const params = new URLSearchParams({
-      ra: String(ra),
-      dec: String(dec),
-      radius_deg: String(Math.max(displayFovDeg, 2)),
-    });
-    const timer = window.setTimeout(() => {
-      fetch(`/api/cutout/cache/coverage?${params}`, { signal: controller.signal })
-        .then((response) => response.ok ? response.json() : Promise.reject(new Error('Cache coverage unavailable')))
-        .then((payload: { regions?: Array<{ ra: number; dec: number; fov_arcsec: number }> }) => {
-          setCachedRegions(Array.isArray(payload.regions) ? payload.regions : []);
-        })
-        .catch((error) => {
-          if (!(error instanceof DOMException && error.name === 'AbortError')) setCachedRegions([]);
-        });
-    }, 300);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [ra, dec, displayFovDeg]);
+  }, [coverageMocs, deepFieldExposures, fullCoverageExposures, aladinReady, showAvailableCoverage]);
 
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladinReady || !aladin) return;
     cachedMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
     cachedMocsRef.current = [];
-    if (!showCachedCoverage) return;
+    if (!showInstalledSections) return;
 
-    cachedRegions.forEach((region) => {
+    readyInstalledSections.forEach((region) => {
       if (typeof A.MOCFromPolygon !== 'function') return;
       const corners = getFootprintCorners(region.ra, region.dec, region.fov_arcsec / 3600, region.fov_arcsec / 3600, 0);
       try {
         const moc = A.MOCFromPolygon({ ra: corners.map(([cornerRa]) => cornerRa), dec: corners.map(([, cornerDec]) => cornerDec) }, {
-          color: '#FB923C',
-          opacity: 0.24,
+          color: '#10B981',
+          opacity: 0.28,
           lineWidth: 2,
         });
         aladin.addMOC(moc);
         cachedMocsRef.current.push(moc);
       } catch (error) {
-        console.warn('Could not render a cached cutout footprint:', error);
+        console.warn('Could not render installed section footprint:', error);
       }
     });
     return () => {
       cachedMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
       cachedMocsRef.current = [];
     };
-  }, [cachedRegions, aladinReady, showCachedCoverage]);
+  }, [readyInstalledSections, aladinReady, showInstalledSections]);
+
+  // Keep downloading cutout sections highlighted in bright orange independently of FoV/pan changes
+  useEffect(() => {
+    const aladin = aladinInstanceRef.current;
+    const overlay = downloadingOverlayRef.current;
+    if (!aladinReady || !aladin) return;
+
+    downloadingMocsRef.current.forEach((moc) => {
+      try {
+        aladin.removeOverlay?.(moc);
+      } catch {
+        // Safe cleanup
+      }
+    });
+    downloadingMocsRef.current = [];
+    overlay?.removeAll?.();
+
+    activeDownloadingSections.forEach((sec) => {
+      const sizeDeg = Math.max(sec.fov_arcsec, 60) / 3600;
+      const corners = getFootprintCorners(sec.ra, sec.dec, sizeDeg, sizeDeg, 0);
+      if (typeof A.MOCFromPolygon === 'function') {
+        try {
+          const moc = A.MOCFromPolygon(
+            { ra: corners.map(([cornerRa]) => cornerRa), dec: corners.map(([, cornerDec]) => cornerDec) },
+            {
+              color: '#F97316',
+              opacity: 0.36,
+              lineWidth: 2.5,
+            }
+          );
+          aladin.addMOC(moc);
+          downloadingMocsRef.current.push(moc);
+        } catch (error) {
+          console.warn('Could not render downloading section MOC:', error);
+        }
+      }
+      if (overlay && typeof A.polygon === 'function') {
+        try {
+          const poly = A.polygon(corners, {
+            color: '#FB923C',
+            lineWidth: 2.5,
+          });
+          overlay.add(poly);
+        } catch (error) {
+          console.warn('Could not render downloading section outline:', error);
+        }
+      }
+    });
+
+    return () => {
+      downloadingMocsRef.current.forEach((moc) => {
+        try {
+          aladin.removeOverlay?.(moc);
+        } catch {
+          // Safe cleanup
+        }
+      });
+      downloadingMocsRef.current = [];
+      overlay?.removeAll?.();
+    };
+  }, [activeDownloadingSections, aladinReady]);
 
   // Query Gaia DR3 near the active field and render five-year proper-motion vectors.
   useEffect(() => {
@@ -1146,13 +1391,32 @@ export const CelestialNavigator: React.FC = () => {
     }
   }, [showWcsGrid]);
 
-  // Synchronize SPHEREx LVF Footprints Overlay
+  // Synchronize SPHEREx LVF Footprints Overlay (real archive s_region + wide-field DB footprints + optional synthetic)
   useEffect(() => {
     const overlay = footprintOverlayRef.current;
     if (!overlay) return;
     try {
       overlay.removeAll();
       if (showLvfFootprints && typeof A.polygon === 'function') {
+        const seenObs = new Set<string>();
+        const drawArchiveExp = (exp: IrsaExposure) => {
+          if (seenObs.has(exp.obsId)) return;
+          seenObs.add(exp.obsId);
+          const parsed = parseStcsPolygon(exp.sRegion);
+          if (!parsed) return;
+          const corners: [number, number][] = parsed.ra.map((r, i) => [r, parsed.dec[i]]);
+          const detSpec = SPHEREX_DETECTORS.find(
+            (d) => exp.detector.toUpperCase().includes(d.id) || exp.wavelength.toUpperCase().includes(d.id)
+          );
+          const poly = A.polygon(corners, {
+            color: detSpec?.colorHex || '#38BDF8',
+            lineWidth: 1.5,
+          });
+          overlay.add(poly);
+        };
+
+        filteredArchiveExposures.forEach(drawArchiveExp);
+
         filteredExposures.forEach((exp) => {
           const corners = getFootprintCorners(
             exp.centerRa,
@@ -1171,7 +1435,7 @@ export const CelestialNavigator: React.FC = () => {
     } catch (e) {
       console.warn('Error updating footprints overlay:', e);
     }
-  }, [showLvfFootprints, filteredExposures]);
+  }, [showLvfFootprints, filteredArchiveExposures, filteredExposures]);
 
   // Synchronize Cutout Bounding Box Overlay
   useEffect(() => {
@@ -1183,15 +1447,15 @@ export const CelestialNavigator: React.FC = () => {
         const sizeDeg = fovArcsec / 3600;
         const corners = getFootprintCorners(ra, dec, sizeDeg, sizeDeg, 0);
         const poly = A.polygon(corners, {
-          color: '#38BDF8',
-          lineWidth: 1.5,
+          color: matchingDownloadingSection ? '#F97316' : '#38BDF8',
+          lineWidth: matchingDownloadingSection ? 2.5 : 1.5,
         });
         overlay.add(poly);
       }
     } catch (e) {
       console.warn('Error updating cutout box overlay:', e);
     }
-  }, [showCutoutBox, fovArcsec, ra, dec]);
+  }, [showCutoutBox, fovArcsec, ra, dec, matchingDownloadingSection]);
 
   // Direct Zoom Preset Handler
   const applyZoom = useCallback((nextFovDeg: number) => {
@@ -1253,15 +1517,16 @@ export const CelestialNavigator: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
+    <div className="relative flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
       {/* LEFT 70%: Native Aladin Lite v3 WebGL2 Sky Viewport */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         {/* Top Overlay Instrument Toolbar (Modelled after IRSA Firefly Layer & Band Bar) */}
         <div
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
-          className="z-20 flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3 py-1.5"
+          className="z-20 flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-1.5"
         >
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
           {/* Layer Toggles */}
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Sky overlay layers">
             <Button
@@ -1271,33 +1536,39 @@ export const CelestialNavigator: React.FC = () => {
               className={showLvfFootprints ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
               title="Toggle SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints"
             >
-              LVF Footprints ({filteredExposures.length})
+              LVF Footprints ({filteredArchiveExposures.length + filteredExposures.length})
             </Button>
             <Button
               variant={showAvailableCoverage ? 'secondary' : 'ghost'}
               size="xs"
               onClick={() => setShowAvailableCoverage((visible) => !visible)}
               className={showAvailableCoverage ? 'border-yellow-400/50 text-yellow-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
-              title="Show archive areas where cutouts can be requested"
+              title="Database-backed SPHEREx DR1 (cyan) & QR3 (gold) HEALPix coverage MOCs with NEP/SEP Deep Field rings"
               aria-pressed={showAvailableCoverage}
             >
               <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-yellow-400/70" />
-              {archiveStatus === 'loading' && 'Available (searching…)'}
-              {archiveStatus === 'error' && 'Available (unavailable)'}
-              {archiveStatus === 'partial' && `Available (${archiveExposures.length} · partial)`}
-              {(archiveStatus === 'ready' || archiveStatus === 'empty') && `Available (${archiveExposures.length})`}
+              {showAvailableCoverage ? 'DR1/QR3 Coverage Mesh' : 'Coverage Mesh (Off)'}
             </Button>
             <Button
-              variant={showCachedCoverage ? 'secondary' : 'ghost'}
+              variant={showInstalledSections ? 'secondary' : 'ghost'}
               size="xs"
-              onClick={() => setShowCachedCoverage((visible) => !visible)}
-              className={showCachedCoverage ? 'border-orange-400/50 text-orange-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
-              title="Show processed cutouts currently cached on this server"
-              aria-pressed={showCachedCoverage}
+              onClick={() => setShowInstalledSections((visible) => !visible)}
+              className={showInstalledSections ? 'border-emerald-400/50 text-emerald-300 font-medium' : 'text-muted-foreground hover:text-foreground'}
+              title="Show installed sky cutout sections stored for instant use across Comparator, Spectral Lab, and Ice Studio"
+              aria-pressed={showInstalledSections}
             >
-              <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-orange-400/80" />
-              Cached ({cachedRegions.length})
+              <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-400/80" />
+              Installed ({readyInstalledSections.length})
             </Button>
+            {activeDownloadingSections.length > 0 && (
+              <span
+                className="inline-flex items-center gap-1 rounded border border-orange-500/50 bg-orange-500/15 px-2 py-0.5 font-mono text-[10px] text-orange-300"
+                title="Active section downloads remain highlighted in orange while you adjust FoV or pan"
+              >
+                <span className="inline-block h-2 w-2 animate-pulse rounded-sm bg-orange-400" />
+                Downloading ({activeDownloadingSections.length})
+              </span>
+            )}
             <Button
               variant={showWcsGrid ? 'secondary' : 'ghost'}
               size="xs"
@@ -1348,24 +1619,32 @@ export const CelestialNavigator: React.FC = () => {
                   : 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground'
               }
             >
-              All
+              All ({archiveExposures.length})
             </Button>
-            {SPHEREX_DETECTORS.map((det) => (
+            {SPHEREX_DETECTORS.map((det) => {
+              const count = detectorCounts[det.id] || 0;
+              return (
               <Button
                 key={det.id}
                 variant={selectedBandFilter === det.id ? 'secondary' : 'ghost'}
                 size="xs"
-                onClick={() => setSelectedBandFilter(det.id)}
-                title={`${det.label} · R=${det.resolvingPower}`}
+                onClick={() => {
+                  setSelectedBandFilter(det.id);
+                  setShowLvfFootprints(true);
+                }}
+                title={`${det.label} · R=${det.resolvingPower} · ${count} exposures`}
                 className={
                   selectedBandFilter === det.id
                     ? 'h-6 px-1.5 font-mono text-[11px] border-primary/50 text-foreground font-medium'
+                    : count === 0
+                    ? 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground/50 hover:text-foreground'
                     : 'h-6 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground'
                 }
               >
-                {det.id}
+                {det.id} ({count})
               </Button>
-            ))}
+              );
+            })}
           </div>
 
           {/* Field of View Zoom Controls */}
@@ -1426,6 +1705,24 @@ export const CelestialNavigator: React.FC = () => {
               title="Target field scale (1.2°)"
             >
               1.2°
+            </Button>
+          </div>
+          </div>
+
+          {/* Hamburger Toggle for Floating SPHEREx Coverage Preview Card (pinned right) */}
+          <div className="flex shrink-0 items-center">
+            <Button
+              variant={showCoverageCard ? 'secondary' : 'outline'}
+              size="icon-sm"
+              onClick={() => setShowCoverageCard((open) => !open)}
+              className={showCoverageCard ? 'border-primary/60 text-foreground' : 'text-muted-foreground hover:text-foreground'}
+              title="Toggle SPHEREx Coverage Preview card"
+              aria-label="Toggle SPHEREx Coverage Preview"
+              aria-expanded={showCoverageCard}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
             </Button>
           </div>
         </div>
@@ -1545,17 +1842,34 @@ export const CelestialNavigator: React.FC = () => {
         </footer>
       </div>
 
-      {/* RIGHT 30%: SPHEREx Spectral Image Search & Footprint Inspector (Modelled on IRSA search-spectral-images) */}
-      <aside className="flex w-[380px] xl:w-[430px] shrink-0 flex-col border-l border-border bg-card">
+      {/* FLOATING CARD: SPHEREx Spectral Image Search & Footprint Inspector */}
+      {showCoverageCard && (
+      <aside
+        onMouseDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        className="absolute right-3 top-12 z-30 flex max-h-[calc(100%-4rem)] w-[360px] xl:w-[410px] flex-col overflow-y-auto rounded-xl border border-border bg-card/95 backdrop-blur-md shadow-2xl"
+      >
         {/* 1. Target Position & Spatial Cutout Parameters */}
         <div className="border-b border-border p-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <h2 className="text-xs font-semibold text-foreground">
               SPHEREx Coverage Preview
             </h2>
-            <Badge variant="sky" className="font-mono text-[10px]">
-              SIMULATED PREVIEW
-            </Badge>
+            <div className="flex items-center gap-1.5">
+              <Badge variant="sky" className="font-mono text-[10px]">
+                SIMULATED PREVIEW
+              </Badge>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setShowCoverageCard(false)}
+                className="h-5 w-5 rounded-md text-muted-foreground hover:text-foreground"
+                title="Close SPHEREx Coverage Preview"
+                aria-label="Close SPHEREx Coverage Preview"
+              >
+                ×
+              </Button>
+            </div>
           </div>
 
           <div className="mt-2 rounded-sm border border-border bg-background p-2.5">
@@ -1645,25 +1959,201 @@ export const CelestialNavigator: React.FC = () => {
               </Button>
             </div>
           </form>
+
+          {/* Explicit Query & Install Controls (No automatic querying on pan) */}
+          <div className="mt-2.5 flex flex-col gap-2 border-t border-border/60 pt-2.5">
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={checkSelectedCoverage}
+                disabled={archiveStatus === 'loading'}
+                className="flex-1 h-7 text-[11px]"
+              >
+                {archiveStatus === 'loading' ? 'Querying IRSA…' : 'Query Selected Coverage'}
+              </Button>
+              {matchedInstalledSection ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => handleUninstallSection(matchedInstalledSection.section_id)}
+                  className="h-7 px-2.5 text-[11px] border-emerald-500/40 text-emerald-300 hover:border-red-500/40 hover:text-red-300"
+                  title="Remove installed cutout section from local storage"
+                >
+                  Installed ✓ · Remove
+                </Button>
+              ) : matchingDownloadingSection ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  disabled
+                  className="flex-1 h-7 text-[11px] border-orange-500/50 bg-orange-500/15 text-orange-300"
+                >
+                  {matchingDownloadingSection.queueState === 'queued'
+                    ? 'Queued for Download'
+                    : `Downloading (${Math.round(matchingDownloadingSection.progress * 100)}%)`}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="xs"
+                  onClick={handleInstallSection}
+                  className="flex-1 h-7 text-[11px]"
+                  title={
+                    activeDownloadingSections.length > 0
+                      ? 'Add this sky section to the install queue'
+                      : 'Download and persist this sky section locally'
+                  }
+                >
+                  {activeDownloadingSections.length > 0
+                    ? 'Queue Cutout Section'
+                    : 'Install Cutout Section'}
+                </Button>
+              )}
+            </div>
+
+            {activeDownloadingSections.length > 0 && (
+              <div className="space-y-1.5">
+                {activeDownloadingSections.map((dl) => {
+                  const isQueued = dl.queueState === 'queued';
+                  return (
+                    <div
+                      key={dl.key}
+                      className="rounded border border-orange-500/50 bg-orange-500/10 px-2.5 py-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-[10px] text-orange-300">
+                        <span className="truncate font-medium">
+                          {dl.label} · {Math.round(dl.fov_arcsec)}&quot;
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <span className="font-mono tabular-nums">
+                            {isQueued ? 'Queued' : `${Math.round(dl.progress * 100)}%`}
+                          </span>
+                          {isQueued && (
+                            <button
+                              type="button"
+                              onClick={() => cancelQueuedInstall(dl.key)}
+                              className="rounded px-1 text-orange-300/80 hover:bg-orange-500/20 hover:text-orange-100"
+                              title="Remove from install queue"
+                              aria-label={`Cancel queued section ${dl.label}`}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-0.5 truncate text-[9px] text-orange-200/80">
+                        {dl.message}
+                      </div>
+                      <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-background">
+                        <div
+                          className={`h-full transition-all duration-200 ${isQueued ? 'bg-orange-400/50' : 'bg-orange-500'}`}
+                          style={{
+                            width: isQueued
+                              ? '15%'
+                              : `${Math.max(5, Math.min(100, Math.round(dl.progress * 100)))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {installError && (
+              <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] text-red-300">
+                {installError}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 1b. Installed Sky Sections Library */}
+        <div className="border-b border-border bg-background/60 px-3 py-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium text-foreground">
+              Installed Sections ({readyInstalledSections.length})
+            </span>
+            <span className="text-[10px] text-muted-foreground">Shared across Tabs 2, 3 &amp; 4</span>
+          </div>
+          {readyInstalledSections.length === 0 ? (
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Select any sky region and click <strong>Install Cutout Section</strong> to save it for offline/instant use.
+            </p>
+          ) : (
+            <div className="mt-1.5 max-h-28 space-y-1 overflow-y-auto">
+              {readyInstalledSections.map((sec) => {
+                const isSelected = matchedInstalledSection?.section_id === sec.section_id;
+                return (
+                  <div
+                    key={sec.section_id}
+                    className={`flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px] ${
+                      isSelected ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-border bg-card/70'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCoordinates(sec.ra, sec.dec, sec.label, sec.source_badge);
+                        setRa(sec.ra);
+                        setDec(sec.dec);
+                        setFov(sec.fov_arcsec);
+                        setUrlFov(sec.fov_arcsec);
+                        aladinInstanceRef.current?.gotoRaDec?.(sec.ra, sec.dec);
+                      }}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="truncate font-medium text-foreground">{sec.label}</div>
+                      <div className="font-mono text-[9px] text-muted-foreground">
+                        {sec.fov_arcsec}&quot; · {sec.epochs}ep · {formatSectionBytes(sec.size_bytes)}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUninstallSection(sec.section_id)}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[9px] text-muted-foreground hover:bg-red-500/20 hover:text-red-300"
+                      title="Uninstall section"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* 2. Synchronized SPHEREx Level-2 Spectral Image Table (Hover highlights LVF footprint on sky) */}
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1.5">
             <span className="text-[11px] font-medium text-foreground">
-              IRSA SPHEREx QR2 + QR3 Archive ({archiveExposures.length})
+              IRSA SPHEREx DR1 + QR3 Archive ({filteredArchiveExposures.length}{selectedBandFilter !== 'ALL' ? ` · ${selectedBandFilter}` : ''})
             </span>
             <span className="text-[10px] text-muted-foreground">
+              {archiveStatus === 'idle' && 'Click Query Selected Coverage to check exposures'}
               {archiveStatus === 'loading' && 'Searching IRSA…'}
-              {archiveStatus === 'ready' && '[IRSA Live (spherex_qr2 + spherex_qr3)]'}
+              {archiveStatus === 'ready' && '[IRSA Live (spherex_dr1 + spherex_qr3)]'}
               {archiveStatus === 'partial' && 'Some IRSA releases unavailable · showing returned coverage'}
               {archiveStatus === 'empty' && 'No released exposure intersects this cutout'}
               {archiveStatus === 'error' && 'IRSA search unavailable · retry after network access returns'}
             </span>
           </div>
 
-          <div className="max-h-40 overflow-y-auto border-b border-border">
-            {archiveExposures.map((exposure) => {
+          <div className="max-h-48 overflow-y-auto border-b border-border">
+            {filteredArchiveExposures.length > 0 && (
+              <div className="flex items-center justify-between px-3 py-1 bg-emerald-500/10 border-b border-emerald-500/20 text-[10px] text-emerald-400 font-medium">
+                <span className="flex items-center gap-1">
+                  <span>✓</span> SPHEREx Coverage Verified ({filteredArchiveExposures.length} exposures)
+                </span>
+                <span className="text-[9px] text-muted-foreground font-normal">Ready for Time-Domain</span>
+              </div>
+            )}
+            {filteredArchiveExposures.map((exposure) => {
               const cutoutUrl = new URL(exposure.accessUrl);
               cutoutUrl.searchParams.set('center', `${ra},${dec}`);
               cutoutUrl.searchParams.set('size', String(fovArcsec / 3600));
@@ -1676,8 +2166,62 @@ export const CelestialNavigator: React.FC = () => {
                 </div>
               );
             })}
-            {archiveStatus === 'empty' && (
-              <div className="px-3 py-2 text-[10px] text-muted-foreground">This is an honest non-detection for the selected cutout and current public release.</div>
+            {archiveStatus === 'empty' && archiveExposures.length === 0 && (
+              <div className="space-y-2 p-3 bg-amber-500/10 border-b border-amber-500/20 text-[11px]">
+                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                  <span>⚠</span>
+                  <span>Sky Region Unobserved by SPHEREx Archive</span>
+                </div>
+                <p className="text-muted-foreground text-[10px] leading-relaxed">
+                  The current SPHEREx public release (QR2/QR3) has not yet observed this sky coordinate. Time-domain multi-epoch data cannot be extracted from this unobserved patch.
+                </p>
+                <div className="pt-1">
+                  <div className="text-[10px] font-medium text-foreground mb-1.5">
+                    Jump to a verified SPHEREx survey field:
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {MANDATORY_BENCHMARKS.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => {
+                          setCoordinates(b.ra, b.dec, b.name, '[NASA Benchmark (Pre-cached)]');
+                          setRa(b.ra);
+                          setDec(b.dec);
+                          aladinInstanceRef.current?.gotoRaDec?.(b.ra, b.dec);
+                        }}
+                        className="px-2 py-0.5 rounded text-[10px] bg-background/80 hover:bg-primary/20 hover:text-primary border border-border text-foreground transition-colors"
+                      >
+                        {b.name}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCoordinates(NEP_COORDS.ra, NEP_COORDS.dec, NEP_COORDS.label, '[IRSA Live (Deep Field)]');
+                        setRa(NEP_COORDS.ra);
+                        setDec(NEP_COORDS.dec);
+                        aladinInstanceRef.current?.gotoRaDec?.(NEP_COORDS.ra, NEP_COORDS.dec);
+                      }}
+                      className="px-2 py-0.5 rounded text-[10px] bg-background/80 hover:bg-amber-400/20 hover:text-amber-300 border border-border text-amber-400 transition-colors"
+                    >
+                      NEP Deep Field
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCoordinates(SEP_COORDS.ra, SEP_COORDS.dec, SEP_COORDS.label, '[IRSA Live (Deep Field)]');
+                        setRa(SEP_COORDS.ra);
+                        setDec(SEP_COORDS.dec);
+                        aladinInstanceRef.current?.gotoRaDec?.(SEP_COORDS.ra, SEP_COORDS.dec);
+                      }}
+                      className="px-2 py-0.5 rounded text-[10px] bg-background/80 hover:bg-amber-400/20 hover:text-amber-300 border border-border text-amber-400 transition-colors"
+                    >
+                      SEP Deep Field
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
             {archiveStatus === 'error' && (
               <a
@@ -1776,8 +2320,9 @@ export const CelestialNavigator: React.FC = () => {
         <div className="border-t border-border bg-card p-3">
           <div className="flex flex-col gap-2">
             <Button
-              variant="default"
+              variant={matchedInstalledSection ? 'default' : 'secondary'}
               size="default"
+              disabled={!matchedInstalledSection && Boolean(matchingDownloadingSection)}
               onClick={() => {
                 setRa(ra);
                 setDec(dec);
@@ -1786,7 +2331,9 @@ export const CelestialNavigator: React.FC = () => {
               }}
               className="w-full text-xs font-medium"
             >
-              Open {fovArcsec}&quot; Cutout in Time-Domain Comparator →
+              {matchedInstalledSection
+                ? `Open Installed ${matchedInstalledSection.fov_arcsec}" Section in Comparator →`
+                : `Open ${fovArcsec}" Selection in Time-Domain Comparator →`}
             </Button>
             <Button
               variant="outline"
@@ -1794,11 +2341,14 @@ export const CelestialNavigator: React.FC = () => {
               onClick={() => setTab('spectral')}
               className="w-full text-xs text-muted-foreground hover:text-foreground"
             >
-              Extract 102-Channel Spectrum in Spectral Lab
+              {matchedInstalledSection
+                ? 'Inspect Installed 102-Channel Spectrum in Spectral Lab'
+                : 'Extract 102-Channel Spectrum in Spectral Lab'}
             </Button>
           </div>
         </div>
       </aside>
+      )}
     </div>
   );
 };
