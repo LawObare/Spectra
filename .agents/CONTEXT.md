@@ -35,6 +35,7 @@ This is the running source of truth for building the Panoptic-Beta application. 
 - **2026-10-31:** Exchange #26 recorded. User requested name simplification: renamed project from "SpectraScout" to **"Spectra"** across `SPECIFICATION.md` and database/token naming conventions (`spectra_ledger.db`, `spectra_admin_token`, etc.).
 - **2026-10-31:** Exchange #27 recorded. Modern type-safe stack upgrade: Replaced SQLite string boilerplate with **Supabase** (PostgreSQL 16 + `pgvector` + Supabase Auth + Supabase Realtime + Supabase Storage) and **`sqlc` + `pgx/v5`** compile-time code generation for the Go API Gateway. Implemented 102-channel spectral similarity querying via `vector(102)` cosine distance (`<=>`), instant live discussion synchronization via Supabase Realtime `postgres_changes`, JWT-based role authentication for `/admin`, type-safe URL query state (`nuqs`), asynchronous caching and prefetching (`@tanstack/react-query`), ultra-fast 60 FPS plotting (`uPlot`), 3D decision surfaces (`react-plotly.js`), and local developer orchestration via Supabase CLI (`supabase start`) and `Taskfile.yml`.
 - **2026-10-31:** Exchange #28 recorded. Zero-Auth & Ultra-High-Quality Institutional Blueprint: Dropped blocking login/auth for hackathon judges while maintaining clean route separation (`/explore` vs `/admin`). Implemented zero-auth session fingerprinting using implicit client telemetry IDs (`localStorage.getItem('spx_observer_id')` -> UUIDv4 + astronomical callsign like `Observer-Vega-409`) injected via `X-Observer-ID` and `X-Observer-Callsign` HTTP headers. Upgraded database schema to 6 production tables: `subjects`, `observers`, `classifications`, `discussion_threads`, `discussion_replies`, and `ml_training_runs`. Engineered ultra-high-quality toolchain: (1) Binary Float32Array streaming replacing 8-bit PNGs to eliminate posterization and quantization during client-side WebGL2 120 FPS Asinh and difference math ($t_N - t_0$), (2) End-to-end type generation via `openapi-typescript` from FastAPI OpenAPI 3.1 schemas, (3) `uv` + `ruff` for sub-3s deterministic Python environment setup (`uv.lock`), (4) `air` live-reloading for Go, (5) Radix UI unstyled primitives + `cmdk` command bar (Ctrl+K) + `TanStack Virtual`, (6) Offline resilience via `seed_benchmarks.sql` + local binary cache, and (7) Floating HUD crosshair readout (RA/Dec, MJy/sr, SNR, decoded FLAGS bitmask).
+- **2026-11-01:** Exchange #30 recorded. Priority-to-Phase Sequential Architecture & Comprehensive Concern Resolution: Addressed all 6 audit concern categories and upgraded roadmap in `SPECIFICATION.md` (v2.5.0-PROD). Re-architected implementation sequence into 4 strictly sequential priority-gated phases: Phase 1 (P0: Core NASA Challenge Foundation — Shippable MVP satisfying 100% of the prompt), Phase 2 (P1: Scientific Differentiator — 102-band hyperspectral cubes, pgvector cosine search, and real-time community discussions), Phase 3 (P2: Institutional Polish & Mission Control — biogenic ice studio, 5-tab admin suite, live PyTorch WebSocket streaming), and Phase 4 (Production Deployment, Operational Hardening & Compliance — HF Spaces, Cloudflare Pages, Supabase RLS, keep-alive pingers, offline venue demo mirror, and citations). Completely purged all 12 stale auth/Bearer artifacts across the spec and integrated hardware/science fixes (WebGL2 `OES_texture_float_linear` detection with `gl.NEAREST`/`gl.R16F` fallback, Gaia DR3 2D centroid pins for sub-pixel proper motion, inverse-variance coaddition for faint brown dwarfs, discrete survey epoch stepping, and institutional data honesty attribution badges).
 - **2026-11-01:** Exchange #29 recorded. Production hosting spec ($0, always-warm): single-container multi-process deployment on Hugging Face Spaces (Docker, cpu-basic 2 vCPU/16 GB; Go gateway on public :7860 + Python worker on 127.0.0.1:8001), Cloudflare Pages frontend with static benchmark fallbacks, Supabase Cloud (session pooler, IPv4), and a dual-action `/api/health` keep-alive (touches Go, Python, Postgres) pinged by cron-job.org every 5 min with GitHub Actions as a 15-min backup. Added as SPECIFICATION.md Section 10 (v2.4.0-PROD) with corrections: `colorTo: black` is invalid (use `gray`); session pooler port 5432, not transaction 6543 (pgx/sqlc prepared statements); mandatory RLS because the anon key is public under zero-auth; uv-based Dockerfile with CPU-only torch index; ephemeral HF disk strategy; CORS/WSS origin allowlist; HF Space mirroring via `huggingface_hub`; zero-auth `/admin` abuse kill-switch. Old name "SpectraScout" in the source exchange was normalized to "Spectra".
 
 ---
@@ -138,7 +139,7 @@ _TBD_
 - Challenge selected: SPHEREx blink/time-series web tool (NASA Space Apps).
 - *(Tech stack is still only a proposal at this point.)*
 
-## Current Direction Snapshot (as of Exchange #29; Zero-Auth Flagship Architecture + $0 Hosting)
+## Current Direction Snapshot (as of Exchange #30; Priority-to-Phase Architecture & Zero-Auth v2.5.0)
 > Quick orientation for builders. The detailed reasoning is in the ★ sections below. Later exchanges override earlier ones.
 1. **Product Identity & Architecture:** **Spectra** (SPHEREx Spectral Explorers). Split into a **Dual-View Portal Architecture** with **Zero-Auth Route Isolation** (`/explore` for public citizen science vs `/admin` for science team Mission Control). Eliminates login friction for hackathon judges while tracking calibration and attribution via implicit client telemetry session fingerprinting (`X-Observer-ID`, `X-Observer-Callsign`). Backed by Supabase (PostgreSQL 16 + `pgvector`), Go API Gateway (`api-gateway` on `:8080` with `sqlc` + `pgx/v5` + `air`), and Python `astro-worker` (:8001 with `uv` + `astropy` + `torch`).
    - **Portal A: Public Discovery Suite (`/explore`):** 5-tab workspace for citizen scientists, replacing raw ML metrics with an interactive Talk-style discussion forum.
@@ -163,6 +164,11 @@ _TBD_
    - **Frontend Accelerators:** `nuqs` for typed URL state, `@tanstack/react-query` v5 for background prefetching, `uPlot` for 60 FPS 2D spectra and loss curves, and `react-plotly.js` for 3D decision boundaries.
 6. **Mandatory Benchmarks:** Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis.
 7. **Hosting (Exchange #29):** Cloudflare Pages (SPA + `/benchmarks` static fallback) → Hugging Face Space Docker container (Go :7860 public + Python 127.0.0.1:8001 loopback) → Supabase Cloud (session pooler :5432, RLS on, Realtime on discussion tables). `/api/health` keep-alive every 5 min (cron-job.org) + 15 min (GitHub Actions). See SPECIFICATION.md Section 10.
+8. **Sequential Priority-to-Phase Execution (Exchange #30):**
+   - **Phase 1 (P0 — Core NASA Challenge):** Tab 1 (Navigator/Aladin) + Tab 2 (Blinker/Float32) + 5 NASA Benchmarks + Coordinate Search. 100% prompt compliance and immediately shippable.
+   - **Phase 2 (P1 — Science Differentiator):** Tab 3 (Spectrophotometer + `pgvector` 102-band similarity) + Tab 5 (Discussions + Realtime).
+   - **Phase 3 (P2 — Institutional Polish):** Tab 4 (Ice Studio) + Admin Mission Control Tabs 1–5 (Live PyTorch WebSocket telemetry).
+   - **Phase 4 (Production & Compliance):** HF Spaces + Cloudflare Pages + Supabase Cloud + cron-job keep-alive + offline demo laptop fallback.
 
 ## Open Questions / Unresolved Items
 - Where and how to get SPHEREx data. **Mostly answered (Exchanges #4–5):** IRSA SIA2 (`COLLECTION=spherex_qr3`), the IBE cutout service, or AWS S3 `s3://nasa-irsa-spherex/qr3/`. The exact parameters and columns still need verifying.
@@ -2312,3 +2318,61 @@ CREATE TABLE ml_training_runs (
 10. **Unauthenticated `/admin` risk:** add rate limits, a single-training-run lock, and a `SPECTRA_DEMO_READONLY_ADMIN` kill-switch.
 11. **Fallback hosts** if HF changes its sleep/keep-alive policy: same container on Fly.io or Cloud Run with min-instances=1 (needs only `PORT`).
 
+---
+
+## ★ PRIORITY-TO-PHASE SEQUENTIAL ARCHITECTURE & CONCERN RESOLUTIONS (Exchange #30)
+> **Context:** The user requested: *"ok, but for 5. make each priority a phase, so on completion of one phase, the next can be done"*. This follows the comprehensive risk analysis addressing internal spec contradictions, science display limits, mobile float texture compatibility, and venue offline readiness.
+
+### 1. The Four Sequential Priority-Gated Phases
+
+```
++---------------------------------------------------------------------------------------------------+
+| PHASE 1: CORE NASA CHALLENGE FOUNDATION (P0)                                                     |
+| [Tab 1: Navigator (Aladin Dome)] + [Tab 2: Blinker (WebGL2 Float32)] + [5 NASA Benchmarks Seeded] |
+| Gateway (:8080) + Worker (:8001) + Local Supabase DB. Shippable MVP satisfying 100% of prompt.     |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  v (Milestone Gate 1 Complete)
++---------------------------------------------------------------------------------------------------+
+| PHASE 2: SCIENTIFIC DIFFERENTIATOR & COMMUNITY INTELLIGENCE (P1)                                  |
+| [Tab 3: Spectrophotometer (uPlot 60fps)] + [pgvector 102-Band Cosine Search]                     |
+| [Tab 5: Discussions (Supabase Realtime Live Sync)] + [Observer Calibration Tracking (w_u)]         |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  v (Milestone Gate 2 Complete)
++---------------------------------------------------------------------------------------------------+
+| PHASE 3: INSTITUTIONAL POLISH & MISSION CONTROL (P2)                                             |
+| [Tab 4: Molecular & Ice Studio] + [Admin Mission Control Tabs 1-5 (/admin)]                       |
+| [Live PyTorch Training Hook WebSocket Streamer (/api/admin/ws/training) with Diagnostic Weights]  |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  v (Milestone Gate 3 Complete)
++---------------------------------------------------------------------------------------------------+
+| PHASE 4: PRODUCTION DEPLOYMENT, OPERATIONAL HARDENING & COMPLIANCE                               |
+| [Hugging Face Space Dockerfile (Go :7860 + Py :8001)] + [Cloudflare Pages CDN Edge Cache]        |
+| [Supabase Cloud RLS + Session Pooler] + [cron-job.org Keep-Alive] + [Demo Laptop Offline Mirror] |
++---------------------------------------------------------------------------------------------------+
+```
+
+### 2. Comprehensive Resolutions Implemented (SPECIFICATION.md v2.5.0-PROD)
+
+1. **Purged Spec Contradictions:**
+   - Removed all 12 stale references to Bearer tokens, `ProtectedAdminRoute`, and blocking Supabase Auth dialogs.
+   - Standardized on Zero-Auth route separation (`/explore` vs `/admin`) with implicit client telemetry session headers (`X-Observer-ID`, `X-Observer-Callsign`).
+   - Replaced all legacy `requirements.txt` with `uv.lock` + `pyproject.toml`.
+   - Standardized data contracts across all tabs to raw IEEE-754 `Float32Array` buffers (`GET /worker/cutout/binary`), demoting Base64 PNGs to fallback previews only.
+
+2. **Astrophysical & Science Realism:**
+   - **Sub-Pixel Motion (Epsilon Indi B @ 4.8"/yr):** Overlaid Gaia DR3 2D centroid reticle over the 6.2" pixel grid with explicit HUD readout (`Deblended Centroid Displacement: 0.77 px/yr`).
+   - **Faint Target Detection (WISE 0855):** Implemented inverse-variance coaddition ($\sum I/\sigma^2$) in Tab 2 to suppress background photon noise in Bands D1–D3.
+   - **Discrete Survey Epoch Stepping:** Time scrubber snaps to real 6-month survey passes (`Pass 1: 2025-05`, `Pass 2: 2025-11`, `Pass 3: 2026-05`) instead of misleading continuous 60 FPS video.
+   - **Data Honesty Badges:** Prominent institutional tags (`[NASA Benchmark Target]`, `[IRSA Live Query]`, `[Synthetic Source Injection]`).
+
+3. **Hardware & Rendering Performance:**
+   - **Mobile/Safari Texture Compatibility:** Startup probe checks for `OES_texture_float_linear`. If absent, gracefully falls back to `gl.NEAREST` or half-float textures (`gl.R16F`).
+   - **Bundle Slicing:** Swapped full 3.5 MB Plotly for `plotly.js-gl3d-dist` (<400 KB) loaded dynamically only inside `/admin/boundaries`.
+
+4. **Demo-Day Offline & Compliance Guarantee:**
+   - Demo laptop pre-configured with local `Taskfile.yml` (`task dev`) and disk-cached benchmark tensors for zero-Wi-Fi presentation.
+   - 24-hour pre-judging code freeze.
+   - Persistent footer citations for NASA SPHEREx QR3 DOI (`10.26131/IRSA662`), IRSA IPAC, Gaia DR3, and GPL-3 open-source license.
