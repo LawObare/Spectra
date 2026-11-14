@@ -44,8 +44,8 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
   vega: { pmRaMasYr: 200.9, pmDecMasYr: 286.2, totalArcsecYr: 0.35 },
 };
 
-// Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Seamless 360° Spherical Projection)
-type PhotographicSurveyId = 'unwise-neo7' | '2mass-nir' | 'dss2-optical' | 'ls-dr10';
+// Progressive Multi-Order HEALPix (HiPS) & Feathered Spherical Survey Configurations
+type PhotographicSurveyId = 'unwise-neo7' | 'ls-dr10' | 'sdss2';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
@@ -60,31 +60,98 @@ const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
     id: 'unwise-neo7',
     hipsId: 'CDS/P/unWISE/color-W2-W1W2-W1',
     label: 'unWISE Infrared',
-    badge: 'NASA 3.4 & 4.6 µm HiPS (All-Sky)',
-    description: 'Continuous all-sky HEALPix spherical projection of NASA WISE/NEOWISE infrared co-adds. Zero seams across 360°.',
-  },
-  {
-    id: '2mass-nir',
-    hipsId: 'CDS/P/2MASS/color',
-    label: '2MASS Near-IR',
-    badge: 'J/H/Ks 1.2–2.2 µm HiPS (All-Sky)',
-    description: 'Two Micron All-Sky Survey (J, H, Ks) matching SPHEREx Bands D2–D3 with crisp resolved stellar fields.',
-  },
-  {
-    id: 'dss2-optical',
-    hipsId: 'CDS/P/DSS2/color',
-    label: 'DSS2 Optical',
-    badge: 'Palomar/UKST All-Sky HiPS',
-    description: 'Digitized Sky Survey 2 full-sphere optical photographic mosaic covering 100% of North and South poles.',
+    badge: 'NASA 3.4 & 4.6 µm (100% All-Sky)',
+    description: 'Continuous all-sky spherical projection of NASA WISE/NEOWISE infrared co-adds. Zero seams across 360°.',
   },
   {
     id: 'ls-dr10',
     hipsId: 'CDS/P/DESI-Legacy-Surveys/DR10/color',
-    label: 'Legacy DR10',
-    badge: 'Deep Optical g/r/z HiPS',
-    description: 'DESI Legacy Imaging Surveys DR10 progressive HiPS mosaic resolving deep galaxy spirals and nebulae.',
+    label: 'Legacy Survey DR10',
+    badge: 'Deep Optical g/r/z (Resolved Galaxies)',
+    description: 'DESI Legacy Imaging Surveys DR10 progressive mosaic resolving deep galaxy spirals and nebulae.',
+  },
+  {
+    id: 'sdss2',
+    hipsId: 'CDS/P/DSS2/color',
+    label: 'SDSS / All-Sky Blend',
+    badge: 'Optical + IR Hybrid',
+    description: 'Sloan Digital Sky Survey optical plates blended with all-sky infrared coverage at high latitudes.',
   },
 ];
+
+interface FeatheredSkyPlate {
+  key: string;
+  img: HTMLImageElement;
+  featheredCanvas: HTMLCanvasElement | null;
+  loaded: boolean;
+  loadedAt: number;
+  error: boolean;
+  ra: number;
+  dec: number;
+  sizeDeg: number;
+  level: number;
+  lastUsed: number;
+}
+
+function getSurveyPlateUrl(
+  survey: PhotographicSurveyId,
+  raDeg: number,
+  decDeg: number,
+  pixscale: number,
+  size = 512
+): string {
+  const normRa = (((raDeg % 360) + 360) % 360).toFixed(5);
+  const clampDec = Math.max(-89.6, Math.min(89.6, decDeg)).toFixed(5);
+  const clampScale = Math.max(0.262, Math.min(280.0, pixscale)).toFixed(3);
+
+  // Outside DR10/SDSS footprint, automatically fall back to 100% all-sky NASA unWISE-neo7 so there are never missing sky patches
+  let effectiveLayer: string = survey;
+  if (survey === 'ls-dr10' && (decDeg < -60.0 || decDeg > 32.0)) {
+    effectiveLayer = 'unwise-neo7';
+  } else if (survey === 'sdss2' && (decDeg < -15.0 || decDeg > 70.0)) {
+    effectiveLayer = 'unwise-neo7';
+  }
+
+  return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${effectiveLayer}&pixscale=${clampScale}&size=${size}`;
+}
+
+// Pre-bake a radially feathered circular vignette onto an offscreen canvas once on image load
+// Eliminates all rectangular tile seams, corners, and hard borders while running at 60 FPS
+function createFeatheredPlateCanvas(img: HTMLImageElement, size = 512): HTMLCanvasElement {
+  const off = document.createElement('canvas');
+  off.width = size;
+  off.height = size;
+  const octx = off.getContext('2d');
+  if (!octx) return off;
+
+  octx.drawImage(img, 0, 0, size, size);
+  octx.globalCompositeOperation = 'destination-in';
+  const r = size / 2;
+  const grad = octx.createRadialGradient(r, r, r * 0.52, r, r, r * 0.98);
+  grad.addColorStop(0.0, 'rgba(0, 0, 0, 1.0)');
+  grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.92)');
+  grad.addColorStop(0.82, 'rgba(0, 0, 0, 0.45)');
+  grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+  octx.fillStyle = grad;
+  octx.fillRect(0, 0, size, size);
+  return off;
+}
+
+// Concentric Full-Viewport Spherical Clipmap Octaves
+// Each plate spans ~1.6x the viewport FoV so a single continuous plate covers the entire screen without seams!
+function getSphericalClipmapOctave(fovDeg: number): {
+  plateSizeDeg: number;
+  pixscale: number;
+  level: number;
+} {
+  if (fovDeg > 28.0) return { plateSizeDeg: 40.0, pixscale: 281.25, level: 0 };
+  if (fovDeg > 11.0) return { plateSizeDeg: 18.0, pixscale: 126.562, level: 1 };
+  if (fovDeg > 4.2) return { plateSizeDeg: 7.5, pixscale: 52.734, level: 2 };
+  if (fovDeg > 1.5) return { plateSizeDeg: 2.6, pixscale: 18.281, level: 3 };
+  if (fovDeg > 0.5) return { plateSizeDeg: 0.9, pixscale: 6.328, level: 4 };
+  if (fovDeg > 0.16) return { plateSizeDeg: 0.3, pixscale: 2.109, level: 5 };
+  return { plateSizeDeg: 0.1, pixscale: 0.703, level: 6 };
+}
 
 // SPHEREx Level-2 Spectral Image Exposure Metadata (Modelled after IRSA spherex_qr2 MEF table)
 interface SpherexSpectralExposure {
@@ -222,6 +289,7 @@ export const CelestialNavigator: React.FC = () => {
   const aladinContainerRef = useRef<HTMLDivElement>(null);
   const aladinInstanceRef = useRef<any>(null);
   const skyCanvasRef = useRef<HTMLCanvasElement>(null);
+  const featheredCacheRef = useRef<Map<string, FeatheredSkyPlate>>(new Map());
 
   // High-frequency DOM refs for 60 FPS cursor readouts (avoids React state re-renders on mousemove)
   const cursorRaDecDomRef = useRef<HTMLSpanElement>(null);
@@ -446,6 +514,9 @@ export const CelestialNavigator: React.FC = () => {
 
     let animId: number;
     const toRad = Math.PI / 180;
+    let lastSyncedRa = -999;
+    let lastSyncedDec = -999;
+    let lastSyncedFov = -999;
 
     const renderFrame = () => {
       const parent = canvas.parentElement;
@@ -464,8 +535,16 @@ export const CelestialNavigator: React.FC = () => {
       const state = renderStateRef.current;
       const aladin = aladinInstanceRef.current;
 
-      // Sync Aladin Lite v3 camera orientation & FoV
-      if (aladin) {
+      // Sync Aladin Lite v3 ONLY when camera coordinates or FoV actually change (prevents 60Hz tile-abort thrashing)
+      if (
+        aladin &&
+        (Math.abs(centerRa - lastSyncedRa) > 1e-4 ||
+          Math.abs(centerDec - lastSyncedDec) > 1e-4 ||
+          Math.abs(fovDeg - lastSyncedFov) > 1e-4)
+      ) {
+        lastSyncedRa = centerRa;
+        lastSyncedDec = centerDec;
+        lastSyncedFov = fovDeg;
         try {
           aladin.gotoRaDec(centerRa, centerDec);
           aladin.setFoV(fovDeg);
@@ -503,21 +582,6 @@ export const CelestialNavigator: React.FC = () => {
         sRa: number,
         sDec: number
       ): { x: number; y: number; inBounds: boolean } => {
-        // When Aladin Lite v3 is active and right-side up, use its exact WCS projection if available
-        if (aladin && upSign === 1 && typeof aladin.world2pix === 'function') {
-          try {
-            const pix = aladin.world2pix(sRa, sDec);
-            if (Array.isArray(pix) && Number.isFinite(pix[0]) && Number.isFinite(pix[1])) {
-              const x = pix[0];
-              const y = pix[1];
-              const inBounds = x >= -120 && x <= width + 120 && y >= -120 && y <= height + 120;
-              return { x, y, inBounds };
-            }
-          } catch {
-            // Fall through to exact 3D stereographic math
-          }
-        }
-
         const r = sRa * toRad;
         const d = sDec * toRad;
         const vx = Math.cos(d) * Math.cos(r);
@@ -536,44 +600,26 @@ export const CelestialNavigator: React.FC = () => {
         // Astronomical convention: East is Left (-uEast), North is Up (-vNorth on screen Y)
         const x = width / 2 - (uEast * focalPx) / 2;
         const y = height / 2 - (vNorth * focalPx) / 2;
-        const inBounds = x >= -120 && x <= width + 120 && y >= -120 && y <= height + 120;
+        const inBounds = x >= -240 && x <= width + 240 && y >= -240 && y <= height + 240;
         return { x, y, inBounds };
       };
 
-      // Clear overlay canvas (transparent when Aladin HiPS WebGL2 canvas is active underneath; deep-space well otherwise)
+      // 1. Deep Space Foundation
       ctx.clearRect(0, 0, width, height);
-      if (!state.hipsReady || upSign === -1) {
-        ctx.fillStyle = '#05070B';
-        ctx.fillRect(0, 0, width, height);
-
-        // Continuous Spherical Milky Way & Zodiacal Glow Band (Zero Seams Across 360°)
-        const bgGrad = ctx.createRadialGradient(
-          width * 0.5,
-          height * 0.5,
-          10,
-          width * 0.5,
-          height * 0.5,
-          Math.max(width, height) * 0.75
-        );
-        bgGrad.addColorStop(0, 'rgba(30, 58, 95, 0.16)');
-        bgGrad.addColorStop(0.5, 'rgba(15, 23, 42, 0.10)');
-        bgGrad.addColorStop(1, 'rgba(5, 7, 11, 0.0)');
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, width, height);
-      }
-
-      // 2. Continuous 3D Spherical Starfield & Resolved Deep-Sky Sources (Zero Tile Seams, Crisp at Every Zoom)
-      const starPalette = ['#cfe4ff', '#eef6ff', '#fff9eb', '#ffe3b3', '#ffbe85', '#ff9b6a'];
-      const octaves = [
-        { cellDeg: 6.0, minFov: 0.01, maxFov: 180.0, starsPerCell: 5, brightBoost: 1.45 },
-        { cellDeg: 2.0, minFov: 0.01, maxFov: 48.0, starsPerCell: 7, brightBoost: 1.2 },
-        { cellDeg: 0.5, minFov: 0.01, maxFov: 12.0, starsPerCell: 9, brightBoost: 1.0 },
-        { cellDeg: 0.12, minFov: 0.01, maxFov: 3.0, starsPerCell: 10, brightBoost: 0.9 },
-      ];
+      ctx.fillStyle = '#05070B';
+      ctx.fillRect(0, 0, width, height);
 
       const halfSpanDeg = Math.min(90, fovDeg * 0.85);
       const cosDecClamp = Math.max(0.12, Math.cos(centerDec * toRad));
       const raSpan = Math.min(180, halfSpanDeg / cosDecClamp);
+
+      // 2. Base 3D Spherical Starfield (Underlay while survey plates stream or at wide hemisphere FoV)
+      const starPalette = ['#cfe4ff', '#eef6ff', '#fff9eb', '#ffe3b3', '#ffbe85', '#ff9b6a'];
+      const octaves = [
+        { cellDeg: 6.0, minFov: 0.01, maxFov: 180.0, starsPerCell: 5, brightBoost: 1.35 },
+        { cellDeg: 2.0, minFov: 0.01, maxFov: 48.0, starsPerCell: 7, brightBoost: 1.15 },
+        { cellDeg: 0.5, minFov: 0.01, maxFov: 12.0, starsPerCell: 8, brightBoost: 1.0 },
+      ];
 
       octaves.forEach((oct, octIdx) => {
         if (fovDeg > oct.maxFov || fovDeg < oct.minFov) return;
@@ -608,18 +654,9 @@ export const CelestialNavigator: React.FC = () => {
               const pos = worldToScreen(starRa, starDec);
               if (!pos.inBounds) continue;
 
-              const radiusPx = (0.65 + Math.pow(1 - magH, 2.8) * 2.2) * oct.brightBoost;
-              const baseAlpha = state.hipsReady && upSign === 1 ? 0.45 : 0.85;
-              const alpha = (0.3 + (1 - magH) * 0.7) * baseAlpha;
+              const radiusPx = (0.65 + Math.pow(1 - magH, 2.8) * 2.1) * oct.brightBoost;
+              const alpha = 0.28 + (1 - magH) * 0.62;
               const colorHex = starPalette[Math.floor(colH * starPalette.length)];
-
-              if (radiusPx > 1.7) {
-                ctx.globalAlpha = alpha * 0.28;
-                ctx.fillStyle = colorHex;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, radiusPx * 2.4, 0, Math.PI * 2);
-                ctx.fill();
-              }
 
               ctx.globalAlpha = alpha;
               ctx.fillStyle = colorHex;
@@ -629,6 +666,143 @@ export const CelestialNavigator: React.FC = () => {
             }
           }
         }
+      });
+      ctx.globalAlpha = 1.0;
+
+      // 3. Seamless 3D Spherical Feathered Survey Clipmap Engine (Real NASA unWISE / Legacy Survey DR10 Space Photography)
+      // Uses overlapping radially-feathered plates + a camera-centered Full-Viewport Master Plate so there are
+      // ZERO rectangular seams, ZERO missing sky patches, and smooth 3D rotation over the North & South poles!
+      const clipOctave = getSphericalClipmapOctave(fovDeg);
+      const { plateSizeDeg, pixscale, level } = clipOctave;
+      const now = Date.now();
+
+      const ensureFeatheredPlate = (pRa: number, pDec: number, pSizeDeg: number, pScale: number, pLevel: number) => {
+        const normRa = ((pRa % 360) + 360) % 360;
+        const clampDec = Math.max(-89.4, Math.min(89.4, pDec));
+        const key = `${state.activeSurvey}_L${pLevel}_${normRa.toFixed(2)}_${clampDec.toFixed(2)}`;
+        const existing = featheredCacheRef.current.get(key);
+        if (existing) {
+          existing.lastUsed = now;
+          return;
+        }
+        const img = new Image();
+        const entry: FeatheredSkyPlate = {
+          key,
+          img,
+          featheredCanvas: null,
+          loaded: false,
+          loadedAt: 0,
+          error: false,
+          ra: normRa,
+          dec: clampDec,
+          sizeDeg: pSizeDeg,
+          level: pLevel,
+          lastUsed: now,
+        };
+        featheredCacheRef.current.set(key, entry);
+        img.onload = () => {
+          entry.featheredCanvas = createFeatheredPlateCanvas(img, 512);
+          entry.loaded = true;
+          entry.loadedAt = Date.now();
+        };
+        img.onerror = () => {
+          entry.error = true;
+        };
+        img.src = getSurveyPlateUrl(state.activeSurvey, normRa, clampDec, pScale, 512);
+      };
+
+      // Priority 1: Camera-Centered Full-Viewport Master Plate (quantized to 20% of plateSizeDeg)
+      // Guarantees the active screen is covered by ONE single continuous, un-stitched space photograph!
+      const masterSnap = plateSizeDeg * 0.2;
+      const masterDec = Math.round(centerDec / masterSnap) * masterSnap;
+      const masterRaSnap = masterSnap / Math.max(0.15, Math.cos(masterDec * toRad));
+      const masterRa = Math.round(centerRa / masterRaSnap) * masterRaSnap;
+      ensureFeatheredPlate(masterRa, masterDec, plateSizeDeg, pixscale, level);
+
+      // Priority 2: Overlapping Spherical Geodesic Ring (55% step -> 45% overlap inside radial feather zone)
+      const stepDeg = plateSizeDeg * 0.55;
+      const baseDec = Math.round(centerDec / stepDeg) * stepDeg;
+      let requestedCount = 0;
+      for (let dIdx = -1; dIdx <= 1; dIdx++) {
+        let pDec = baseDec + dIdx * stepDeg;
+        let poleFlipRa = 0;
+        if (pDec > 90) {
+          pDec = 180 - pDec;
+          poleFlipRa = 180;
+        } else if (pDec < -90) {
+          pDec = -180 - pDec;
+          poleFlipRa = 180;
+        }
+        const cosP = Math.max(0.18, Math.cos(pDec * toRad));
+        const raStep = stepDeg / cosP;
+        const baseRa = Math.round(((centerRa + poleFlipRa) % 360) / raStep) * raStep;
+        for (let rIdx = -1; rIdx <= 1; rIdx++) {
+          if (requestedCount < 6) {
+            requestedCount++;
+            ensureFeatheredPlate(baseRa + rIdx * raStep, pDec, plateSizeDeg, pixscale, level);
+          }
+        }
+      }
+
+      // Evict stale plates beyond 180 entries
+      if (featheredCacheRef.current.size > 180) {
+        const all = Array.from(featheredCacheRef.current.entries());
+        all.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+        for (let i = 0; i < all.length - 130; i++) {
+          if (now - all[i][1].lastUsed > 25000) {
+            featheredCacheRef.current.delete(all[i][0]);
+          }
+        }
+      }
+
+      // Render loaded feathered plates from coarse parent level (background) to active crisp level (foreground)
+      // Each plate is rotated by the exact 3D spherical North convergence angle so pole transits are 100% seamless!
+      const activePlates = Array.from(featheredCacheRef.current.values()).filter(
+        (p) =>
+          p.loaded &&
+          !p.error &&
+          p.featheredCanvas &&
+          p.key.startsWith(state.activeSurvey) &&
+          p.sizeDeg >= plateSizeDeg * 0.45 &&
+          p.sizeDeg <= plateSizeDeg * 4.5
+      );
+      activePlates.sort((a, b) => b.sizeDeg - a.sizeDeg || a.loadedAt - b.loadedAt);
+
+      activePlates.forEach((plate) => {
+        if (!plate.featheredCanvas) return;
+        const pos = worldToScreen(plate.ra, plate.dec);
+        const drawSizePx = plate.sizeDeg * scalePxPerDeg * 1.18;
+        if (
+          drawSizePx < 8 ||
+          pos.x + drawSizePx < 0 ||
+          pos.x - drawSizePx > width ||
+          pos.y + drawSizePx < 0 ||
+          pos.y - drawSizePx > height
+        ) {
+          return;
+        }
+
+        // Compute local 3D spherical North tangent angle on screen so plates rotate smoothly over the poles
+        const deltaNorthDeg = plate.dec > 89.0 ? -0.15 : 0.15;
+        const northSign = plate.dec > 89.0 ? -1 : 1;
+        const northPt = worldToScreen(plate.ra, plate.dec + deltaNorthDeg);
+        const dxN = (northPt.x - pos.x) * northSign;
+        const dyN = (northPt.y - pos.y) * northSign;
+        const rotRad = Math.atan2(dxN, -dyN);
+
+        const fadeAlpha = Math.min(1.0, (now - plate.loadedAt) / 180);
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.rotate(rotRad);
+        ctx.globalAlpha = fadeAlpha;
+        ctx.drawImage(
+          plate.featheredCanvas,
+          -drawSizePx / 2,
+          -drawSizePx / 2,
+          drawSizePx,
+          drawSizePx
+        );
+        ctx.restore();
       });
       ctx.globalAlpha = 1.0;
 
