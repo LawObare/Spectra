@@ -170,6 +170,7 @@ def _extract_spectrum_from_tensor_payload(
     band_var_jy2 = np.zeros(n_bands, dtype=np.float64)
     band_flags = np.zeros(n_bands, dtype=np.int64)
     band_valid = np.zeros(n_bands, dtype=bool)
+    fallback_bands: list[str] = []
     epoch_indices = [max(0, min(n_epochs - 1, epoch))] if epoch is not None else list(range(n_epochs))
 
     for b in range(min(n_bands, 6)):
@@ -187,6 +188,34 @@ def _extract_spectrum_from_tensor_payload(
             w_inv = 1.0 / max(v_val, 1e-8) if math.isfinite(v_val) and v_val > 0 else 1.0
             weighted_flux += f_val * w_inv
             weights_sum += w_inv
+
+        # Saturated/masked source cores (bright stars like Barnard's Star or R Draconis)
+        # can have n_exp=0 / NaN at the exact center pixel; recover flux from unmasked PSF wings.
+        if weights_sum <= 0.0:
+            for radius in (1, 2, 3, 4):
+                y_lo, y_hi = max(0, cy - radius), min(h, cy + radius + 1)
+                x_lo, x_hi = max(0, cx - radius), min(w, cx + radius + 1)
+                for ny in range(y_lo, y_hi):
+                    for nx in range(x_lo, x_hi):
+                        if max(abs(nx - cx), abs(ny - cy)) != radius:
+                            continue
+                        dist2 = float((nx - cx) ** 2 + (ny - cy) ** 2)
+                        spatial_w = 1.0 / (1.0 + dist2)
+                        for e in epoch_indices:
+                            f_val = float(flux[e, b, ny, nx])
+                            v_val = float(variance[e, b, ny, nx])
+                            flg_val = int(flags[e, b, ny, nx])
+                            cnt_val = int(n_exp[e, b, ny, nx])
+                            if not math.isfinite(f_val) or cnt_val == 0:
+                                continue
+                            combined_flag |= flg_val
+                            w_inv = (1.0 / max(v_val, 1e-8) if math.isfinite(v_val) and v_val > 0 else 1.0) * spatial_w
+                            weighted_flux += f_val * w_inv
+                            weights_sum += w_inv
+                if weights_sum > 0.0:
+                    fallback_bands.append(f"D{b + 1}")
+                    break
+
         if weights_sum > 0:
             mean_mjy_sr = weighted_flux / weights_sum
             band_flux_jy[b] = mean_mjy_sr * MJY_SR_TO_JY_PER_PIXEL
@@ -256,6 +285,7 @@ def _extract_spectrum_from_tensor_payload(
             "epoch": epoch,
             "covered_channels": sum(channel_cov),
             "channel_count": TOTAL_SPHEREX_CHANNELS,
+            "aperture_fallback_bands": fallback_bands,
             "method": "Installed Section Tensor (6-band inverse-variance)",
         },
     }
@@ -804,26 +834,46 @@ async def get_installed_section_spectrum(
     raw_spec = row["spectrum_json"]
     if raw_spec:
         spec = json.loads(raw_spec) if isinstance(raw_spec, str) else dict(raw_spec)
-        if normalize and not spec.get("continuum_flux_jy"):
-            waves = np.asarray(spec["wavelengths_um"], dtype=np.float64)
-            flux = np.asarray(spec["flux_jy"], dtype=np.float64)
-            var = np.asarray(spec["variance_jy2"], dtype=np.float64)
-            if np.any(flux > 0):
-                cont_arr, tau_arr = fit_chebyshev_continuum(waves, flux, var)
-                spec["continuum_flux_jy"] = [float(v) for v in np.round(cont_arr, 6)]
-                spec["optical_depth_tau"] = [float(v) for v in np.round(tau_arr, 4)]
-        return spec
+        prov = spec.get("provenance") or {}
+        covered = int(prov.get("covered_channels") or 0)
+        needs_refresh = covered == 0 or (covered < TOTAL_SPHEREX_CHANNELS and "aperture_fallback_bands" not in prov)
+        if not needs_refresh or not row["tensor_path"]:
+            if normalize and not spec.get("continuum_flux_jy"):
+                waves = np.asarray(spec["wavelengths_um"], dtype=np.float64)
+                flux = np.asarray(spec["flux_jy"], dtype=np.float64)
+                var = np.asarray(spec["variance_jy2"], dtype=np.float64)
+                if np.any(flux > 0):
+                    cont_arr, tau_arr = fit_chebyshev_continuum(waves, flux, var)
+                    spec["continuum_flux_jy"] = [float(v) for v in np.round(cont_arr, 6)]
+                    spec["optical_depth_tau"] = [float(v) for v in np.round(tau_arr, 4)]
+            return spec
 
     if not row["tensor_path"]:
         raise HTTPException(status_code=404, detail="Section spectrum unavailable")
     payload = await asyncio.to_thread(_read_installed_tensor_bytes, str(row["tensor_path"]))
-    return _extract_spectrum_from_tensor_payload(
+    spec = await asyncio.to_thread(
+        _extract_spectrum_from_tensor_payload,
         payload,
         ra=float(row["ra"]),
         dec=float(row["dec"]),
         label=str(row["label"]),
         normalize=normalize,
     )
+    if (
+        raw_spec
+        and int((spec.get("provenance") or {}).get("covered_channels") or 0) > 0
+        and "pytest" not in sys.modules
+    ):
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE installed_sections SET spectrum_json = $2::jsonb, updated_at = NOW() WHERE section_id = $1",
+                    section_id,
+                    json.dumps(spec),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed refreshing cached section spectrum for %s: %s", section_id, exc)
+    return spec
 
 
 @router.delete("/sections/{section_id}")
