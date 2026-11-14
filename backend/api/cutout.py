@@ -29,7 +29,7 @@ try:
         build_master_wcs,
         coadd_inverse_variance,
         encode_binary_tensor,
-        reproject_exposures_sync,
+        reproject_exposures_parallel,
     )
     from backend.science.wave import match_benchmark_target
     from backend.science.wave_match import filter_wavelength_matched_exposures
@@ -41,7 +41,7 @@ except ImportError:
         build_master_wcs,
         coadd_inverse_variance,
         encode_binary_tensor,
-        reproject_exposures_sync,
+        reproject_exposures_parallel,
     )
     from science.wave import match_benchmark_target  # type: ignore
     from science.wave_match import filter_wavelength_matched_exposures  # type: ignore
@@ -140,6 +140,7 @@ async def _enqueue_cutout_task(
     zodi_subtracted: bool,
     request_key: str | None = None,
     real_only: bool = False,
+    emit_partial: bool = True,
 ) -> str:
     task_id = _new_task_id()
     task_data = {
@@ -153,6 +154,7 @@ async def _enqueue_cutout_task(
         "synth_b": synth_b,
         "zodi_subtracted": zodi_subtracted,
         "real_only": real_only,
+        "emit_partial": emit_partial,
         "status": "queued",
         "progress": 0.0,
         "stage": "queued",
@@ -221,6 +223,7 @@ class CutoutRequest(BaseModel):
     synth_b: dict[str, Any] | None = None
     zodi_subtracted: bool = False
     real_only: bool = False
+    emit_partial: bool = True
 
 
 def _cutout_request_key(body: CutoutRequest) -> str:
@@ -295,6 +298,7 @@ async def create_cutout(
             body.zodi_subtracted,
             request_key,
             body.real_only,
+            body.emit_partial,
         )
         _active_request_tasks[request_key] = task_id
         task_states[task_id] = {
@@ -401,23 +405,44 @@ async def get_partial_cutout_tensor(task_id: str) -> Response:
     )
 
 
+_PACKED_PIXEL_DTYPE = np.dtype(
+    [("flux", "<f4"), ("var", "<f4"), ("flg", "<u4"), ("nexp", "<u2")]
+)
+
+
 def _pack_plane(flux, variance, flags, n_exp) -> bytes:
     """Pack 14 bytes/pixel little-endian: F32, F32, U32, U16."""
     n = flux.size
-    out = bytearray(n * 14)
-    # vectorized-ish per field
-    flux_b = np.ascontiguousarray(flux.reshape(-1), dtype="<f4").tobytes()
-    var_b = np.ascontiguousarray(variance.reshape(-1), dtype="<f4").tobytes()
-    flg_b = np.ascontiguousarray(flags.reshape(-1), dtype="<u4").tobytes()
-    nexp_b = np.ascontiguousarray(n_exp.reshape(-1), dtype="<u2").tobytes()
-    mv = memoryview(out)
-    for i in range(n):
-        o = i * 14
-        mv[o : o + 4] = flux_b[i * 4 : i * 4 + 4]
-        mv[o + 4 : o + 8] = var_b[i * 4 : i * 4 + 4]
-        mv[o + 8 : o + 12] = flg_b[i * 4 : i * 4 + 4]
-        mv[o + 12 : o + 14] = nexp_b[i * 2 : i * 2 + 2]
-    return bytes(out)
+    packed = np.empty(n, dtype=_PACKED_PIXEL_DTYPE)
+    packed["flux"] = np.asarray(flux, dtype="<f4").reshape(-1)
+    packed["var"] = np.asarray(variance, dtype="<f4").reshape(-1)
+    packed["flg"] = np.asarray(flags, dtype="<u4").reshape(-1)
+    packed["nexp"] = np.asarray(n_exp, dtype="<u2").reshape(-1)
+    return packed.tobytes()
+
+
+def _coadd_and_pack_sync(
+    reproj_list: list[Any],
+    master_wcs: Any,
+    shape_out: tuple[int, int],
+    *,
+    source_badge: str,
+    release: str,
+    extra_metadata: dict[str, Any] | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """Run inverse-variance coaddition and 14 B/px tensor encoding off the event loop."""
+    coadd_res = coadd_inverse_variance(
+        reproj_list,
+        master_wcs=master_wcs,
+        shape_out=shape_out,
+        source_badge=source_badge,
+        release=release,
+        fill_unobserved=np.nan,
+    )
+    if extra_metadata:
+        coadd_res.metadata.update(extra_metadata)
+    payload = coadd_res.to_bytes(compression="none")
+    return payload, dict(coadd_res.metadata)
 
 
 async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
@@ -579,6 +604,8 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                 return
             async with partial_publish_lock:
                 candidate_exps.append(candidate)
+                if not task_data.get("emit_partial", True):
+                    return
                 matched_res = await asyncio.to_thread(
                     filter_wavelength_matched_exposures,
                     candidate_exps,
@@ -611,7 +638,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                 async with _reprojection_semaphore:
                     worker = asyncio.create_task(
                         asyncio.to_thread(
-                            reproject_exposures_sync,
+                            reproject_exposures_parallel,
                             new_matches,
                             master_wcs,
                             shape_out,
@@ -626,28 +653,25 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                 partial_reprojected_ids.update(candidate_identity(item) for item in new_matches)
                 collections = sorted({source for source, _ in partial_reprojected_ids if source})
                 release = " + ".join(collections) or "spherex_qr2"
-                coadd = coadd_inverse_variance(
-                    partial_reprojected,
-                    master_wcs=master_wcs,
-                    shape_out=shape_out,
-                    source_badge=f"[IRSA Live ({release})]",
-                    release=release,
-                    fill_unobserved=np.nan,
-                )
-                coadd.metadata.update(
-                    {
-                        "is_simulated": False,
-                        "source_badge": f"[IRSA Live ({release})]",
-                        "exposure_count": len(partial_reprojected),
-                        "partial": True,
-                    }
-                )
                 partial_revision = int(
                     task_states.get(task_id, {}).get("partial_revision", 0)
                 ) + 1
-                coadd.metadata["partial_revision"] = partial_revision
+                partial_bytes, partial_meta = await asyncio.to_thread(
+                    _coadd_and_pack_sync,
+                    partial_reprojected,
+                    master_wcs,
+                    shape_out,
+                    source_badge=f"[IRSA Live ({release})]",
+                    release=release,
+                    extra_metadata={
+                        "is_simulated": False,
+                        "exposure_count": len(partial_reprojected),
+                        "partial": True,
+                        "partial_revision": partial_revision,
+                    },
+                )
                 await tensor_cache.set(
-                    f"partial:{task_id}", coadd.to_bytes(compression="none"), coadd.metadata
+                    f"partial:{task_id}", partial_bytes, partial_meta
                 )
                 task_states.setdefault(task_id, {}).update(
                     {
@@ -696,7 +720,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                         async with _reprojection_semaphore:
                             worker = asyncio.create_task(
                                 asyncio.to_thread(
-                                    reproject_exposures_sync,
+                                    reproject_exposures_parallel,
                                     matched_res.matched_exposures,
                                     master_wcs,
                                     shape_out,
@@ -720,20 +744,20 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                         collection = " + ".join(contributing_collections) or str(
                             ingest_res.get("collection") or "spherex_qr2"
                         )
-                        coadd_res = coadd_inverse_variance(
+                        await update_stage("packaging", 0.92, "Packaging verified IRSA tensor")
+                        payload, coadd_meta = await asyncio.to_thread(
+                            _coadd_and_pack_sync,
                             reproj_list,
-                            master_wcs=master_wcs,
-                            shape_out=shape_out,
+                            master_wcs,
+                            shape_out,
                             source_badge=f"[IRSA Live ({collection})]",
                             release=collection,
-                            fill_unobserved=np.nan,
+                            extra_metadata={
+                                "is_simulated": False,
+                                "exposure_count": len(reproj_list),
+                            },
                         )
-                        coadd_res.metadata["is_simulated"] = False
-                        coadd_res.metadata["source_badge"] = f"[IRSA Live ({collection})]"
-                        coadd_res.metadata["exposure_count"] = len(reproj_list)
-                        await update_stage("packaging", 0.92, "Packaging verified IRSA tensor")
-                        payload = coadd_res.to_bytes(compression="none")
-                        metadata = {**coadd_res.metadata, "cached_at": time.monotonic()}
+                        metadata = {**coadd_meta, "cached_at": time.monotonic()}
                         await tensor_cache.set(f"tensor:{task_id}", payload, metadata)
                         if request_key:
                             await tensor_cache.set(f"request:{request_key}", payload, metadata)
