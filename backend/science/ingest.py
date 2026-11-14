@@ -274,8 +274,8 @@ async def _query_sia2_uncached(
                     await asyncio.sleep(
                         min(_archive_retry_delay(None, attempt), remaining)
                     )
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("SIA2 query failed for collection=%s: %s", collection, exc)
+                except Exception:
+                    logger.exception("SIA2 query failed for collection=%s", collection)
                     return {"collection": collection, "exposure_ids": [], "error": "query_error"}
             logger.error(
                 "SIA2 query exhausted retries collection=%s duration_s=%.3f error=%s",
@@ -629,7 +629,7 @@ async def fetch_cutout_from_irsa(
                     future.result(timeout=2.0)
                 except TimeoutError:
                     future.cancel()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.debug("Unable to publish S3 cutout progress", exc_info=True)
 
             try:
@@ -1202,6 +1202,7 @@ async def ingest_exposures_for_target(
     adaptive_window: bool = False,
     progress_hook: Callable[[str, float, str], Awaitable[None]] | None = None,
     spectrum_mode: bool = False,
+    exposure_hook: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Full ingestion pipeline for a target position.
 
@@ -1252,8 +1253,8 @@ async def ingest_exposures_for_target(
                 query_result = await query_sia2_cone(
                     ra, dec, radius_deg=fov_arcsec / 3600.0, collection=source
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("SIA collection=%s query raised an exception: %s", source, exc)
+            except Exception:
+                logger.exception("SIA collection=%s query raised an exception", source)
                 query_result = {
                     "collection": source,
                     "exposure_ids": [],
@@ -1444,6 +1445,14 @@ async def ingest_exposures_for_target(
                 return None
             exposure["cutout"] = cutout
             exposure["mjd_range"] = (float(exposure["mjd"]), float(exposure["mjd"]))
+            if exposure_hook:
+                try:
+                    await exposure_hook(exposure)
+                except Exception:
+                    logger.exception(
+                        "Unable to publish early cutout exposure=%s",
+                        exposure.get("exposure_id"),
+                    )
             return exposure
 
         fetched = await asyncio.gather(
