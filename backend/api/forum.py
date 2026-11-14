@@ -441,3 +441,25 @@ async def vote_classification(
         raise HTTPException(status_code=404, detail="Discussion thread not found")
     _publish("classification_update", thread)
     return {"thread": thread}
+
+
+@router.post("/threads/{thread_id}/upvote")
+async def upvote_thread(thread_id: int, request: Request) -> dict[str, Any]:
+    observer_id, observer_key = _extract_observer_credentials(request)
+    pool = _db_pool(request)
+    async with pool.acquire() as conn, conn.transaction():
+        await _verify_observer(conn, observer_id, observer_key)
+        _check_write_rate(observer_id)
+        await conn.execute(
+            """
+            UPDATE discussion_threads
+            SET upvotes = COALESCE(upvotes, 0) + 1
+            WHERE thread_id = $1
+            """,
+            thread_id,
+        )
+        thread = await _get_thread(conn, thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Discussion thread not found")
+    _publish("upvote_update", thread)
+    return {"thread": thread}
