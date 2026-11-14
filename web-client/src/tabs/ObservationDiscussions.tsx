@@ -1441,18 +1441,18 @@ export const ObservationDiscussions: React.FC = () => {
         className="pointer-events-none absolute inset-0 bg-background/65 backdrop-blur-[1px]"
         aria-hidden="true"
       />
-      <div className="relative z-10 flex h-full w-full max-w-[1440px] flex-col lg:flex-row overflow-hidden">
+      <div className="relative z-10 flex h-full w-full max-w-[1440px] flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
         {/* LEFT RAIL: Feed Views, External Archives & Zero-Auth Observer Footer */}
         <aside
           aria-label="Forum Navigation and Archives"
-          className="flex w-full lg:w-[236px] xl:w-[252px] shrink-0 flex-col max-h-56 lg:max-h-none border-b lg:border-b-0 lg:border-r border-border/80 bg-card/55 backdrop-blur-md overflow-y-auto px-3.5 py-4 gap-5"
+          className="flex w-full lg:w-[236px] xl:w-[252px] shrink-0 flex-col border-b lg:border-b-0 lg:border-r border-border/80 bg-card/55 backdrop-blur-md lg:overflow-y-auto px-3.5 py-3 lg:py-4 gap-3 lg:gap-5"
         >
           {/* Feed Navigation Views (modeled on My Feed / Groups / Bookmarks) */}
-          <nav className="flex flex-col gap-1" aria-label="Feed Scope">
+          <nav className="flex flex-row lg:flex-col gap-1.5 lg:gap-1 overflow-x-auto" aria-label="Feed Scope">
             <button
               type="button"
               onClick={() => setScopeFilter('ALL')}
-              className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between gap-2 shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                 scopeFilter === 'ALL'
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
@@ -1472,7 +1472,7 @@ export const ObservationDiscussions: React.FC = () => {
             <button
               type="button"
               onClick={() => setScopeFilter('TARGET')}
-              className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between gap-2 shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                 scopeFilter === 'TARGET'
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
@@ -1492,7 +1492,7 @@ export const ObservationDiscussions: React.FC = () => {
             <button
               type="button"
               onClick={() => setScopeFilter('VERIFIED')}
-              className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between gap-2 shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                 scopeFilter === 'VERIFIED'
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
@@ -1511,7 +1511,7 @@ export const ObservationDiscussions: React.FC = () => {
           </nav>
 
           {/* External Astronomical Archive Cross-Match */}
-          <div className="border-t border-border/70 pt-4">
+          <div className="hidden lg:block border-t border-border/70 pt-4">
             <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Archive Cross-Match
             </h3>
@@ -1535,7 +1535,7 @@ export const ObservationDiscussions: React.FC = () => {
           </div>
 
           {/* Bottom Observer Identity & SSE Status */}
-          <div className="mt-auto border-t border-border/70 pt-3 flex items-center justify-between gap-2 px-1">
+          <div className="hidden lg:flex mt-auto border-t border-border/70 pt-3 items-center justify-between gap-2 px-1">
             <div className="flex items-center gap-2 min-w-0">
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 border border-primary/40 font-mono text-[10px] font-semibold text-primary">
                 {identity.handle.slice(-2)}
@@ -1562,7 +1562,7 @@ export const ObservationDiscussions: React.FC = () => {
         {/* CENTER CHAT STREAM */}
         <section
           aria-label="Community Chat Stream"
-          className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+          className="min-w-0 flex-1 lg:overflow-y-auto px-3 py-4 sm:px-6 sm:py-5"
         >
           <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4 pb-8">
             {/* New Post / Observation Note Composer (modeled on design.webp New Post card) */}
@@ -2059,7 +2059,7 @@ export const ObservationDiscussions: React.FC = () => {
         {/* RIGHT RAIL: Active Field Card, Classifications Filter (replaces dropdown), Trending Topics, Top Discussions */}
         <aside
           aria-label="Classifications and Trending Topics"
-          className="flex w-full lg:w-[276px] xl:w-[300px] shrink-0 flex-col max-h-72 lg:max-h-none border-t lg:border-t-0 lg:border-l border-border/80 bg-card/55 backdrop-blur-md overflow-y-auto p-4 gap-5"
+          className="flex w-full lg:w-[276px] xl:w-[300px] shrink-0 flex-col border-t lg:border-t-0 lg:border-l border-border/80 bg-card/55 backdrop-blur-md lg:overflow-y-auto p-4 gap-5"
         >
           {/* Active Sky Field Highlight Card (modeled on top-right promo card) */}
           <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-3.5 space-y-2.5">
