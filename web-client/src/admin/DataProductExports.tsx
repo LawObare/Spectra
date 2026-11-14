@@ -239,8 +239,8 @@ export const DataProductExports: React.FC = () => {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
       {/* TOP HEADER BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/60 px-6 py-3 shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/60 px-3 sm:px-6 py-3 shrink-0 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div>
             <h2 className="text-sm font-semibold tracking-wide text-foreground">
               TRL Dataset Builder & Community Export Hub
@@ -278,7 +278,7 @@ export const DataProductExports: React.FC = () => {
       </div>
 
       {/* WORKSPACE CONTENT */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6">
         {/* VIEW 1: TRL SFT DATASET BUILDER */}
         {activeTab === 'sft' && (
           <div className="flex flex-col gap-5 max-w-6xl mx-auto">
@@ -437,7 +437,7 @@ export const DataProductExports: React.FC = () => {
         {/* VIEW 3: VOLUNTEER RELIABILITY AUDIT */}
         {activeTab === 'reliability' && (
           <div className="flex flex-col gap-6 max-w-5xl mx-auto">
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
               <Card className="border-border p-4 bg-card/60">
                 <div className="text-xs text-muted-foreground">Active Evaluators</div>
                 <div className="text-2xl font-bold font-mono mt-1">250</div>
@@ -485,34 +485,36 @@ export const DataProductExports: React.FC = () => {
                 <CardTitle className="text-xs font-semibold">Active Calibration & Held-Out Benchmark Pool</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-secondary/40 border-b border-border text-[11px] font-medium text-muted-foreground">
-                    <tr>
-                      <th className="py-2.5 px-4">Control Identifier</th>
-                      <th className="py-2.5 px-4">Type</th>
-                      <th className="py-2.5 px-4">Motion</th>
-                      <th className="py-2.5 px-4">Expected Class</th>
-                      <th className="py-2.5 px-4">Accuracy</th>
-                      <th className="py-2.5 px-4">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/40 font-mono text-xs">
-                    {CALIBRATION_CONTROLS.map((c) => (
-                      <tr key={c.id} className="hover:bg-secondary/30">
-                        <td className="py-2.5 px-4 font-semibold">{c.name}</td>
-                        <td className="py-2.5 px-4 font-sans text-muted-foreground">{c.type}</td>
-                        <td className="py-2.5 px-4">{(c.pm_arcsec_yr * 1000).toFixed(0)} mas/yr</td>
-                        <td className="py-2.5 px-4 text-primary">{c.expected_class}</td>
-                        <td className="py-2.5 px-4 text-green-400 font-semibold">{(c.volunteer_accuracy * 100).toFixed(1)}%</td>
-                        <td className="py-2.5 px-4">
-                          <Badge variant={c.status === 'active' ? 'sky' : 'outline'} className="text-[10px]">
-                            {c.status === 'active' ? 'Active Loop' : 'Held-Out Gold'}
-                          </Badge>
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-left text-xs">
+                    <thead className="bg-secondary/40 border-b border-border text-[11px] font-medium text-muted-foreground">
+                      <tr>
+                        <th className="py-2.5 px-4">Control Identifier</th>
+                        <th className="py-2.5 px-4">Type</th>
+                        <th className="py-2.5 px-4">Motion</th>
+                        <th className="py-2.5 px-4">Expected Class</th>
+                        <th className="py-2.5 px-4">Accuracy</th>
+                        <th className="py-2.5 px-4">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border/40 font-mono text-xs">
+                      {CALIBRATION_CONTROLS.map((c) => (
+                        <tr key={c.id} className="hover:bg-secondary/30">
+                          <td className="py-2.5 px-4 font-semibold">{c.name}</td>
+                          <td className="py-2.5 px-4 font-sans text-muted-foreground">{c.type}</td>
+                          <td className="py-2.5 px-4">{(c.pm_arcsec_yr * 1000).toFixed(0)} mas/yr</td>
+                          <td className="py-2.5 px-4 text-primary">{c.expected_class}</td>
+                          <td className="py-2.5 px-4 text-green-400 font-semibold">{(c.volunteer_accuracy * 100).toFixed(1)}%</td>
+                          <td className="py-2.5 px-4">
+                            <Badge variant={c.status === 'active' ? 'sky' : 'outline'} className="text-[10px]">
+                              {c.status === 'active' ? 'Active Loop' : 'Held-Out Gold'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </CardContent>
             </Card>
           </div>
