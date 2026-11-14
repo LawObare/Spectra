@@ -1886,42 +1886,81 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       {/* ========================================================================= */}
       <div className="flex w-full lg:w-[62%] xl:w-[65%] shrink-0 lg:shrink lg:min-h-0 flex-col border-b lg:border-b-0 lg:border-r border-neutral-800 bg-black">
         {/* Top Control Header */}
-        <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-neutral-800 bg-neutral-950 px-3 sm:px-4 py-1.5">
+        <div className="flex min-h-11 flex-wrap items-center justify-between gap-2.5 border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-3 sm:px-4 py-1.5">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-bold text-white">
-              {activeBenchmark ? activeBenchmark.name : `Field at RA ${urlRa.toFixed(4)}°, Dec ${urlDec.toFixed(4)}°`}
-            </span>
+            <div className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5">
+              <svg
+                className="h-3.5 w-3.5 shrink-0 text-sky-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="22" x2="18" y1="12" y2="12" />
+                <line x1="6" x2="2" y1="12" y2="12" />
+                <line x1="12" x2="12" y1="6" y2="2" />
+                <line x1="12" x2="12" y1="22" y2="18" />
+              </svg>
+              <span className="font-semibold text-white tracking-tight">
+                {activeBenchmark ? activeBenchmark.name : `Field at RA ${urlRa.toFixed(4)}°, Dec ${urlDec.toFixed(4)}°`}
+              </span>
+            </div>
             {onOpenCatalog && (
               <button
                 type="button"
                 onClick={onOpenCatalog}
-                className="rounded-full border border-neutral-800 bg-neutral-900/90 hover:bg-neutral-800 hover:border-neutral-700 px-2.5 py-0.5 text-[11px] font-medium text-neutral-300 hover:text-white transition-all flex items-center space-x-1 shadow-sm"
+                className="h-7 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 px-2.5 text-xs font-medium text-neutral-200 hover:text-white transition-all inline-flex items-center gap-1.5 cursor-pointer"
                 title="Browse all 24 calibrated targets in the source catalog"
               >
                 <span>Switch Target (24)</span>
-                <svg className="h-3 w-3 text-primary inline-block" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                <svg
+                  className="h-3.5 w-3.5 shrink-0 text-sky-400"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m6 9 6 6 6-6" />
                 </svg>
               </button>
             )}
             <button
               type="button"
               onClick={() => setIsCutoutBrowserOpen(true)}
-              className="rounded-full border border-emerald-600/50 bg-emerald-950/60 hover:bg-emerald-900/60 hover:border-emerald-500/70 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 transition-colors"
+              className="h-7 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 hover:border-emerald-400/60 px-2.5 text-xs font-medium text-emerald-200 transition-all inline-flex items-center gap-1.5 cursor-pointer"
               title="Browse installed cutouts with image previews before selecting"
             >
-              Browse Installed Cutouts ({readyInstalledSections.length})
+              <svg
+                className="h-3.5 w-3.5 shrink-0 text-emerald-300"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+              </svg>
+              <span>Browse Installed Cutouts ({readyInstalledSections.length})</span>
             </button>
-            <span className="rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
+            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.03] px-2.5 font-mono text-[11px] text-neutral-300">
               {store.sourceBadge}
             </span>
             {activeBenchmark?.id === 'barnard' && activeBandIndex <= 1 && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-400">
+              <span className="inline-flex h-7 items-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 font-mono text-[11px] text-amber-300">
                 OVERFLOW (Saturated NIR)
               </span>
             )}
             {activeBenchmark?.id === 'wise0855' && activeBandIndex <= 2 && (
-              <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 font-mono text-[10px] text-red-400">
+              <span className="inline-flex h-7 items-center rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 font-mono text-[11px] text-red-300">
                 Not Detected at Pass Depth (&gt;17 mag)
               </span>
             )}
@@ -1929,24 +1968,30 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
           {/* Controls: Marking, Canvas Zoom/Smoothing + Raw vs. Rectified Toggle */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="flex items-center space-x-1 sm:border-r sm:border-neutral-800 sm:pr-3">
+            <div className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
               <span
-                className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+                className={`inline-flex h-6 items-center gap-1.5 rounded-lg border px-2 font-mono text-[11px] ${
                   measuringMotion
-                    ? 'border-sky-500/60 bg-sky-500/15 text-sky-300'
-                    : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                    ? 'border-sky-400/40 bg-sky-500/15 text-sky-200'
+                    : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
                 }`}
               >
-                {measuringMotion ? 'Motion Vector Mode' : 'Circle / Mark Mode'}
+                <span
+                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                    measuringMotion ? 'bg-sky-400' : 'bg-emerald-400'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span>{measuringMotion ? 'Motion Vector Mode' : 'Circle / Mark Mode'}</span>
               </span>
               <button
                 type="button"
                 onClick={() => setSnapToPeak((prev) => !prev)}
                 title="Snap single clicks to brightest nearby flux peak in a 3x3 pixel window"
-                className={`rounded px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                className={`h-6 rounded-lg px-2 font-mono text-[11px] border transition-all cursor-pointer ${
                   snapToPeak
-                    ? 'border-primary/60 bg-primary/15 text-sky-300'
-                    : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white'
+                    ? 'border-sky-400/50 bg-sky-500/15 text-sky-200'
+                    : 'border-transparent text-neutral-400 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
                 {snapToPeak ? 'Peak Snap: ON' : 'Peak Snap: OFF'}
@@ -1955,52 +2000,53 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 <button
                   type="button"
                   onClick={handleClearMarks}
-                  className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 hover:bg-amber-500/20 transition-colors"
+                  className="h-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 font-mono text-[11px] text-amber-300 hover:bg-amber-500/20 transition-colors cursor-pointer"
                 >
                   Clear Marks ({markedObjects.length})
                 </button>
               )}
             </div>
 
-            <div className="flex items-center space-x-1 sm:border-r sm:border-neutral-800 sm:pr-3">
-              <span className="text-neutral-400 text-[11px] mr-1">Scale:</span>
+            <div className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+              <span className="px-1.5 text-[11px] font-medium text-neutral-400">Scale:</span>
               {(['fit', '1x', '2x', '4x'] as const).map((z) => (
                 <button
                   key={z}
                   type="button"
                   onClick={() => setCanvasZoom(z)}
-                  className={`rounded px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                  className={`h-6 px-2 rounded-lg font-mono text-[11px] transition-all cursor-pointer ${
                     canvasZoom === z
-                      ? 'border border-primary bg-primary/20 text-white font-bold'
-                      : 'border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white'
+                      ? 'bg-primary text-white font-semibold shadow-sm ring-1 ring-white/15'
+                      : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                   }`}
                 >
                   {z.toUpperCase()}
                 </button>
               ))}
+              <span className="mx-0.5 h-3.5 w-px bg-white/10" aria-hidden="true" />
               <button
                 type="button"
                 onClick={() => setIsSmoothRendering(!isSmoothRendering)}
                 title="Toggle between pixelated (crisp) and bilinear (smooth) interpolation"
-                className={`ml-1.5 rounded px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                className={`h-6 rounded-lg px-2 font-mono text-[11px] border transition-all cursor-pointer ${
                   isSmoothRendering
-                    ? 'border-cyan-500 bg-cyan-500/20 text-cyan-300'
-                    : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white'
+                    ? 'border-cyan-400/40 bg-cyan-500/15 text-cyan-200'
+                    : 'border-transparent text-neutral-400 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
                 {isSmoothRendering ? 'Smooth' : 'Crisp'}
               </button>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <span className="text-neutral-400">Sensor:</span>
+            <div className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] p-1 pl-2.5">
+              <span className="text-[11px] font-medium text-neutral-400">Sensor:</span>
               <button
                 type="button"
                 onClick={() => setRawVsRectified(rawVsRectified === 'rectified' ? 'raw_sensor' : 'rectified')}
-                className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                className={`h-6 rounded-lg border px-2.5 text-xs font-medium transition-all cursor-pointer ${
                   rawVsRectified === 'raw_sensor'
-                    ? 'border-amber-500 bg-amber-500/15 text-amber-400'
-                    : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-600 hover:text-white'
+                    ? 'border-amber-500/50 bg-amber-500/15 text-amber-300'
+                    : 'border-white/10 bg-white/[0.05] text-neutral-200 hover:bg-white/[0.1] hover:text-white'
                 }`}
               >
                 {rawVsRectified === 'raw_sensor' ? `Raw (θ = ${activePass.rollAngleDeg}°)` : 'Rectified North-Up'}
