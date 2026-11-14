@@ -6,6 +6,30 @@
       "sourceType": "github",
       "skillPath": "skills/caveman/SKILL.md",
       "computedHash": "71b600c88c8d1d36f18c4875db23b53c5d6cb9ba3195e19451d6b1bb67db07c4"
+    },
+    "code-review": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/code-review/SKILL.md",
+      "computedHash": "c2745e2be960b82b9fddd82cf45265f42431e7b045c403f297b25f0f311e9210"
+    },
+    "doublecheck": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/doublecheck/SKILL.md",
+      "computedHash": "b4767dd00fcdc47e7c7b91efaa56198639719056e1c3e2a7299300c0fb2a4241"
+    },
+    "grounding-before-coding": {
+      "source": "riekelt/principal-engineer",
+      "sourceType": "github",
+      "skillPath": "plugins/principal-engineer/skills/grounding-before-coding/SKILL.md",
+      "computedHash": "d5ff85dcdc457e8b7b00a94de84f7039fef88488961d2d90867c67c7b981e332"
+    },
+    "supabase-postgres-best-practices": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
+      "computedHash": "e14e276241805c97dbcfe40dcbea1a3035269cc7293cac4b1832dda41a835e60"
     }
   }
 }
