@@ -214,9 +214,9 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
   const prevMatchingDownloadRef = useRef<boolean>(false);
   const [canvasZoom, setCanvasZoom] = useState<'fit' | '1x' | '2x' | '4x'>('fit');
-  const [isSmoothRendering, setIsSmoothRendering] = useState(false);
+  const [isSmoothRendering, setIsSmoothRendering] = useState(true);
 
-  const currentCoordKey = `${urlRa.toFixed(5)},${urlDec.toFixed(5)},${Math.round(urlFov || 180)}`;
+  const currentCoordKey = `${urlRa.toFixed(5)},${urlDec.toFixed(5)},${Math.round(urlFov || 300)}`;
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
     [installedSections]
@@ -228,7 +228,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         (d) =>
           Math.abs(d.ra - urlRa) < 0.002 &&
           Math.abs(d.dec - urlDec) < 0.002 &&
-          Math.abs(d.fov_arcsec - Math.round(urlFov || 180)) <= 1
+          Math.abs(d.fov_arcsec - Math.round(urlFov || 300)) <= 1
       ) || null,
     [downloadingSections, urlRa, urlDec, urlFov]
   );
@@ -247,7 +247,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       setForceLiveCoordKey(null);
       setUrlRa(Number(section.ra.toFixed(5)));
       setUrlDec(Number(section.dec.toFixed(5)));
-      setUrlFov(Math.round(section.fov_arcsec || 180));
+      setUrlFov(Math.round(section.fov_arcsec || 300));
       useTelemetryStore.setState({
         ra: section.ra,
         dec: section.dec,
@@ -264,7 +264,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     void startSectionInstall({
       ra: urlRa,
       dec: urlDec,
-      fovArcsec: Math.round(urlFov || 180),
+      fovArcsec: Math.round(urlFov || 300),
       label,
     });
   }, [store.activeTargetName, urlDec, urlFov, urlRa]);
@@ -647,7 +647,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         }
         if (cancelled) return;
 
-        let matchedSection = findMatchingSection(sections, urlRa, urlDec, urlFov || 180);
+        let matchedSection = findMatchingSection(sections, urlRa, urlDec, urlFov || 300);
 
         // If backend is actively seeding/installing this coordinate in the background, wait & auto-load when ready
         if (!matchedSection && forceLiveCoordKey !== currentCoordKey) {
@@ -656,7 +656,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               s.status === 'installing' &&
               Math.abs(s.ra - urlRa) < 0.002 &&
               Math.abs(s.dec - urlDec) < 0.002 &&
-              Math.abs((s.fov_arcsec || 180) - Math.round(urlFov || 180)) <= 5
+              Math.abs((s.fov_arcsec || 300) - Math.round(urlFov || 300)) <= 5
           );
           if (installingSection) {
             setDataStatus('loading');
@@ -667,7 +667,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               if (cancelled) return;
               try {
                 const latest = await fetchInstalledSections(requestController.signal);
-                matchedSection = findMatchingSection(latest, urlRa, urlDec, urlFov || 180);
+                matchedSection = findMatchingSection(latest, urlRa, urlDec, urlFov || 300);
                 if (matchedSection) break;
                 const latestRow = latest.find((s) => s.section_id === installingSection.section_id);
                 if (latestRow && latestRow.status !== 'installing') {
@@ -727,7 +727,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           body: JSON.stringify({
             ra: urlRa,
             dec: urlDec,
-            fov_arcsec: Math.round(urlFov || 180),
+            fov_arcsec: Math.round(urlFov || 300),
             adaptive_window: true,
           }),
         });
@@ -1062,7 +1062,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           </p>
           <h1 className="mt-3 text-2xl font-semibold">Time-domain observations</h1>
           <p className="mt-2 font-mono text-xs text-slate-400">
-            Active target: RA {urlRa.toFixed(5)}°, Dec {urlDec >= 0 ? '+' : ''}{urlDec.toFixed(5)}° · FOV {Math.round(urlFov || 180)}″
+            Active target: RA {urlRa.toFixed(5)}°, Dec {urlDec >= 0 ? '+' : ''}{urlDec.toFixed(5)}° · FOV {Math.round(urlFov || 300)}″
           </p>
           <p className="mt-4 text-sm leading-6 text-slate-300" role={isShowingProgress ? 'status' : 'alert'}>
             {displayMessage}
