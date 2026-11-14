@@ -81,6 +81,8 @@ SIA_CACHE_MAX_ENTRIES = 512
 ARCHIVE_IO_SEMAPHORE = asyncio.Semaphore(4)
 ARCHIVE_SLOT_WAIT_TIMEOUT_SECONDS = 20.0
 EXPOSURE_FETCH_CONCURRENCY = 2
+ARCHIVE_REQUEST_ATTEMPTS = 3
+ARCHIVE_RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 _RANGE_CACHE = LRUCache(maxsize=64 * 1024 * 1024, getsizeof=len)
 _RANGE_CACHE_LOCK = threading.Lock()
 _sia_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -106,6 +108,16 @@ async def _acquire_archive_slot(operation: str, timeout: float) -> bool:
         time.monotonic() - wait_started,
     )
     return True
+
+
+def _archive_retry_delay(retry_after: str | None, attempt: int) -> float:
+    """Honor numeric Retry-After values; otherwise use short exponential backoff."""
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass
+    return min(4.0, 0.5 * (2**attempt))
 
 
 async def _run_thread_to_completion(function: Callable[..., Any], *args: Any) -> Any:
@@ -200,36 +212,78 @@ async def _query_sia2_uncached(
         }
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.get(SIA2_ENDPOINT, params=params)
-                if response.status_code != 200:
-                    logger.warning(
-                        "SIA2 query returned HTTP %s for collection=%s RA=%s Dec=%s radius=%s",
-                        response.status_code,
-                        collection,
-                        ra,
-                        dec,
-                        radius_deg,
+            query_deadline = asyncio.get_running_loop().time() + 45.0
+            last_error = "http_timeout"
+            for attempt in range(ARCHIVE_REQUEST_ATTEMPTS):
+                remaining = query_deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                try:
+                    response = await asyncio.wait_for(
+                        client.get(SIA2_ENDPOINT, params=params),
+                        timeout=min(30.0, remaining),
                     )
-                    return {"collection": collection, "exposure_ids": [], "error": "http_error"}
+                    if response.status_code in ARCHIVE_RETRYABLE_STATUSES:
+                        last_error = f"http_{response.status_code}"
+                        if attempt + 1 < ARCHIVE_REQUEST_ATTEMPTS:
+                            delay = _archive_retry_delay(
+                                response.headers.get("Retry-After"), attempt
+                            )
+                            remaining = query_deadline - asyncio.get_running_loop().time()
+                            if remaining <= 0:
+                                break
+                            await asyncio.sleep(min(delay, remaining))
+                            continue
+                    if response.status_code != 200:
+                        logger.warning(
+                            "SIA2 query returned HTTP %s for collection=%s RA=%s Dec=%s radius=%s",
+                            response.status_code,
+                            collection,
+                            ra,
+                            dec,
+                            radius_deg,
+                        )
+                        return {
+                            "collection": collection,
+                            "exposure_ids": [],
+                            "error": last_error if last_error != "http_timeout" else "http_error",
+                        }
 
-                parsed = _parse_sia2_votable(response.text, collection)
-                logger.info(
-                    "SIA query collection=%s rows=%d duration_s=%.3f",
-                    collection,
-                    len(parsed.get("exposure_ids", [])),
-                    time.monotonic() - started,
-                )
-                return parsed
-
-            except httpx.TimeoutException:
-                logger.error(
-                    "SIA2 query timed out for collection=%s RA=%s Dec=%s", collection, ra, dec
-                )
-                return {"collection": collection, "exposure_ids": [], "error": "http_timeout"}
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("SIA2 query failed for collection=%s: %s", collection, exc)
-                return {"collection": collection, "exposure_ids": [], "error": "query_error"}
+                    parsed = _parse_sia2_votable(response.text, collection)
+                    logger.info(
+                        "SIA query collection=%s rows=%d duration_s=%.3f",
+                        collection,
+                        len(parsed.get("exposure_ids", [])),
+                        time.monotonic() - started,
+                    )
+                    return parsed
+                except (httpx.TransportError, TimeoutError) as exc:
+                    last_error = type(exc).__name__
+                    if attempt + 1 >= ARCHIVE_REQUEST_ATTEMPTS:
+                        break
+                    logger.warning(
+                        "SIA request failed collection=%s attempt=%d error_type=%s error=%r",
+                        collection,
+                        attempt + 1,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    remaining = query_deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(
+                        min(_archive_retry_delay(None, attempt), remaining)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("SIA2 query failed for collection=%s: %s", collection, exc)
+                    return {"collection": collection, "exposure_ids": [], "error": "query_error"}
+            logger.error(
+                "SIA2 query exhausted retries collection=%s duration_s=%.3f error=%s",
+                collection,
+                time.monotonic() - started,
+                last_error,
+            )
+            return {"collection": collection, "exposure_ids": [], "error": last_error}
     finally:
         ARCHIVE_IO_SEMAPHORE.release()
 
@@ -432,7 +486,7 @@ async def fetch_cutout_from_irsa(
     if slot_acquired:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                for attempt in range(2):
+                for attempt in range(ARCHIVE_REQUEST_ATTEMPTS):
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
                         break
@@ -455,8 +509,19 @@ async def fetch_cutout_from_irsa(
                                 collection,
                                 cutout_url,
                             )
-                            if response.status_code not in {429, 500, 502, 503, 504} or attempt:
+                            if (
+                                response.status_code not in ARCHIVE_RETRYABLE_STATUSES
+                                or attempt + 1 >= ARCHIVE_REQUEST_ATTEMPTS
+                            ):
                                 break
+                            delay = _archive_retry_delay(
+                                response.headers.get("Retry-After"), attempt
+                            )
+                            remaining = deadline - asyncio.get_running_loop().time()
+                            if remaining <= 0:
+                                break
+                            await asyncio.sleep(min(delay, remaining))
+                            continue
                         else:
                             cutout_data = _parse_irsa_mef_cutout(
                                 response.content, collection=collection, include_psf=include_psf
@@ -481,22 +546,34 @@ async def fetch_cutout_from_irsa(
                                 )
                                 return cutout_data
                             logger.warning(
-                                "Incomplete IRSA MEF cutout for collection=%s (attempt %s/2)",
+                                "Incomplete IRSA MEF cutout for collection=%s (attempt %s/%s)",
                                 collection,
                                 attempt + 1,
+                                ARCHIVE_REQUEST_ATTEMPTS,
                             )
-                            if attempt:
+                            if attempt + 1 >= ARCHIVE_REQUEST_ATTEMPTS:
                                 break
+                            remaining = deadline - asyncio.get_running_loop().time()
+                            if remaining <= 0:
+                                break
+                            await asyncio.sleep(min(_archive_retry_delay(None, attempt), remaining))
                     except (httpx.HTTPError, OSError, ValueError, TimeoutError) as exc:
                         logger.warning(
-                            "IRSA Cutout request failed for collection=%s (attempt %s/2): %s",
+                            "IRSA Cutout request failed for collection=%s attempt=%d/%d error_type=%s error=%r",
                             collection,
                             attempt + 1,
+                            ARCHIVE_REQUEST_ATTEMPTS,
+                            type(exc).__name__,
                             exc,
                         )
-                        if attempt:
+                        if attempt + 1 >= ARCHIVE_REQUEST_ATTEMPTS:
                             break
-                    await asyncio.sleep(0.5)
+                        remaining = deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            break
+                        await asyncio.sleep(
+                            min(_archive_retry_delay(None, attempt), remaining)
+                        )
         finally:
             ARCHIVE_IO_SEMAPHORE.release()
     if s3_uri:
@@ -597,9 +674,7 @@ class _HTTPRangeReader(io.RawIOBase):
         self._session = requests.Session()
         try:
             probe_started = time.monotonic()
-            response = self._session.get(
-                self._url, headers={"Range": "bytes=0-0"}, timeout=(10, 30)
-            )
+            response = self._get_range_response({"Range": "bytes=0-0"})
             try:
                 response.raise_for_status()
                 content_range = response.headers.get("Content-Range", "")
@@ -633,11 +708,7 @@ class _HTTPRangeReader(io.RawIOBase):
         if self._etag:
             headers["If-Match"] = self._etag
         range_started = time.monotonic()
-        with self._session.get(
-            self._url,
-            headers=headers,
-            timeout=(min(10, remaining), min(30, remaining)),
-        ) as response:
+        with self._get_range_response(headers) as response:
             response.raise_for_status()
             expected_range = f"bytes {start}-{end}/{self._size}"
             if (
@@ -655,6 +726,48 @@ class _HTTPRangeReader(io.RawIOBase):
                     _RANGE_CACHE[cache_key] = data
             self.range_duration_seconds += time.monotonic() - range_started
             return data
+
+    def _get_range_response(self, headers: dict[str, str]) -> requests.Response:
+        for attempt in range(ARCHIVE_REQUEST_ATTEMPTS):
+            remaining = self._deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("S3 range-read deadline exceeded")
+            try:
+                response = self._session.get(
+                    self._url,
+                    headers=headers,
+                    timeout=(min(10.0, remaining), min(30.0, remaining)),
+                )
+            except requests.exceptions.RequestException as exc:
+                if attempt + 1 >= ARCHIVE_REQUEST_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "S3 range request failed collection=%s attempt=%d/%d error_type=%s error=%r",
+                    self._collection,
+                    attempt + 1,
+                    ARCHIVE_REQUEST_ATTEMPTS,
+                    type(exc).__name__,
+                    exc,
+                )
+                remaining = self._deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("S3 range-read deadline exceeded") from exc
+                time.sleep(min(_archive_retry_delay(None, attempt), remaining))
+                continue
+
+            if (
+                response.status_code in ARCHIVE_RETRYABLE_STATUSES
+                and attempt + 1 < ARCHIVE_REQUEST_ATTEMPTS
+            ):
+                delay = _archive_retry_delay(response.headers.get("Retry-After"), attempt)
+                response.close()
+                remaining = self._deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("S3 range-read deadline exceeded")
+                time.sleep(min(delay, remaining))
+                continue
+            return response
+        raise TimeoutError("S3 range-read deadline exceeded")
 
     def readable(self) -> bool:
         return True
@@ -734,11 +847,7 @@ def _fetch_cutout_from_s3(
     s3_uri, region = _parse_s3_access(s3_access)
     bucket, key = s3_uri[5:].split("/", 1)
     endpoint_region = region or "us-east-1"
-    hostname = (
-        f"{bucket}.s3.amazonaws.com"
-        if endpoint_region == "us-east-1"
-        else f"{bucket}.s3.{endpoint_region}.amazonaws.com"
-    )
+    hostname = f"{bucket}.s3.{endpoint_region}.amazonaws.com"
     object_url = f"https://{hostname}/{quote(key, safe='/')}"
     result: dict[str, Any] = {
         "hdu1_image": None,
