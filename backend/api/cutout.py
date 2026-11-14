@@ -74,7 +74,7 @@ def _remember_cached_region(task_data: dict[str, Any], metadata: dict[str, Any])
     _cached_cutout_regions[str(request_key)] = {
         "ra": float(task_data["ra"]),
         "dec": float(task_data["dec"]),
-        "fov_arcsec": min(int(task_data.get("fov_arcsec") or 180), 180),
+        "fov_arcsec": min(max(int(task_data.get("fov_arcsec") or 300), 30), 600),
         "cached_at": now,
         "source_badge": metadata.get("source_badge", "[IRSA Live]"),
     }
@@ -425,7 +425,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
     task_id = task_data["task_id"]
     ra = float(task_data["ra"])
     dec = float(task_data["dec"])
-    fov_arcsec = int(task_data.get("fov_arcsec") or 180)
+    fov_arcsec = min(max(int(task_data.get("fov_arcsec") or 300), 30), 600)
     adaptive_window = bool(task_data.get("adaptive_window", False))
     request_key = task_data.get("request_key")
     started_at = time.monotonic()
@@ -606,7 +606,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                     return
                 last_partial_publish_time = now
                 master_wcs, _, shape_out = build_master_wcs(
-                    ra, dec, min(fov_arcsec, 180)
+                    ra, dec, fov_arcsec
                 )
                 async with _reprojection_semaphore:
                     worker = asyncio.create_task(
@@ -692,7 +692,7 @@ async def process_cutout_task(task_data: dict[str, Any]) -> dict[str, Any]:
                             0.78,
                             f"Reprojecting {len(matched_res.matched_exposures)} wavelength-matched exposures",
                         )
-                        master_wcs, _, shape_out = build_master_wcs(ra, dec, min(fov_arcsec, 180))
+                        master_wcs, _, shape_out = build_master_wcs(ra, dec, fov_arcsec)
                         async with _reprojection_semaphore:
                             worker = asyncio.create_task(
                                 asyncio.to_thread(
