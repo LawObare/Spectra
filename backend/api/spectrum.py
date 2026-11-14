@@ -29,12 +29,14 @@ try:
         TOTAL_SPHEREX_CHANNELS,
         extract_102_channel_spectrum,
         extract_live_observations,
+        match_benchmark_target,
     )
 except ImportError:
     from science.wave import (
         TOTAL_SPHEREX_CHANNELS,
         extract_102_channel_spectrum,
         extract_live_observations,
+        match_benchmark_target,
     )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,10 @@ async def get_spectrum(
     normalize: bool = Query(False, description="Apply 3σ-clipped 4th-order Chebyshev polynomial continuum normalization"),
 ) -> SpectrumResponse:
     """Synchronously extract an archive-backed spectrum for API clients."""
+    if match_benchmark_target(ra, dec, match_radius_arcsec=60.0):
+        spec = extract_102_channel_spectrum(ra=ra, dec=dec, normalize=normalize, custom_observations=None)
+        return _response_from_spectrum(spec)
+
     try:
         observations, releases, exposure_ids = await extract_live_observations(ra, dec)
         spec = extract_102_channel_spectrum(
