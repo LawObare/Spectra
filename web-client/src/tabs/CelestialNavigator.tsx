@@ -49,51 +49,44 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 };
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
-type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'sdss-color' | 'dss2-color';
+type PhotographicSurveyId = 'allwise-color' | '2mass-color' | 'dss2-color' | 'spitzer-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
-  hipsId: string;
+  hipsUrl: string;
   label: string;
   badge: string;
   description: string;
 }
 
-function resolveHipsUrl(subpath: string): string {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return `${window.location.origin}/hips-irsa/${subpath}`;
-  }
-  return `https://irsa.ipac.caltech.edu/data/hips/${subpath}`;
-}
-
 const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
     id: 'allwise-color',
-    hipsId: 'CDS/AllWISE/RGB-W4-W2-W1',
+    hipsUrl: 'https://skies.esac.esa.int/AllWISEColor',
     label: 'AllWISE Infrared',
-    badge: 'NASA 3.4 & 4.6 µm (All-Sky)',
-    description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of NASA WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
+    badge: 'WISE 3.4 & 4.6 µm (All-Sky)',
+    description: 'Continuous all-sky progressive WebGL2 HiPS pyramid of WISE/NEOWISE infrared co-adds. Matches SPHEREx infrared regime.',
   },
   {
     id: '2mass-color',
-    hipsId: 'CDS/2MASS/Color',
+    hipsUrl: 'https://skies.esac.esa.int/2MASSColor',
     label: '2MASS Near-IR',
     badge: 'J/H/Ks (All-Sky)',
     description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
   },
   {
-    id: 'sdss-color',
-    hipsId: 'CDS/SDSS/DR9/color',
-    label: 'SDSS DR9 Optical',
-    badge: 'Deep Optical (Resolved Galaxies)',
-    description: 'Sloan Digital Sky Survey DR9 high-resolution optical sky survey resolving galaxies and nebulae with extreme clarity.',
-  },
-  {
     id: 'dss2-color',
-    hipsId: 'CDS/DSS2/color',
+    hipsUrl: 'https://skies.esac.esa.int/DSSColor',
     label: 'DSS2 Optical',
     badge: 'Palomar/UKST (All-Sky)',
-    description: 'Digitized Sky Survey 2 full-sphere optical photographic mosaic covering 100% of both hemispheres.',
+    description: 'Digitized Sky Survey full-sphere optical photographic mosaic covering 100% of both hemispheres.',
+  },
+  {
+    id: 'spitzer-color',
+    hipsUrl: 'https://skies.esac.esa.int/Spitzer/IRAC1_bright_ISM',
+    label: 'Spitzer 3.6 µm',
+    badge: 'IRAC Ch 1 (Deep IR)',
+    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions.',
   },
 ];
 
@@ -311,8 +304,7 @@ export const CelestialNavigator: React.FC = () => {
         setHipsError(true);
       }
     }, 25000);
-    const resolvedUrl = resolveHipsUrl(surveySpec.hipsId);
-    return A.HiPS(resolvedUrl, {
+    return A.HiPS(surveySpec.hipsUrl, {
       name: surveySpec.label,
       cooFrame: 'equatorial',
       successCallback: () => {

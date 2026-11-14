@@ -12,12 +12,6 @@ export default defineConfig({
         target: 'http://127.0.0.1:7860',
         changeOrigin: true,
       },
-      '/hips-irsa': {
-        target: 'https://irsa.ipac.caltech.edu',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/hips-irsa/, '/data/hips'),
-        secure: false,
-      },
     },
   },
 });
