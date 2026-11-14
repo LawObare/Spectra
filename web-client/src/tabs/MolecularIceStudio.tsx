@@ -537,7 +537,7 @@ export const MolecularIceStudio: React.FC = () => {
   const [annulusInner, setAnnulusInner] = useState(3.0);
   const [annulusOuter, setAnnulusOuter] = useState(5.0);
   const [mode, setMode] = useState<'raw' | 'tau'>('tau');
-  const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co', 'ch3oh']);
+  const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
   const [ledgerState, setLedgerState] = useState<'idle' | 'submitting' | 'logged' | 'offline'>('idle');
   const [ledgerNote, setLedgerNote] = useState<string>('');
 
@@ -809,7 +809,7 @@ export const MolecularIceStudio: React.FC = () => {
             <dt className="text-muted-foreground">Source badge</dt>
             <dd className="flex justify-end">
               <Badge variant="amber" className="font-mono text-[9px]">
-                [Synthetic Injection Mode]
+                {selectedTarget.badge}
               </Badge>
             </dd>
           </dl>
@@ -992,8 +992,10 @@ export const MolecularIceStudio: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
-              {solution.bands.map((band) => {
-                const definition = ICE_BANDS.find((item) => item.key === band.key);
+              {solution.bands
+                .filter((band) => activeBands.includes(band.key))
+                .map((band) => {
+                  const definition = ICE_BANDS.find((item) => item.key === band.key);
                 return (
                   <tr key={band.key} className={band.suppressed ? 'text-muted-foreground' : 'text-foreground'}>
                     <td className="py-1.5 pl-3 font-sans">
