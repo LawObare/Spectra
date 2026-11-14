@@ -153,6 +153,21 @@ def test_sections_list_tensor_spectrum_and_uninstall(tmp_path: Path, monkeypatch
     ins = client.post("/api/sections/install", json={"ra": 120.0, "dec": 20.0, "fov_arcsec": 180.0})
     assert ins.status_code == 202
     assert ins.json()["already_installed"] is True
+    assert ins.json()["overlapping_section"] is False
+
+    # 2b. Partially overlapping install also short-circuits to existing section
+    overlap_ins = client.post(
+        "/api/sections/install",
+        json={"ra": 120.02, "dec": 20.01, "fov_arcsec": 180.0},
+    )
+    assert overlap_ins.status_code == 202
+    assert overlap_ins.json()["already_installed"] is True
+    assert overlap_ins.json()["overlapping_section"] is True
+    assert overlap_ins.json()["section_id"] == sec_id
+    assert len(rows) == 1
+
+    # Adjacent non-overlapping region (> 180" - 6.2") is permitted
+    assert not sections.sections_overlap(120.0, 20.0, 180.0, 120.10, 20.0, 180.0)
 
     # 3. Tensor stream
     ten = client.get(f"/api/sections/{sec_id}/tensor")
