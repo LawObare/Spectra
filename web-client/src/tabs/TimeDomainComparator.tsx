@@ -163,8 +163,12 @@ export interface DecodedSectionTensor {
   exposureIds?: string[][] | string[];
 }
 
-const MAX_DECODED_TENSOR_CACHE = 8;
+const MAX_DECODED_TENSOR_CACHE = 24;
 const DECODED_TENSOR_LRU = new Map<string, { parsed: DecodedSectionTensor; sourceBadge: string }>();
+const SECTION_TENSOR_INFLIGHT = new Map<
+  string,
+  Promise<{ parsed: DecodedSectionTensor; sourceBadge: string } | null>
+>();
 
 function getSectionTensorCacheKey(section: InstalledSection): string {
   return `${section.section_id}:${section.updated_at || section.size_bytes}`;
@@ -194,6 +198,442 @@ function setCachedDecodedTensor(
   }
   DECODED_TENSOR_LRU.set(key, value);
 }
+
+function decodeBinaryTensorBuffer(
+  buf: ArrayBuffer,
+  worker: Worker
+): Promise<TensorWorkerResponse> {
+  return new Promise((resolve, reject) => {
+    worker.onmessage = (event: MessageEvent<TensorWorkerResponse>) => {
+      if (event.data.success) resolve(event.data);
+      else reject(new Error(event.data.error || 'Unable to decode the archive tensor.'));
+    };
+    worker.onerror = (event) => reject(new Error(event.message || 'Tensor worker failed.'));
+    worker.postMessage({ buffer: buf }, [buf]);
+  });
+}
+
+function mapDecodedTensor(
+  decoded: TensorWorkerResponse,
+  hasBenchmark = false
+): DecodedSectionTensor {
+  const hdr: TensorHeader = decoded.header;
+  const [epochs, bands, h, w] = hdr.shape;
+  const planePixels = h * w;
+  const totalPixels = decoded.totalPixels;
+  const payload = decoded.payloadBuffer;
+  const allFlux = new Float32Array(payload, 0, totalPixels);
+  const varianceOffset = totalPixels * 4;
+  const flagsOffset = totalPixels * 8;
+  const nExpOffset = totalPixels * 12;
+  const allVar = new Float32Array(payload, varianceOffset, totalPixels);
+  const allFlags = new Uint32Array(payload, flagsOffset, totalPixels);
+  const allNExp = new Uint16Array(payload, nExpOffset, totalPixels);
+
+  const fluxData: Float32Array[][] = [];
+  const varData: Float32Array[][] = [];
+  const flagsData: Uint32Array[][] = [];
+  const nExpData: Uint16Array[][] = [];
+
+  for (let e = 0; e < epochs; e++) {
+    fluxData[e] = [];
+    varData[e] = [];
+    flagsData[e] = [];
+    nExpData[e] = [];
+    for (let b = 0; b < bands; b++) {
+      const startIdx = (e * bands + b) * planePixels;
+      fluxData[e][b] = allFlux.subarray(startIdx, startIdx + planePixels);
+      varData[e][b] = allVar.subarray(startIdx, startIdx + planePixels);
+      flagsData[e][b] = allFlags.subarray(startIdx, startIdx + planePixels);
+      nExpData[e][b] = allNExp.subarray(startIdx, startIdx + planePixels);
+    }
+  }
+
+  const isSim = hdr.is_simulated !== false;
+  const badge = isSim
+    ? hasBenchmark
+      ? '[Benchmark Model (Simulated)]'
+      : '[Simulated Fallback (Offline)]'
+    : hdr.source_badge || `[IRSA Live (${hdr.release || 'release unavailable'})]`;
+
+  return {
+    fluxData,
+    varData,
+    flagsData,
+    nExpData,
+    width: w,
+    height: h,
+    epochs,
+    isSimulated: isSim,
+    sourceBadge: badge,
+    wcs:
+      Array.isArray(hdr.crval) && Array.isArray(hdr.cdelt) && Array.isArray(hdr.crpix)
+        ? { crval: hdr.crval, cdelt: hdr.cdelt, crpix: hdr.crpix }
+        : undefined,
+    mjdRanges: hdr.mjd_ranges,
+    exposureIds: hdr.exposure_ids,
+  };
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
+async function loadOrDecodeInstalledSectionTensor(
+  section: InstalledSection,
+  signal?: AbortSignal
+): Promise<{ parsed: DecodedSectionTensor; sourceBadge: string } | null> {
+  const cacheKey = getSectionTensorCacheKey(section);
+  const cached = getCachedDecodedTensor(cacheKey);
+  if (cached) return cached;
+
+  const existing = SECTION_TENSOR_INFLIGHT.get(cacheKey);
+  if (existing) {
+    return raceWithAbort(existing, signal);
+  }
+
+  const versionParam = encodeURIComponent(String(section.updated_at || section.size_bytes));
+  const flight = (async (): Promise<{ parsed: DecodedSectionTensor; sourceBadge: string } | null> => {
+    let worker: Worker | null = null;
+    try {
+      let secRes: Response | null = null;
+      try {
+        const candidate = await fetch(
+          `/api/sections/${section.section_id}/tensor?v=${versionParam}`,
+          signal ? { signal } : undefined
+        );
+        const contentType = (candidate.headers.get('content-type') || '').toLowerCase();
+        if (candidate.ok && !contentType.includes('text/html')) {
+          secRes = candidate;
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      }
+
+      if (!secRes) {
+        const staticCandidate = await fetch(
+          `/benchmarks/${section.section_id}.f32?v=${versionParam}`,
+          signal ? { signal } : undefined
+        );
+        const staticType = (staticCandidate.headers.get('content-type') || '').toLowerCase();
+        if (staticCandidate.ok && !staticType.includes('text/html')) {
+          secRes = staticCandidate;
+        }
+      }
+
+      if (!secRes) return null;
+
+      worker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), { type: 'module' });
+      const decoded = await decodeBinaryTensorBuffer(await secRes.arrayBuffer(), worker);
+      const parsed = mapDecodedTensor(decoded, false);
+      const installedBadge = parsed.sourceBadge.startsWith('[Installed]')
+        ? parsed.sourceBadge
+        : `[Installed] ${parsed.sourceBadge}`;
+      parsed.sourceBadge = installedBadge;
+      const entry = { parsed, sourceBadge: installedBadge };
+      setCachedDecodedTensor(cacheKey, entry);
+      return entry;
+    } finally {
+      worker?.terminate();
+      worker = null;
+      if (!signal) {
+        SECTION_TENSOR_INFLIGHT.delete(cacheKey);
+      }
+    }
+  })();
+
+  if (!signal) {
+    SECTION_TENSOR_INFLIGHT.set(cacheKey, flight);
+  }
+  return flight;
+}
+
+type ComparatorColorPalette = 'standard_rgb' | 'viridis' | 'cividis' | 'inverted_grayscale';
+
+function clamp01(val: number): number {
+  return Math.max(0, Math.min(1, val));
+}
+
+function sampleThumbnailPaletteRgb(
+  val: number,
+  palette: ComparatorColorPalette
+): [number, number, number] {
+  const c = clamp01(val);
+  if (palette === 'viridis') {
+    const c1 = c * c;
+    const c2 = c1 * c;
+    const c3 = c2 * c;
+    const r = clamp01(0.2777 - 0.1055 * c + 3.3044 * c1 - 4.6341 * c2 + 2.1582 * c3);
+    const g = clamp01(0.0054 + 1.4046 * c - 1.1062 * c1 + 0.4435 * c2 + 0.2526 * c3);
+    const b = clamp01(0.3340 + 1.3845 * c - 3.2504 * c1 + 4.3168 * c2 - 1.7850 * c3);
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+  if (palette === 'cividis') {
+    const c1 = c * c;
+    const c2 = c1 * c;
+    const r = clamp01(-0.0189 + 0.7736 * c + 0.7107 * c1 - 0.4654 * c2);
+    const g = clamp01(0.1345 + 0.4474 * c + 0.7077 * c1 - 0.2896 * c2);
+    const b = clamp01(0.3013 + 0.6974 * c - 0.5054 * c1 + 0.5067 * c2);
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+  if (palette === 'inverted_grayscale') {
+    const g = Math.round((1 - c) * 255);
+    return [g, g, g];
+  }
+  const g = Math.round(c * 255);
+  return [g, g, g];
+}
+
+const InstalledSectionThumbnailCanvas: React.FC<{
+  section: InstalledSection;
+  colorPalette?: ComparatorColorPalette;
+  className?: string;
+}> = React.memo(({ section, colorPalette = 'standard_rgb', className = 'h-16 w-16' }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cacheKey = getSectionTensorCacheKey(section);
+  const [entry, setEntry] = useState<{ parsed: DecodedSectionTensor; sourceBadge: string } | null>(
+    () => getCachedDecodedTensor(cacheKey)
+  );
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const syncHit = getCachedDecodedTensor(cacheKey);
+    if (syncHit) {
+      setEntry(syncHit);
+      setFailed(false);
+      return;
+    }
+    let cancelled = false;
+    setEntry(null);
+    setFailed(false);
+    loadOrDecodeInstalledSectionTensor(section)
+      .then((res) => {
+        if (cancelled) return;
+        if (res) setEntry(res);
+        else setFailed(true);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey, section]);
+
+  const previewBandInfo = useMemo(() => {
+    if (!entry) return null;
+    const { parsed } = entry;
+    const picked = pickObservedCell(parsed.nExpData, 4);
+    const bandLabel = BANDS[picked.bandIndex]?.id || 'D5';
+    return { ...picked, bandLabel };
+  }, [entry]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !entry || !previewBandInfo) return;
+    const { parsed } = entry;
+    const { width, height, epochs, fluxData, varData, nExpData } = parsed;
+    if (width <= 0 || height <= 0) return;
+
+    const total = width * height;
+    const { epochIndex, bandIndex } = previewBandInfo;
+    const coaddFlux = new Float32Array(total);
+    const covered = new Uint8Array(total);
+    const sumWFlux = new Float64Array(total);
+    const sumW = new Float64Array(total);
+
+    for (let e = 0; e < epochs; e++) {
+      const fPlane = fluxData[e]?.[bandIndex];
+      const vPlane = varData[e]?.[bandIndex];
+      const nPlane = nExpData[e]?.[bandIndex];
+      if (!fPlane) continue;
+      for (let i = 0; i < total; i++) {
+        const f = fPlane[i];
+        const hasExp = nPlane ? nPlane[i] > 0 : true;
+        if (!hasExp || !Number.isFinite(f)) continue;
+        const v = vPlane?.[i] ?? 1;
+        const w = Number.isFinite(v) && v > 0 ? 1 / Math.max(v, 1e-8) : 1;
+        sumWFlux[i] += f * w;
+        sumW[i] += w;
+      }
+    }
+
+    const samples: number[] = [];
+    let anyCovered = false;
+    for (let i = 0; i < total; i++) {
+      if (sumW[i] > 0) {
+        const val = sumWFlux[i] / sumW[i];
+        coaddFlux[i] = val;
+        covered[i] = 1;
+        anyCovered = true;
+        if (Number.isFinite(val)) samples.push(val);
+      }
+    }
+
+    if (!anyCovered) {
+      const fallbackPlane = fluxData[epochIndex]?.[bandIndex];
+      if (fallbackPlane) {
+        for (let i = 0; i < total; i++) {
+          const val = fallbackPlane[i];
+          if (Number.isFinite(val)) {
+            coaddFlux[i] = val;
+            covered[i] = 1;
+            samples.push(val);
+          }
+        }
+      }
+    }
+
+    let low = 0;
+    let high = 1;
+    if (samples.length > 0) {
+      samples.sort((a, b) => a - b);
+      low = samples[Math.floor(samples.length * 0.05)];
+      high = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.995))];
+      if (high <= low) high = low + 1;
+    }
+    const span = Math.max(high - low, 1e-6);
+    const safeA = 0.08;
+    const asinhDenom = Math.asinh(1 / safeA);
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const imgData = ctx.createImageData(width, height);
+    const data = imgData.data;
+
+    for (let i = 0; i < total; i++) {
+      const out = i * 4;
+      if (!covered[i]) {
+        data[out] = 8;
+        data[out + 1] = 10;
+        data[out + 2] = 15;
+        data[out + 3] = 255;
+        continue;
+      }
+      const norm = (coaddFlux[i] - low) / span;
+      const stretched = clamp01(Math.asinh(norm / safeA) / asinhDenom);
+      const [r, g, b] = sampleThumbnailPaletteRgb(stretched, colorPalette);
+      data[out] = r;
+      data[out + 1] = g;
+      data[out + 2] = b;
+      data[out + 3] = 255;
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+  }, [entry, previewBandInfo, colorPalette]);
+
+  return (
+    <div
+      className={`relative overflow-hidden rounded-lg border border-slate-700/80 bg-slate-950 ${className}`}
+    >
+      {entry ? (
+        <canvas
+          ref={canvasRef}
+          width={entry.parsed.width}
+          height={entry.parsed.height}
+          className="h-full w-full block object-cover"
+          style={{ imageRendering: 'pixelated' }}
+        />
+      ) : failed ? (
+        <div className="flex h-full w-full items-center justify-center font-mono text-[9px] text-slate-500">
+          N/A
+        </div>
+      ) : (
+        <div className="flex h-full w-full animate-pulse items-center justify-center bg-slate-900/90 font-mono text-[9px] text-slate-500">
+          …
+        </div>
+      )}
+
+      {/* Subtle center target reticle [ ] */}
+      <div className="pointer-events-none absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 opacity-75">
+        <span className="absolute left-0 top-0 h-1.5 w-1.5 border-l border-t border-cyan-300" />
+        <span className="absolute right-0 top-0 h-1.5 w-1.5 border-r border-t border-cyan-300" />
+        <span className="absolute bottom-0 left-0 h-1.5 w-1.5 border-b border-l border-cyan-300" />
+        <span className="absolute bottom-0 right-0 h-1.5 w-1.5 border-b border-r border-cyan-300" />
+      </div>
+
+      {previewBandInfo && (
+        <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/80 px-1 py-0.5 font-mono text-[8px] leading-none text-cyan-300">
+          {previewBandInfo.bandLabel}
+        </span>
+      )}
+    </div>
+  );
+});
+
+const InstalledSectionPreviewCard: React.FC<{
+  section: InstalledSection;
+  colorPalette: ComparatorColorPalette;
+  isActive?: boolean;
+  compact?: boolean;
+  onSelect: (section: InstalledSection) => void;
+}> = React.memo(({ section, colorPalette, isActive = false, compact = false, onSelect }) => {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(section)}
+      aria-pressed={isActive}
+      className={`group flex w-full items-center gap-3 rounded-lg border text-left transition-colors ${
+        compact ? 'px-2.5 py-2' : 'px-3 py-2.5'
+      } ${
+        isActive
+          ? 'border-emerald-500/70 bg-emerald-950/35 ring-1 ring-emerald-500/30'
+          : 'border-slate-800 bg-slate-900/80 hover:border-emerald-500/60 hover:bg-slate-800/80'
+      }`}
+    >
+      <InstalledSectionThumbnailCanvas
+        section={section}
+        colorPalette={colorPalette}
+        className={compact ? 'h-14 w-14 shrink-0' : 'h-16 w-16 sm:h-20 sm:w-20 shrink-0'}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-1.5">
+          <div className="truncate text-xs font-semibold text-white group-hover:text-emerald-200">
+            {section.label}
+          </div>
+          {isActive ? (
+            <span className="shrink-0 rounded border border-emerald-400/50 bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-emerald-300">
+              Active
+            </span>
+          ) : (
+            !compact && (
+              <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-950/60 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
+                {formatSectionBytes(section.size_bytes)}
+              </span>
+            )
+          )}
+        </div>
+        <div className="mt-1 font-mono text-[10px] text-slate-400">
+          {compact
+            ? `${section.ra.toFixed(2)}°, ${section.dec >= 0 ? '+' : ''}${section.dec.toFixed(2)}°`
+            : `${section.ra.toFixed(4)}°, ${section.dec >= 0 ? '+' : ''}${section.dec.toFixed(4)}°`}
+        </div>
+        <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+          {section.epochs} ep · {Math.round(section.fov_arcsec)}″
+        </div>
+      </div>
+    </button>
+  );
+});
 
 const ComparatorHoverHud: React.FC<{
   setterRef: React.MutableRefObject<((info: HoverPixelInfo | null) => void) | null>;
@@ -364,6 +804,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const prevMatchingDownloadRef = useRef<boolean>(false);
   const [canvasZoom, setCanvasZoom] = useState<'fit' | '1x' | '2x' | '4x'>('fit');
   const [isSmoothRendering, setIsSmoothRendering] = useState(true);
+  const [showSectionGallery, setShowSectionGallery] = useState<boolean>(true);
 
   const currentCoordKey = `${urlRa.toFixed(5)},${urlDec.toFixed(5)},${Math.round(urlFov || 300)}`;
 
@@ -659,79 +1100,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       requestController.abort();
     }, 480_000);
 
-    const decodeBinaryTensorBuffer = (buf: ArrayBuffer, worker: Worker): Promise<TensorWorkerResponse> =>
-      new Promise((resolve, reject) => {
-        worker.onmessage = (event: MessageEvent<TensorWorkerResponse>) => {
-          if (event.data.success) resolve(event.data);
-          else reject(new Error(event.data.error || 'Unable to decode the archive tensor.'));
-        };
-        worker.onerror = (event) => reject(new Error(event.message || 'Tensor worker failed.'));
-        worker.postMessage({ buffer: buf }, [buf]);
-      });
-
     const getDecoderWorker = () => {
       if (!decoderWorker) {
         decoderWorker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), { type: 'module' });
       }
       return decoderWorker;
-    };
-
-    const mapDecodedTensor = (decoded: TensorWorkerResponse) => {
-      const hdr: TensorHeader = decoded.header;
-      const [epochs, bands, h, w] = hdr.shape;
-      const planePixels = h * w;
-      const totalPixels = decoded.totalPixels;
-      const payload = decoded.payloadBuffer;
-      const allFlux = new Float32Array(payload, 0, totalPixels);
-      const varianceOffset = totalPixels * 4;
-      const flagsOffset = totalPixels * 8;
-      const nExpOffset = totalPixels * 12;
-      const allVar = new Float32Array(payload, varianceOffset, totalPixels);
-      const allFlags = new Uint32Array(payload, flagsOffset, totalPixels);
-      const allNExp = new Uint16Array(payload, nExpOffset, totalPixels);
-
-      const fluxData: Float32Array[][] = [];
-      const varData: Float32Array[][] = [];
-      const flagsData: Uint32Array[][] = [];
-      const nExpData: Uint16Array[][] = [];
-
-      for (let e = 0; e < epochs; e++) {
-        fluxData[e] = [];
-        varData[e] = [];
-        flagsData[e] = [];
-        nExpData[e] = [];
-        for (let b = 0; b < bands; b++) {
-          const startIdx = (e * bands + b) * planePixels;
-          fluxData[e][b] = allFlux.subarray(startIdx, startIdx + planePixels);
-          varData[e][b] = allVar.subarray(startIdx, startIdx + planePixels);
-          flagsData[e][b] = allFlags.subarray(startIdx, startIdx + planePixels);
-          nExpData[e][b] = allNExp.subarray(startIdx, startIdx + planePixels);
-        }
-      }
-
-      const isSim = hdr.is_simulated !== false;
-      const badge = isSim
-        ? activeBenchmark
-          ? '[Benchmark Model (Simulated)]'
-          : '[Simulated Fallback (Offline)]'
-        : hdr.source_badge || `[IRSA Live (${hdr.release || 'release unavailable'})]`;
-
-      return {
-        fluxData,
-        varData,
-        flagsData,
-        nExpData,
-        width: w,
-        height: h,
-        epochs,
-        isSimulated: isSim,
-        sourceBadge: badge,
-        wcs: Array.isArray(hdr.crval) && Array.isArray(hdr.cdelt) && Array.isArray(hdr.crpix)
-          ? { crval: hdr.crval, cdelt: hdr.cdelt, crpix: hdr.crpix }
-          : undefined,
-        mjdRanges: hdr.mjd_ranges,
-        exposureIds: hdr.exposure_ids,
-      };
     };
 
     const loadCutoutTensor = async () => {
@@ -830,41 +1203,12 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           }
           setDataMessage(`Loading installed section "${matchedSection.label}"…`);
           setDataProgress(0.4);
-          const versionParam = encodeURIComponent(String(matchedSection.updated_at || matchedSection.size_bytes));
-          let secRes: Response | null = null;
-          try {
-            const candidate = await fetch(
-              `/api/sections/${matchedSection.section_id}/tensor?v=${versionParam}`,
-              { signal: requestController.signal }
-            );
-            const contentType = (candidate.headers.get('content-type') || '').toLowerCase();
-            if (candidate.ok && !contentType.includes('text/html')) {
-              secRes = candidate;
-            }
-          } catch (err) {
-            if (err instanceof DOMException && err.name === 'AbortError') throw err;
-          }
-          if (!secRes) {
-            const staticCandidate = await fetch(
-              `/benchmarks/${matchedSection.section_id}.f32?v=${versionParam}`,
-              { signal: requestController.signal }
-            );
-            const staticType = (staticCandidate.headers.get('content-type') || '').toLowerCase();
-            if (staticCandidate.ok && !staticType.includes('text/html')) {
-              secRes = staticCandidate;
-            }
-          }
-          if (secRes) {
-            const decoded = await decodeBinaryTensorBuffer(await secRes.arrayBuffer(), getDecoderWorker());
-            decoderWorker?.terminate();
-            decoderWorker = null;
-            const parsed = mapDecodedTensor(decoded);
-            const installedBadge = parsed.sourceBadge.startsWith('[Installed]')
-              ? parsed.sourceBadge
-              : `[Installed] ${parsed.sourceBadge}`;
-            parsed.sourceBadge = installedBadge;
-            setCachedDecodedTensor(sectionCacheKey, { parsed, sourceBadge: installedBadge });
-            applyLoadedTensor(parsed, installedBadge);
+          const loadedEntry = await loadOrDecodeInstalledSectionTensor(
+            matchedSection,
+            requestController.signal
+          );
+          if (loadedEntry) {
+            applyLoadedTensor(loadedEntry.parsed, loadedEntry.sourceBadge);
             return;
           }
         } else if (!cancelled) {
@@ -912,7 +1256,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             const decoded = await decodeBinaryTensorBuffer(await tensorRes.arrayBuffer(), getDecoderWorker());
             decoderWorker?.terminate();
             decoderWorker = null;
-            const parsed = mapDecodedTensor(decoded);
+            const parsed = mapDecodedTensor(decoded, Boolean(activeBenchmark));
             applyLoadedTensor(parsed, parsed.sourceBadge);
             return;
           }
@@ -949,7 +1293,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                   await partialRes.arrayBuffer(),
                   getDecoderWorker(),
                 );
-                const partialTensor = mapDecodedTensor(partialDecoded);
+                const partialTensor = mapDecodedTensor(partialDecoded, Boolean(activeBenchmark));
                 if (!partialTensor.isSimulated && !cancelled) {
                   setLoadedTensor(partialTensor);
                   useTelemetryStore.setState({ sourceBadge: partialTensor.sourceBadge });
@@ -997,7 +1341,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         const decoded = await decodeBinaryTensorBuffer(await tensorRes.arrayBuffer(), getDecoderWorker());
         decoderWorker?.terminate();
         decoderWorker = null;
-        const parsed = mapDecodedTensor(decoded);
+        const parsed = mapDecodedTensor(decoded, Boolean(activeBenchmark));
         if (parsed.isSimulated && !activeBenchmark && !parsed.sourceBadge.includes('Benchmark')) {
           throw new Error('The archive returned no verified real-data tensor. No synthetic preview is shown.');
         }
@@ -1319,38 +1663,40 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               {dataMessage}
             </p>
           )}
-          {!isShowingProgress && (
+          {(!isShowingProgress || readyInstalledSections.length > 0) && (
             <div className="mt-6 space-y-6">
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  disabled={isInstallingHere}
-                  onClick={handleInstallSectionHere}
-                  className="rounded-lg border border-emerald-600/70 bg-emerald-950/60 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-900/60 disabled:opacity-50"
-                >
-                  {isInstallingHere ? 'Installing section…' : 'Install & Load Section Here'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForceLiveCoordKey(currentCoordKey);
-                    setLoadAttempt((attempt) => attempt + 1);
-                  }}
-                  className="rounded-lg border border-cyan-700 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-950"
-                >
-                  {dataStatus === 'error' ? 'Retry live IRSA query' : 'Query IRSA Live (Temporary)'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab('navigator')}
-                  className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
-                >
-                  Select in Sky Navigator
-                </button>
-              </div>
+              {!isShowingProgress && (
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    disabled={isInstallingHere}
+                    onClick={handleInstallSectionHere}
+                    className="rounded-lg border border-emerald-600/70 bg-emerald-950/60 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-900/60 disabled:opacity-50"
+                  >
+                    {isInstallingHere ? 'Installing section…' : 'Install & Load Section Here'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForceLiveCoordKey(currentCoordKey);
+                      setLoadAttempt((attempt) => attempt + 1);
+                    }}
+                    className="rounded-lg border border-cyan-700 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-950"
+                  >
+                    {dataStatus === 'error' ? 'Retry live IRSA query' : 'Query IRSA Live (Temporary)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTab('navigator')}
+                    className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                  >
+                    Select in Sky Navigator
+                  </button>
+                </div>
+              )}
 
               <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
                     Installed Sections ({readyInstalledSections.length})
                   </h2>
@@ -1363,24 +1709,15 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                     No sections installed yet. Use Sky Navigator to browse footprints and click &ldquo;Install Cutout Section&rdquo;, or install this coordinate above.
                   </p>
                 ) : (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
                     {readyInstalledSections.map((sec) => (
-                      <button
+                      <InstalledSectionPreviewCard
                         key={sec.section_id}
-                        type="button"
-                        onClick={() => handleSelectInstalledSection(sec)}
-                        className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2.5 text-left transition-colors hover:border-emerald-500/60 hover:bg-slate-800/80"
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="truncate text-xs font-semibold text-white">{sec.label}</div>
-                          <div className="mt-0.5 font-mono text-[10px] text-slate-400">
-                            {sec.ra.toFixed(4)}°, {sec.dec >= 0 ? '+' : ''}{sec.dec.toFixed(4)}° · {Math.round(sec.fov_arcsec)}″ · {sec.epochs} ep
-                          </div>
-                        </div>
-                        <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-950/60 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
-                          {formatSectionBytes(sec.size_bytes)}
-                        </span>
-                      </button>
+                        section={sec}
+                        colorPalette={colorPalette}
+                        isActive={activeInstalledSection?.section_id === sec.section_id}
+                        onSelect={handleSelectInstalledSection}
+                      />
                     ))}
                   </div>
                 )}
@@ -1975,6 +2312,44 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       {/* RIGHT PANEL (35%): Analysis Deck & Wavelength-Matched Matrix              */}
       {/* ========================================================================= */}
       <div className="flex w-full lg:w-[38%] xl:w-[35%] shrink-0 lg:shrink lg:min-h-0 flex-col lg:overflow-y-auto border-t lg:border-t-0 lg:border-l border-neutral-800 bg-neutral-950 p-3 sm:p-4 text-xs space-y-4">
+        {/* Installed Cutout Sections Gallery */}
+        {readyInstalledSections.length > 0 && (
+          <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-3.5 shadow-sm backdrop-blur">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="font-semibold text-white text-xs tracking-wide uppercase">
+                  Installed Cutout Sections ({readyInstalledSections.length})
+                </h3>
+                <p className="mt-0.5 text-[10px] text-neutral-400">
+                  Preview calibrated cutouts before switching targets
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSectionGallery((prev) => !prev)}
+                aria-expanded={showSectionGallery}
+                className="shrink-0 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[10px] text-neutral-300 hover:border-neutral-700 hover:text-white transition-colors"
+              >
+                {showSectionGallery ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showSectionGallery && (
+              <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {readyInstalledSections.map((sec) => (
+                  <InstalledSectionPreviewCard
+                    key={sec.section_id}
+                    section={sec}
+                    colorPalette={colorPalette}
+                    compact
+                    isActive={activeInstalledSection?.section_id === sec.section_id}
+                    onSelect={handleSelectInstalledSection}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Render Mode Switcher */}
         <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
           <div className="mb-2.5 flex items-center justify-between">
