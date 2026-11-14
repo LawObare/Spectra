@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 
+from backend.api.resolve import router as resolve_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -45,6 +46,8 @@ app.add_middleware(
     expose_headers=["X-Observer-ID", "X-Cache"],
     max_age=600,
 )
+
+app.include_router(resolve_router)
 
 
 @app.get("/api/health/live")
