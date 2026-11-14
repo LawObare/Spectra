@@ -75,6 +75,9 @@ class FakeConnection:
             raise AssertionError(f"Unexpected execute query: {query}")
         if not self.thread or args[0] != self.thread["thread_id"]:
             return "UPDATE 0"
+        if "SET upvotes" in query:
+            self.thread["upvotes"] = int(self.thread.get("upvotes", 0)) + 1
+            return "UPDATE 1"
         metrics = self.thread["preview_metrics"]
         counts = metrics.setdefault("class_votes", {})
         counts[args[2]] = counts.get(args[2], 0) + 1
@@ -188,3 +191,28 @@ def test_classification_vote_updates_counter_and_tag() -> None:
     thread = response.json()["thread"]
     assert thread["hashtags"] == ["#blend_artifact"]
     assert thread["classVotes"] == {"V_artifact": 1}
+
+
+def test_upvote_thread_increments_counter() -> None:
+    observer_id = UUID("42345678-1234-4234-8234-123456789abc")
+    observer_key = "e5" * 32
+    client = make_client(observer_id, observer_key)
+    headers = {
+        "X-Observer-ID": str(observer_id),
+        "X-Observer-Key": observer_key,
+    }
+    created = client.post(
+        "/api/forum/threads",
+        headers=headers,
+        json={
+            "title": "High-PM Barnard detection",
+            "body": "Confirmed north shift across epochs.",
+            "ra": 269.44639,
+            "dec": 4.76676,
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.post("/api/forum/threads/1/upvote", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["thread"]["upvotes"] == 1
