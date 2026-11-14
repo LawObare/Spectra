@@ -28,36 +28,34 @@ export const AdminLayout: React.FC = () => {
 
   // Determine active tab from URL path
   const getActiveTab = () => {
-    if (currentPath.includes('/admin/internals')) return 'internals';
     if (currentPath.includes('/admin/boundaries')) return 'boundaries';
-    if (currentPath.includes('/admin/triage')) return 'triage';
-    if (currentPath.includes('/admin/exports')) return 'exports';
+    if (currentPath.includes('/admin/internals')) return 'internals';
+    if (currentPath.includes('/admin/exports') || currentPath.includes('/admin/triage')) return 'exports';
     return 'dynamics';
   };
 
   const activeTab = getActiveTab();
 
   const navItems = [
-    { id: 'dynamics', label: '1. Training Dynamics', path: '/admin/dynamics' },
-    { id: 'internals', label: '2. Parameter & Activations', path: '/admin/internals' },
-    { id: 'boundaries', label: '3. Decision Boundaries', path: '/admin/boundaries' },
-    { id: 'triage', label: '4. Disagreement Triage', path: '/admin/triage' },
-    { id: 'exports', label: '5. Data Product Hub', path: '/admin/exports' },
+    { id: 'dynamics', label: '1. SFT & LoRA Training Studio', path: '/admin/dynamics' },
+    { id: 'boundaries', label: '2. AI Knowledge & Relationship Graph', path: '/admin/boundaries' },
+    { id: 'internals', label: '3. Live AI Identification Co-Pilot', path: '/admin/internals' },
+    { id: 'exports', label: '4. TRL Dataset & Export Hub', path: '/admin/exports' },
   ];
 
   return (
     <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background font-sans text-foreground">
-      {/* MISSION CONTROL TOP BAR (SPECIFICATION.md §6.4) */}
+      {/* MISSION CONTROL TOP BAR */}
       <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-primary" />
             <h1 className="text-xs font-semibold tracking-wide text-foreground">
-              Spectra mission control · Operations console
+              Spectra AI Lab · SFTTrainer & Mission Control
             </h1>
           </div>
           <Badge variant="sky" className="font-mono text-[10px]">
-            Clearance: SEC
+            PyTorch + HF TRL
           </Badge>
           <Badge variant="amber" className="font-mono text-[10px]">
             Read-Only Demo Mode
