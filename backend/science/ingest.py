@@ -1400,7 +1400,7 @@ async def ingest_exposures_for_target(
         # Step 2: Cluster the exposures returned for this coordinate. QR2 and
         # QR3 have different release coverage, so static release-date windows
         # cannot be used as the source of the target's epochs.
-        gap_days = 3.0
+        gap_days = 25.0
         try:
             config_path = Path(__file__).resolve().parent.parent / "config" / "survey_passes.json"
             config = json.loads(config_path.read_text(encoding="utf-8"))
