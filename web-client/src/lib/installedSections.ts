@@ -421,15 +421,26 @@ export async function startSectionInstall(params: {
     `Field (${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°)`;
   const key = downloadKeyFor(ra, dec, fovArcsec);
 
-  // Never start a duplicate/restarted download if this box is already queued or active
-  const existing = snapshot.downloadingSections.find(
+  // Never start a duplicate/overlapping download if this sky box overlaps a queued, active, or installed section
+  const existingDownload = snapshot.downloadingSections.find(
     (d) =>
       d.key === key ||
-      (Math.abs(d.ra - ra) < 0.002 &&
-        Math.abs(d.dec - dec) < 0.002 &&
-        Math.abs(d.fov_arcsec - fovArcsec) <= 1)
+      sectionsOverlap(ra, dec, fovArcsec, d.ra, d.dec, d.fov_arcsec)
   );
-  if (existing) return;
+  if (existingDownload) return;
+
+  const existingInstalled = snapshot.installedSections.find(
+    (s) =>
+      (s.status === 'ready' || s.status === 'installing') &&
+      sectionsOverlap(ra, dec, fovArcsec, s.ra, s.dec, s.fov_arcsec)
+  );
+  if (existingInstalled) {
+    setSnapshot((prev) => ({
+      ...prev,
+      installError: `Selection overlaps existing section "${existingInstalled.label}".`,
+    }));
+    return;
+  }
 
   const entry: DownloadingSection = {
     key,
@@ -544,6 +555,47 @@ export function findMatchingSection(
     const dra = (((sec.ra - ra + 180) % 360) + 360) % 360 - 180;
     const ddec = sec.dec - dec;
     if (Math.abs(dra * cosDec) <= halfDeg && Math.abs(ddec) <= halfDeg) {
+      return sec;
+    }
+  }
+  return null;
+}
+
+/**
+ * Spherical bounding-box intersection check (with a 1-pixel / 6.2" PSF seam tolerance
+ * so adjacent survey tiles can abut cleanly without losing sources on the border).
+ */
+export function sectionsOverlap(
+  ra1: number,
+  dec1: number,
+  fov1Arcsec: number,
+  ra2: number,
+  dec2: number,
+  fov2Arcsec: number
+): boolean {
+  const meanDecRad = ((dec1 + dec2) * 0.5 * Math.PI) / 180;
+  const cosDec = Math.max(0.05, Math.cos(meanDecRad));
+  const draDeg = ((((ra1 - ra2 + 180) % 360) + 360) % 360) - 180;
+  const dxArcsec = Math.abs(draDeg * cosDec) * 3600;
+  const dyArcsec = Math.abs(dec1 - dec2) * 3600;
+  const limitArcsec = Math.max(
+    0.5 * Math.min(fov1Arcsec, fov2Arcsec),
+    (fov1Arcsec + fov2Arcsec) * 0.5 - 6.2
+  );
+  return dxArcsec < limitArcsec && dyArcsec < limitArcsec;
+}
+
+export function findOverlappingSection(
+  sections: InstalledSection[],
+  ra: number,
+  dec: number,
+  fovArcsec: number
+): InstalledSection | null {
+  const exactOrContained = findMatchingSection(sections, ra, dec, fovArcsec);
+  if (exactOrContained) return exactOrContained;
+  const ready = sections.filter((s) => s.status === 'ready');
+  for (const sec of ready) {
+    if (sectionsOverlap(ra, dec, fovArcsec, sec.ra, sec.dec, sec.fov_arcsec)) {
       return sec;
     }
   }
