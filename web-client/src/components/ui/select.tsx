@@ -13,8 +13,9 @@ const sizeStyles = {
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
   ({ className, sizeVariant = 'default', children, ...props }, ref) => {
+    const isFullWidth = className?.includes('w-full');
     return (
-      <div className="relative inline-flex items-center">
+      <div className={cn('relative inline-flex items-center', isFullWidth && 'w-full')}>
         <select
           ref={ref}
           className={cn(

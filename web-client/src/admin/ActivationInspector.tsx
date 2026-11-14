@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { useAdminTelemetry, PROBE_TARGETS, ADMIN_LAYERS, AdminLayerName } from './hooks/useAdminTelemetry';
+import { Button, Badge, Select } from '../components/ui';
+import { cn } from '../lib/utils';
 
 /**
  * Tab 2: Parameter Updates & Activation Inspector (/admin/internals)
@@ -258,53 +260,56 @@ export const ActivationInspector: React.FC = () => {
   }, [currentFrame, selectedLayer]);
 
   return (
-    <div className="flex flex-col h-full bg-[#080A0F] text-[#E6ECF2] p-4 gap-4 overflow-y-auto">
+    <div className="flex flex-col h-full bg-background text-foreground p-4 gap-4 overflow-y-auto">
       {/* PINNED PROBE TARGET CONTROLLER */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded border border-[#1E2530] bg-[#0F131A] p-3 shadow-md">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-sm border border-border bg-card p-3 shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#38BDF8]">
-            PINNED PROBE TARGET:
+          <span className="text-xs font-semibold text-foreground">
+            Pinned probe target:
           </span>
-          <select
+          <Select
+            sizeVariant="sm"
             value={selectedProbeTarget}
             onChange={(e) => setSelectedProbeTarget(e.target.value)}
-            className="rounded border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] focus:border-[#38BDF8] focus:outline-none"
+            className="min-w-[320px]"
           >
             {PROBE_TARGETS.map((t) => (
               <option key={t.name} value={t.name}>
                 {t.name} — {t.type} (RA {t.ra.toFixed(4)}°, Dec {t.dec.toFixed(4)}°)
               </option>
             ))}
-          </select>
+          </Select>
         </div>
-        <div className="flex items-center gap-2 text-xs text-[#94A3B8]">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          <span>Diagnostic Probe evaluated every epoch</span>
-          <span className="font-mono text-[#38BDF8]">Epoch {activeEpoch} / {totalEpochs}</span>
+          <span>Diagnostic probe evaluated every epoch</span>
+          <Badge variant="sky" className="font-mono text-[10px]">
+            Epoch {activeEpoch} / {totalEpochs}
+          </Badge>
         </div>
       </div>
 
       {/* DUAL PANEL: Left 50% 3D Ridgelines, Right 50% Activations & Grad-CAM */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-[460px]">
         {/* LEFT PANEL: Sequential 3D Weight Histograms */}
-        <div className="flex flex-col rounded border border-[#1E2530] bg-[#0F131A] p-4 shadow-md">
-          <div className="flex flex-wrap items-center justify-between border-b border-[#1E2530] pb-2 mb-3 gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#38BDF8]">
-              Sequential 3D Weight Histograms
+        <div className="flex flex-col rounded-sm border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between border-b border-border pb-2 mb-3 gap-2">
+            <span className="text-xs font-semibold text-foreground">
+              Sequential 3D weight histograms
             </span>
             <div className="flex items-center gap-2">
-              <label className="text-[11px] text-[#94A3B8]">Layer:</label>
-              <select
+              <label className="text-[11px] text-muted-foreground">Layer:</label>
+              <Select
+                sizeVariant="sm"
                 value={selectedLayer}
                 onChange={(e) => setSelectedLayer(e.target.value as AdminLayerName)}
-                className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-0.5 text-xs text-[#E6ECF2] focus:border-[#38BDF8] focus:outline-none"
               >
                 {ADMIN_LAYERS.map((l) => (
                   <option key={l} value={l}>
                     {l}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -312,70 +317,70 @@ export const ActivationInspector: React.FC = () => {
           <div className="relative flex-1 min-h-[280px] w-full">
             <canvas
               ref={ridgelineCanvasRef}
-              className="absolute inset-0 h-full w-full rounded border border-[#1E2530]"
+              className="absolute inset-0 h-full w-full rounded-sm border border-border"
             />
           </div>
 
           {/* Layer Statistics Footer (SPECIFICATION.md §6.4.3) */}
-          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 border-t border-[#1E2530] pt-3 text-xs">
-            <div className="rounded bg-[#151B24] p-2 text-center">
-              <div className="text-[10px] text-[#94A3B8]">Dead Neuron Metric</div>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 border-t border-border pt-3 text-xs">
+            <div className="rounded-sm bg-secondary/50 p-2 text-center border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Dead neuron metric</div>
               <div className="text-sm font-mono font-bold text-amber-400">
                 {layerStats.dead_neuron_pct}%
               </div>
-              <div className="text-[9px] text-[#64748B]">|w| &lt; 1e-4</div>
+              <div className="text-[9px] text-muted-foreground">|w| &lt; 1e-4</div>
             </div>
 
-            <div className="rounded bg-[#151B24] p-2 text-center">
-              <div className="text-[10px] text-[#94A3B8]">Layer Mean</div>
-              <div className="text-sm font-mono font-bold text-[#E6ECF2]">
+            <div className="rounded-sm bg-secondary/50 p-2 text-center border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Layer mean</div>
+              <div className="text-sm font-mono font-bold text-foreground">
                 {layerStats.mean > 0 ? `+${layerStats.mean}` : layerStats.mean}
               </div>
-              <div className="text-[9px] text-[#64748B]">Weight centroid</div>
+              <div className="text-[9px] text-muted-foreground">Weight centroid</div>
             </div>
 
-            <div className="rounded bg-[#151B24] p-2 text-center">
-              <div className="text-[10px] text-[#94A3B8]">Standard Dev</div>
-              <div className="text-sm font-mono font-bold text-[#38BDF8]">
+            <div className="rounded-sm bg-secondary/50 p-2 text-center border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Standard deviation</div>
+              <div className="text-sm font-mono font-bold text-primary">
                 {layerStats.std}
               </div>
-              <div className="text-[9px] text-[#64748B]">Variance spread</div>
+              <div className="text-[9px] text-muted-foreground">Variance spread</div>
             </div>
 
-            <div className="rounded bg-[#151B24] p-2 text-center">
-              <div className="text-[10px] text-[#94A3B8]">Layer Grad Norm</div>
+            <div className="rounded-sm bg-secondary/50 p-2 text-center border border-border/50">
+              <div className="text-[10px] text-muted-foreground">Layer gradient norm</div>
               <div className="text-sm font-mono font-bold text-emerald-400">
                 {layerStats.grad_norm}
               </div>
-              <div className="text-[9px] text-[#64748B]">Backprop step</div>
+              <div className="text-[9px] text-muted-foreground">Backprop step</div>
             </div>
           </div>
         </div>
 
         {/* RIGHT PANEL: Live Activation Heatmaps & Grad-CAM */}
-        <div className="flex flex-col rounded border border-[#1E2530] bg-[#0F131A] p-4 shadow-md">
-          <div className="flex items-center justify-between border-b border-[#1E2530] pb-2 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#38BDF8]">
-              Forward Activations & Grad-CAM Saliency
+        <div className="flex flex-col rounded-sm border border-border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between border-b border-border pb-2 mb-3">
+            <span className="text-xs font-semibold text-foreground">
+              Forward activations & Grad-CAM saliency
             </span>
-            <span className="text-[10px] text-[#94A3B8] font-mono">
-              WISE 0855 (Moving Dipole)
-            </span>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              WISE 0855 (Moving dipole)
+            </Badge>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
             {/* Left Col: Forward Feature Maps */}
             <div className="flex flex-col gap-2">
-              <div className="text-xs font-medium text-[#94A3B8]">
+              <div className="text-xs font-medium text-foreground">
                 {selectedLayer === 'Conv1_Spatial_Stem'
-                  ? 'Layer 1: Point Source Centroids'
+                  ? 'Layer 1: Point source centroids'
                   : selectedLayer === 'Conv2_Temporal_Residual'
-                  ? 'Layer 2: Temporal Subtraction Filter'
-                  : 'Layer 3: Bottleneck Representations'}
+                  ? 'Layer 2: Temporal subtraction filter'
+                  : 'Layer 3: Bottleneck representations'}
               </div>
-              <p className="text-[10px] text-[#64748B]">
+              <p className="text-[10px] text-muted-foreground">
                 {selectedLayer.includes('Residual')
-                  ? 'Static background stars zeroed out; positive/negative dipole lobes amplified!'
+                  ? 'Static background stars zeroed out; positive/negative dipole lobes amplified.'
                   : 'Point sources extracted and high-frequency noise suppressed.'}
               </p>
 
@@ -383,23 +388,25 @@ export const ActivationInspector: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 mt-2">
                 {[0, 1, 2, 3].map((ch) => {
                   const channelGrid = featureMaps[ch] || [];
+                  const isActive = activeChannel === ch;
                   return (
                     <div
                       key={ch}
                       onClick={() => setActiveChannel(ch)}
-                      className={`cursor-pointer rounded border p-1.5 transition ${
-                        activeChannel === ch
-                          ? 'border-[#38BDF8] bg-[#38BDF8]/10'
-                          : 'border-[#1E2530] bg-[#151B24] hover:border-[#64748B]'
-                      }`}
+                      className={cn(
+                        'cursor-pointer rounded-sm border p-1.5 transition-colors',
+                        isActive
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-secondary/40 hover:border-muted-foreground/50'
+                      )}
                     >
-                      <div className="flex items-center justify-between text-[10px] text-[#94A3B8] mb-1">
+                      <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
                         <span>Map {ch}</span>
-                        {activeChannel === ch && (
-                          <span className="text-[#38BDF8] font-mono text-[9px]">ACTIVE</span>
+                        {isActive && (
+                          <span className="text-primary font-mono text-[9px]">ACTIVE</span>
                         )}
                       </div>
-                      <div className="aspect-square w-full grid grid-cols-16 gap-0 bg-[#080A0F] rounded overflow-hidden">
+                      <div className="aspect-square w-full grid grid-cols-16 gap-0 bg-background rounded-xs overflow-hidden border border-border/50">
                         {channelGrid.map((row, r) =>
                           row.map((val, c) => {
                             const intensity = Math.max(0, Math.min(1, Math.abs(val)));
@@ -424,22 +431,22 @@ export const ActivationInspector: React.FC = () => {
 
             {/* Right Col: Layer 3 + Grad-CAM Saliency Overlay */}
             <div className="flex flex-col items-center justify-center gap-2">
-              <div className="text-xs font-medium text-[#94A3B8] text-center">
-                Layer 3 + Grad-CAM Saliency Overlay
+              <div className="text-xs font-medium text-foreground text-center">
+                Layer 3 + Grad-CAM saliency overlay
               </div>
-              <p className="text-[10px] text-[#64748B] text-center max-w-[240px]">
-                Confirms network focuses on moving brown dwarf and does not latch onto edge noise!
+              <p className="text-[10px] text-muted-foreground text-center max-w-[240px]">
+                Confirms network focuses on moving brown dwarf without latching onto edge noise.
               </p>
 
-              <div className="relative rounded border border-[#1E2530] bg-[#080A0F] p-2 shadow-inner">
+              <div className="relative rounded-sm border border-border bg-background p-2 shadow-inner">
                 <canvas
                   ref={gradCamCanvasRef}
-                  className="rounded w-[220px] h-[220px]"
+                  className="rounded-xs w-[220px] h-[220px]"
                 />
               </div>
 
               {/* Mathematical Formulation Tooltip */}
-              <div className="rounded bg-[#151B24] p-2 text-center text-[10px] text-[#94A3B8] font-mono border border-[#1E2530] w-full max-w-[260px]">
+              <div className="rounded-sm bg-secondary/60 p-2 text-center text-[10px] text-muted-foreground font-mono border border-border w-full max-w-[260px]">
                 α_k^c = (1/Z) Σ_ij (∂y^c / ∂A_ij^k)<br />
                 L_Grad-CAM = ReLU(Σ_k α_k^c A^k)
               </div>
