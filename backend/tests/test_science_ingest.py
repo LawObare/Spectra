@@ -94,3 +94,63 @@ async def test_fetch_cutout_from_irsa_parses_mef():
         res = await ingest.fetch_cutout_from_irsa("https://example/cut", 1.0, 2.0, 0.01)
     assert "hdu1_image" in res and "hdu4_zodi" in res and "hdu6_wave_tab" in res
     assert res["metadata"]["wcs"] == "TAN/SIP"
+
+
+def test_parse_sia2_votable_ivoa_table():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <VOTABLE xmlns="http://www.ivoa.net/xml/VOTable/v1.3">
+      <RESOURCE><TABLE>
+        <FIELD name="obs_id"/>
+        <FIELD name="energy_bandpassname"/>
+        <FIELD name="t_min"/>
+        <FIELD name="access_url"/>
+        <FIELD name="s_region"/>
+        <DATA><TABLEDATA>
+          <TR>
+            <TD>2025W35_1A_0432_4</TD>
+            <TD>SPHEREx-D1</TD>
+            <TD>60810.25</TD>
+            <TD>https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/test.fits</TD>
+            <TD>POLYGON ICRS 269.4 4.7</TD>
+          </TR>
+        </TABLEDATA></DATA>
+      </TABLE></RESOURCE>
+    </VOTABLE>"""
+    res = ingest._parse_sia2_votable(xml, "spherex_qr2")
+    assert res["exposure_ids"] == ["2025W35_1A_0432_4"]
+    assert res["detector_ids"] == ["D1"]
+    assert res["mjds"] == [60810.25]
+    assert res["access_urls"] == ["https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/test.fits"]
+
+
+def test_parse_irsa_mef_cutout_real_fits():
+    import io
+
+    import numpy as np
+    from astropy.io import fits
+
+    primary = fits.PrimaryHDU()
+    hdu1 = fits.ImageHDU(data=np.ones((8, 8), dtype=np.float32) * 3.5, name="IMAGE")
+    hdu1.header["CRPIX1A"] = -100.0
+    hdu1.header["CRPIX2A"] = -200.0
+    hdu2 = fits.ImageHDU(data=np.zeros((8, 8), dtype=np.uint32), name="FLAGS")
+    hdu3 = fits.ImageHDU(data=np.ones((8, 8), dtype=np.float32) * 0.04, name="VARIANCE")
+    hdu4 = fits.ImageHDU(data=np.ones((8, 8), dtype=np.float32) * 0.12, name="ZODI")
+    hdul = fits.HDUList([primary, hdu1, hdu2, hdu3, hdu4])
+    buf = io.BytesIO()
+    hdul.writeto(buf)
+
+    parsed = ingest._parse_irsa_mef_cutout(buf.getvalue(), "spherex_qr2")
+    assert parsed["hdu1_image"] is not None
+    assert parsed["hdu1_image"].shape == (8, 8)
+    assert float(parsed["hdu1_image"][0, 0]) == pytest.approx(3.5)
+    assert float(parsed["hdu3_variance"][0, 0]) == pytest.approx(0.04)
+    assert float(parsed["hdu4_zodi"][0, 0]) == pytest.approx(0.12)
+    assert parsed["metadata"]["LTV1"] == pytest.approx(-101.0)
+    assert parsed["metadata"]["LTV2"] == pytest.approx(-201.0)
+
+
+def test_survey_passes_from_config_loads_json():
+    passes = ingest.survey_passes_from_config()
+    assert "pass_01" in passes
+    assert passes["pass_01"]["mjd_start"] > 60780.0

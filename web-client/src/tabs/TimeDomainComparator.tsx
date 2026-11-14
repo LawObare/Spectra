@@ -23,32 +23,49 @@ import { MANDATORY_BENCHMARKS } from '../components/GlobalCommandHeader';
  *   - Triage classification form linking to Tab 5 Discussions
  */
 
-// Discrete survey passes derived from SPHEREx mission ephemeris (SPECIFICATION.md §6.1.7 Item 4)
+// Discrete survey passes derived from IRSA SIA2 exposure MJD clustering (backend/config/survey_passes.json)
 interface SurveyPass {
   passIndex: number;
   label: string;
   mjd: number;
+  mjdRange: [number, number];
   dateStr: string;
   rollAngleDeg: number;
 }
 
 const DISCRETE_SURVEY_PASSES: SurveyPass[] = [
-  { passIndex: 0, label: 'Pass 1', mjd: 60810, dateStr: '2025-05-15', rollAngleDeg: 12.4 },
-  { passIndex: 1, label: 'Pass 2', mjd: 60995, dateStr: '2025-11-16', rollAngleDeg: 34.8 },
-  { passIndex: 2, label: 'Pass 3', mjd: 61178, dateStr: '2026-05-18', rollAngleDeg: 58.2 },
-  { passIndex: 3, label: 'Pass 4', mjd: 61360, dateStr: '2026-11-16', rollAngleDeg: 81.6 },
+  { passIndex: 0, label: 'Pass 1', mjd: 60810.4, mjdRange: [60789.9, 61053.4], dateStr: '2025-05-15', rollAngleDeg: 12.4 },
+  { passIndex: 1, label: 'Pass 2', mjd: 60995.2, mjdRange: [61091.7, 61237.9], dateStr: '2025-11-16', rollAngleDeg: 34.8 },
+  { passIndex: 2, label: 'Pass 3', mjd: 61178.6, mjdRange: [61178.6, 61360.2], dateStr: '2026-05-18', rollAngleDeg: 58.2 },
 ];
 
 const BANDS = [
   { id: 'D1', name: 'D1 (0.9 µm)', wavelengthUm: 0.93, resPower: 41 },
-  { id: 'D2', name: 'D2 (1.3 µm)', wavelengthUm: 1.37, resPower: 41 },
-  { id: 'D3', name: 'D3 (2.0 µm)', wavelengthUm: 2.02, resPower: 41 },
-  { id: 'D4', name: 'D4 (3.1 µm)', wavelengthUm: 3.12, resPower: 35 },
+  { id: 'D2', name: 'D2 (1.3 µm)', wavelengthUm: 1.37, resPower: 45 },
+  { id: 'D3', name: 'D3 (2.0 µm)', wavelengthUm: 2.02, resPower: 57 },
+  { id: 'D4', name: 'D4 (3.1 µm)', wavelengthUm: 3.12, resPower: 80 },
   { id: 'D5', name: 'D5 (4.1 µm)', wavelengthUm: 4.12, resPower: 110 },
   { id: 'D6', name: 'D6 (4.7 µm)', wavelengthUm: 4.71, resPower: 130 },
 ];
 
-const CANVAS_PIXEL_DIM = 128; // Standard 128x128 cutout stamp
+// Deterministic Mulberry32 + Box-Muller Gaussian PRNG (replaces linear modulo lattice pattern)
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function sampleBoxMullerGaussian(rng: () => number, sigma: number): number {
+  const u1 = Math.max(1e-7, rng());
+  const u2 = rng();
+  return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2) * sigma;
+}
+
+const CANVAS_PIXEL_DIM = 29; // Standard 29x29 cutout stamp (~180" FoV at 6.2"/px)
 
 export interface TimeDomainComparatorProps {
   onOpenCatalog?: () => void;
@@ -189,16 +206,22 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         nextBenchmark.ra,
         nextBenchmark.dec,
         nextBenchmark.name,
-        '[NASA Benchmark (Pre-cached)]'
+        '[Benchmark Model (Simulated)]'
       );
     }
   };
 
-  // 1. Identify active benchmark if coordinates match
+  // 1. Identify active benchmark if coordinates match (Epoch 2025.5 or J2000 / WISE 2010.5 discovery epoch)
   const activeBenchmark = useMemo(() => {
-    return MANDATORY_BENCHMARKS.find(
+    const direct = MANDATORY_BENCHMARKS.find(
       (b) => Math.abs(b.ra - urlRa) < 0.05 && Math.abs(b.dec - urlDec) < 0.05
     );
+    if (direct) return direct;
+    // Also match WISE 0855 at WISE discovery (2010.5: 133.7862, -7.2443) or J2000 (133.7951, -7.2452)
+    if (Math.abs(133.79 - urlRa) < 0.07 && Math.abs(-7.244 - urlDec) < 0.05) {
+      return MANDATORY_BENCHMARKS.find((b) => b.id === 'wise0855');
+    }
+    return undefined;
   }, [urlRa, urlDec]);
 
   // Synchronize renderMode with URL
@@ -217,24 +240,32 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     return () => clearInterval(interval);
   }, [isPlaying, activeEpochIndex, playbackSpeedMs, setEpochIndex]);
 
-  // 3. Generate synthetic calibrated Float32 science tensors per epoch and band
+  // 3. Offline procedural fallback tensor generator (used only when .f32 / live IRSA cutout is unavailable)
   const scienceTensors = useMemo(() => {
     const epochsCount = DISCRETE_SURVEY_PASSES.length;
     const bandsCount = BANDS.length;
     const totalPixels = CANVAS_PIXEL_DIM * CANVAS_PIXEL_DIM;
 
-    // Allocate tensors [epochs, bands]
     const fluxData: Float32Array[][] = [];
     const varData: Float32Array[][] = [];
     const flagsData: Uint32Array[][] = [];
+    const nExpData: Uint16Array[][] = [];
 
-    const centerPx = CANVAS_PIXEL_DIM / 2;
+    const centerPx = (CANVAS_PIXEL_DIM - 1) / 2;
     const pixelScale = 6.2; // arcsec/pixel
+    const zodiBgPerBand = [0.028, 0.032, 0.030, 0.055, 0.125, 0.210];
+    const rng = mulberry32(Math.abs(Math.round(urlRa * 1000 + urlDec * 1000)) || 1337);
+
+    // FWHM = 1.2 px (~7.44" at 6.2"/px) => sigma = FWHM / (2 * sqrt(2 * ln 2)) = 1.2 / 2.35482 ≈ 0.51 px
+    const fwhmPx = 1.2;
+    const sigmaPx = fwhmPx / 2.35482;
+    const twoSigmaSq = 2 * sigmaPx * sigmaPx;
 
     for (let e = 0; e < epochsCount; e++) {
       fluxData[e] = [];
       varData[e] = [];
       flagsData[e] = [];
+      nExpData[e] = [];
 
       const epochMjd = DISCRETE_SURVEY_PASSES[e].mjd;
       const deltaYears = (epochMjd - DISCRETE_SURVEY_PASSES[0].mjd) / 365.25;
@@ -243,191 +274,250 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         const fluxPlane = new Float32Array(totalPixels);
         const varPlane = new Float32Array(totalPixels);
         const flagsPlane = new Uint32Array(totalPixels);
+        const nExpPlane = new Uint16Array(totalPixels);
 
-        // Baseline noise parameters
-        const baseNoise = 0.4 + b * 0.1;
-        const varianceVal = baseNoise * baseNoise;
+        const baseNoise = 0.35 + b * 0.08;
+        const baseVar = baseNoise * baseNoise;
+        const noiseSigma = 0.015 + b * 0.004;
+        const zodiBg = zodiBgPerBand[b] || 0.04;
 
-        // Target-specific kinematics and spectrophotometry
         let targetX = centerPx;
         let targetY = centerPx;
-        let peakFlux = 12.0;
+        let peakFlux = 8.0;
         let isUndetected = false;
         let isSaturated = false;
+        let passExposures = 18;
 
         if (activeBenchmark?.id === 'barnard') {
-          // Moves +10.39"/yr North (along +Y in North-Up TAN) -> ~1.68 px/yr
-          targetY = centerPx - (10.39 * deltaYears) / pixelScale;
-          peakFlux = b <= 2 ? 65.0 : 25.0; // Extremely bright in NIR
+          targetY = centerPx + (10.39 * deltaYears) / pixelScale;
+          peakFlux = [25.0, 32.0, 20.0, 12.0, 7.0, 4.5][b] || 12.0;
           if (b <= 1) isSaturated = true;
+          passExposures = [24, 23, 18, 25, 22, 18][b] || 20;
         } else if (activeBenchmark?.id === 'wise0855') {
-          // Moves 8.15"/yr West (along -X in North-Up TAN) -> ~1.31 px/yr
           targetX = centerPx - (8.15 * deltaYears) / pixelScale;
-          // Undetectable in D1-D3; detected in D5/D6
           if (b <= 2) {
             isUndetected = true;
-            peakFlux = 0.02; // Below detection threshold
+            peakFlux = 0.02;
           } else {
-            peakFlux = b === 4 ? 14.8 : 8.5; // Strong peak in D5
+            peakFlux = b >= 4 ? 1.85 : 0.45;
           }
+          passExposures = [22, 33, 24, 22, 33, 22][b] || 22;
         } else if (activeBenchmark?.id === 'eps_indi_b') {
-          // Moves 4.68"/yr SE (0.76 px/yr) -> dx=+0.64 px/yr, dy=-0.40 px/yr
-          targetX = centerPx + (3.96 * deltaYears) / pixelScale;
-          targetY = centerPx - (-2.54 * deltaYears) / pixelScale;
-          peakFlux = 18.0;
+          targetX = centerPx + (3.98 * deltaYears) / pixelScale;
+          targetY = centerPx + (-2.47 * deltaYears) / pixelScale;
+          peakFlux = [6.5, 4.2, 3.8, 5.0, 7.2, 5.8][b] || 5.5;
+          passExposures = [26, 64, 52, 25, 51, 48][b] || 30;
         } else if (activeBenchmark?.id === 'rw_aur') {
-          // Stationary flashing monopole: optical dimming in D1 across epochs
-          targetX = centerPx;
-          targetY = centerPx;
-          if (b === 0) {
-            // Dims from 18.0 down to 4.2 MJy/sr (>1.5 mag dimming)
-            peakFlux = [18.0, 11.2, 5.1, 4.2][e] || 10.0;
-          } else {
-            peakFlux = 16.0; // Steady thermal IR dust in D4/D5
-          }
+          const dimming = e === 0 ? 1.0 : 0.24;
+          peakFlux = ([18.0, 16.5, 14.0, 12.5, 11.0, 9.5][b] || 12.0) * dimming;
+          passExposures = 19;
         } else if (activeBenchmark?.id === 'r_dra') {
-          // Stationary pulsating monopole: 245d cycle non-simultaneous flux
-          targetX = centerPx;
-          targetY = centerPx;
-          const phase = (epochMjd - 60810) / 245;
-          peakFlux = 10.0 + 8.0 * Math.sin(phase * 2 * Math.PI);
+          const cycle = [1.0, 0.22, 0.88][e] || 0.6;
+          peakFlux = ([12.0, 15.0, 17.5, 14.0, 11.5, 9.0][b] || 12.0) * cycle;
+          passExposures = [69, 76, 50, 67, 75, 46][b] || 55;
         }
-
-        // Fill background and convolve target with 2D Gaussian PSF
-        const sigmaPx = 1.0; // ~6.2" FWHM
-        const twoSigmaSq = 2 * sigmaPx * sigmaPx;
 
         for (let y = 0; y < CANVAS_PIXEL_DIM; y++) {
           for (let x = 0; x < CANVAS_PIXEL_DIM; x++) {
             const idx = y * CANVAS_PIXEL_DIM + x;
-            varPlane[idx] = varianceVal;
 
-            // Border reference pixels (outer 4 rows/cols) -> Bit 5 REFERENCE
-            if (x < 4 || x >= CANVAS_PIXEL_DIM - 4 || y < 4 || y >= CANVAS_PIXEL_DIM - 4) {
+            // Outer border reference pixels -> Bit 5 REFERENCE
+            if (x === 0 || x === CANVAS_PIXEL_DIM - 1 || y === 0 || y === CANVAS_PIXEL_DIM - 1) {
               flagsPlane[idx] |= 32;
             }
 
-            // Pseudo-random background Gaussian noise
-            const randSeed = (x * 12345 + y * 67891 + e * 4321 + b * 987) % 1000;
-            const noise = (randSeed / 500 - 1.0) * baseNoise;
-
-            if (isUndetected) {
-              fluxPlane[idx] = Math.max(0, noise);
-              continue;
-            }
-
+            // Box-Muller Gaussian sky + read noise (free of modulo lattice stripes)
+            const gaussNoise = sampleBoxMullerGaussian(rng, noiseSigma);
             const dx = x - targetX;
             const dy = y - targetY;
             const distSq = dx * dx + dy * dy;
-            const psfFlux = peakFlux * Math.exp(-distSq / twoSigmaSq);
+            const psfFlux = isUndetected ? 0.0 : peakFlux * Math.exp(-distSq / twoSigmaSq);
+            const flux = zodiBg + psfFlux + gaussNoise;
 
-            fluxPlane[idx] = Math.max(0, psfFlux + noise);
+            fluxPlane[idx] = flux;
+            // Spatially varying variance: read/zodi variance + Poisson photon shot noise
+            const flatJitter = 1.0 + 0.05 * Math.sin(0.41 * x + 0.29 * y);
+            varPlane[idx] = Math.max(
+              0.005,
+              (baseVar * flatJitter) / Math.max(1, Math.floor(passExposures / 6)) +
+                0.018 * Math.max(0, flux)
+            );
+            nExpPlane[idx] = isUndetected ? 0 : passExposures;
 
-            // Flag saturation if applicable (Bit 1: OVERFLOW)
-            if (isSaturated && distSq < 4.0) {
+            if (!isUndetected && isSaturated && distSq < 0.8) {
               flagsPlane[idx] |= 2;
             }
           }
         }
 
-        // Add rare transient cosmic ray hit (Bit 0: TRANSIENT) in non-zero epochs
-        if (e === 1 && b === 2) {
-          const glitchIdx = 42 * CANVAS_PIXEL_DIM + 88;
-          fluxPlane[glitchIdx] = 45.0;
-          flagsPlane[glitchIdx] |= 1;
-        }
-
         fluxData[e][b] = fluxPlane;
         varData[e][b] = varPlane;
         flagsData[e][b] = flagsPlane;
+        nExpData[e][b] = nExpPlane;
       }
     }
 
-    return { fluxData, varData, flagsData };
-  }, [activeBenchmark]);
+    return { fluxData, varData, flagsData, nExpData, isSimulated: true };
+  }, [activeBenchmark, urlRa, urlDec]);
 
-  // Load real pre-cached Float32 binary tensor for NASA Benchmark targets if available
+  // Load binary tensor from pre-cached .f32 bundle OR live backend /api/cutout pipeline
   const [loadedTensor, setLoadedTensor] = useState<{
     fluxData: Float32Array[][];
     varData: Float32Array[][];
     flagsData: Uint32Array[][];
+    nExpData: Uint16Array[][];
     width: number;
     height: number;
     epochs: number;
+    isSimulated: boolean;
+    sourceBadge: string;
+    mjdRanges?: number[][];
+    exposureIds?: string[][] | string[];
   } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (!activeBenchmark) {
-      setLoadedTensor(null);
-      return;
-    }
 
-    const fetchBenchmarkTensor = async () => {
+    const parseBinaryTensorBuffer = (buf: ArrayBuffer) => {
+      if (buf.byteLength < 4) return null;
+      const dv = new DataView(buf);
+      const hdrLen = dv.getUint32(0, true);
+      if (buf.byteLength < 4 + hdrLen) return null;
+
+      const hdrStr = new TextDecoder().decode(new Uint8Array(buf, 4, hdrLen));
+      const hdr = JSON.parse(hdrStr);
+      if (hdr.compression && hdr.compression !== 'none') return null;
+
+      const [epochs, bands, h, w] = hdr.shape;
+      const planePixels = h * w;
+      const totalPixels = epochs * bands * planePixels;
+
+      const fluxOffset = 4 + hdrLen;
+      const varOffset = fluxOffset + totalPixels * 4;
+      const flagsOffset = varOffset + totalPixels * 4;
+      const nExpOffset = flagsOffset + totalPixels * 4;
+
+      if (buf.byteLength < flagsOffset + totalPixels * 4) return null;
+
+      const allFlux = new Float32Array(buf.slice(fluxOffset, fluxOffset + totalPixels * 4));
+      const allVar = new Float32Array(buf.slice(varOffset, varOffset + totalPixels * 4));
+      const allFlags = new Uint32Array(buf.slice(flagsOffset, flagsOffset + totalPixels * 4));
+      const hasNExp = buf.byteLength >= nExpOffset + totalPixels * 2;
+      const allNExp = hasNExp
+        ? new Uint16Array(buf.slice(nExpOffset, nExpOffset + totalPixels * 2))
+        : new Uint16Array(totalPixels).fill(1);
+
+      const fluxData: Float32Array[][] = [];
+      const varData: Float32Array[][] = [];
+      const flagsData: Uint32Array[][] = [];
+      const nExpData: Uint16Array[][] = [];
+
+      for (let e = 0; e < epochs; e++) {
+        fluxData[e] = [];
+        varData[e] = [];
+        flagsData[e] = [];
+        nExpData[e] = [];
+        for (let b = 0; b < bands; b++) {
+          const startIdx = (e * bands + b) * planePixels;
+          fluxData[e][b] = allFlux.subarray(startIdx, startIdx + planePixels);
+          varData[e][b] = allVar.subarray(startIdx, startIdx + planePixels);
+          flagsData[e][b] = allFlags.subarray(startIdx, startIdx + planePixels);
+          nExpData[e][b] = allNExp.subarray(startIdx, startIdx + planePixels);
+        }
+      }
+
+      const isSim = hdr.is_simulated !== false;
+      const badge = isSim
+        ? activeBenchmark
+          ? '[Benchmark Model (Simulated)]'
+          : '[Simulated Fallback (Offline)]'
+        : hdr.source_badge || '[IRSA Live (spherex_qr2)]';
+
+      return {
+        fluxData,
+        varData,
+        flagsData,
+        nExpData,
+        width: w,
+        height: h,
+        epochs,
+        isSimulated: isSim,
+        sourceBadge: badge,
+        mjdRanges: hdr.mjd_ranges,
+        exposureIds: hdr.exposure_ids,
+      };
+    };
+
+    const loadCutoutTensor = async () => {
+      // 1. Try pre-cached static bundle for benchmark targets
+      if (activeBenchmark) {
+        try {
+          const res = await fetch(`/benchmarks/${activeBenchmark.id}.f32`);
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            const parsed = parseBinaryTensorBuffer(buf);
+            if (!cancelled && parsed) {
+              setLoadedTensor(parsed);
+              useTelemetryStore.setState({ sourceBadge: parsed.sourceBadge });
+              return;
+            }
+          }
+        } catch {
+          // Proceed to backend cutout API
+        }
+      }
+
+      // 2. Query backend cutout pipeline (POST /api/cutout -> GET /api/cutout/{task_id}/tensor)
       try {
-        const res = await fetch(`/benchmarks/${activeBenchmark.id}.f32`);
-        if (!res.ok) return;
-        const buf = await res.arrayBuffer();
-        if (cancelled || buf.byteLength < 4) return;
-
-        const dv = new DataView(buf);
-        const hdrLen = dv.getUint32(0, true);
-        if (buf.byteLength < 4 + hdrLen) return;
-
-        const hdrStr = new TextDecoder().decode(new Uint8Array(buf, 4, hdrLen));
-        const hdr = JSON.parse(hdrStr);
-        const [epochs, bands, h, w] = hdr.shape;
-        const planePixels = h * w;
-        const totalPixels = epochs * bands * planePixels;
-
-        const fluxOffset = 4 + hdrLen;
-        const varOffset = fluxOffset + totalPixels * 4;
-        const flagsOffset = varOffset + totalPixels * 4;
-
-        if (buf.byteLength < flagsOffset + totalPixels * 4) return;
-
-        const allFlux = new Float32Array(buf, fluxOffset, totalPixels);
-        const allVar = new Float32Array(buf, varOffset, totalPixels);
-        const allFlags = new Uint32Array(buf, flagsOffset, totalPixels);
-
-        const fluxData: Float32Array[][] = [];
-        const varData: Float32Array[][] = [];
-        const flagsData: Uint32Array[][] = [];
-
-        for (let e = 0; e < epochs; e++) {
-          fluxData[e] = [];
-          varData[e] = [];
-          flagsData[e] = [];
-          for (let b = 0; b < bands; b++) {
-            const startIdx = (e * bands + b) * planePixels;
-            fluxData[e][b] = allFlux.subarray(startIdx, startIdx + planePixels);
-            varData[e][b] = allVar.subarray(startIdx, startIdx + planePixels);
-            flagsData[e][b] = allFlags.subarray(startIdx, startIdx + planePixels);
+        const postRes = await fetch('/api/cutout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ra: urlRa,
+            dec: urlDec,
+            fov_arcsec: Math.round(urlFov || 180),
+            adaptive_window: true,
+          }),
+        });
+        if (postRes.ok) {
+          const { task_id } = await postRes.json();
+          for (let attempt = 0; attempt < 15 && !cancelled; attempt++) {
+            await new Promise((r) => setTimeout(r, 150));
+            const tensorRes = await fetch(`/api/cutout/${task_id}/tensor`);
+            if (tensorRes.status === 200) {
+              const buf = await tensorRes.arrayBuffer();
+              const parsed = parseBinaryTensorBuffer(buf);
+              if (!cancelled && parsed) {
+                setLoadedTensor(parsed);
+                useTelemetryStore.setState({ sourceBadge: parsed.sourceBadge });
+                return;
+              }
+              break;
+            }
           }
         }
+      } catch {
+        // Offline fallback
+      }
 
-        if (!cancelled) {
-          setLoadedTensor({
-            fluxData,
-            varData,
-            flagsData,
-            width: w,
-            height: h,
-            epochs,
-          });
-        }
-      } catch (e) {
-        console.warn('Fallback to procedural simulation for benchmark:', e);
+      if (!cancelled) {
+        setLoadedTensor(null);
+        useTelemetryStore.setState({
+          sourceBadge: activeBenchmark
+            ? '[Benchmark Model (Simulated)]'
+            : '[Simulated Fallback (Offline)]',
+        });
       }
     };
 
-    fetchBenchmarkTensor();
+    loadCutoutTensor();
     return () => {
       cancelled = true;
     };
-  }, [activeBenchmark]);
+  }, [activeBenchmark, urlRa, urlDec, urlFov]);
 
   const activeTensors = loadedTensor || scienceTensors;
+  const isSimulatedDisplay = loadedTensor ? loadedTensor.isSimulated : true;
   const currentWidth = loadedTensor ? loadedTensor.width : CANVAS_PIXEL_DIM;
   const currentHeight = loadedTensor ? loadedTensor.height : CANVAS_PIXEL_DIM;
   const totalEpochsCount = loadedTensor ? loadedTensor.epochs : DISCRETE_SURVEY_PASSES.length;
@@ -668,6 +758,21 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               onPixelClick={handlePixelClick}
               className="h-full w-full"
             />
+
+            {/* Persistent Canvas Watermark when displaying Simulated / Calibrated Model Data */}
+            {isSimulatedDisplay && (
+              <div
+                data-testid="simulated-canvas-watermark"
+                className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 flex items-center justify-between rounded-lg border border-amber-500/40 bg-black/85 px-3 py-1.5 font-mono text-[10px] text-amber-300 shadow-lg backdrop-blur-sm"
+              >
+                <span className="font-semibold tracking-wider uppercase">
+                  SIMULATED DATA — CALIBRATED MODEL (NOT LIVE TELESCOPE PIXELS)
+                </span>
+                <span className="text-neutral-400">
+                  {activeBenchmark ? `Ephemeris: ${activeBenchmark.name}` : 'Offline Fallback'}
+                </span>
+              </div>
+            )}
 
             {/* NASA Eyes Corner Target Reticle [ ] tracking active target */}
             {benchmarkReticle && (
@@ -959,10 +1064,16 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                   >
                     <td className="p-2 font-sans text-neutral-300 font-medium">
                       {pass.label}
-                      <span className="block text-[8px] font-mono text-neutral-500">MJD {pass.mjd}</span>
+                      <span className="block text-[8px] font-mono text-neutral-500">
+                        MJD {pass.mjdRange[0].toFixed(0)}–{pass.mjdRange[1].toFixed(0)}
+                      </span>
                     </td>
                     {BANDS.map((band, bIdx) => {
-                      const isWiseUndetected = activeBenchmark?.id === 'wise0855' && bIdx <= 2;
+                      const epIdx = pIdx % totalEpochsCount;
+                      const centerIdx = Math.floor((currentHeight * currentWidth) / 2);
+                      const nExpCount = activeTensors.nExpData?.[epIdx]?.[bIdx]?.[centerIdx] ?? 18;
+                      const isWiseUndetected =
+                        (activeBenchmark?.id === 'wise0855' && bIdx <= 2) || nExpCount === 0;
                       const isSelected = activeEpochIndex === pIdx && activeBandIndex === bIdx;
                       return (
                         <td
@@ -981,10 +1092,10 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                           title={
                             isWiseUndetected
                               ? 'Below detection depth (>17 mag in NIR; detected in D5/D6)'
-                              : `${band.id} (4 exposures co-added)`
+                              : `${band.id} (${nExpCount} wavelength-matched exposures co-added, R=${band.resPower})`
                           }
                         >
-                          {isWiseUndetected ? 'Undet.' : '4x'}
+                          {isWiseUndetected ? 'Undet.' : `${nExpCount}x`}
                         </td>
                       );
                     })}
