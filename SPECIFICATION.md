@@ -1,6 +1,6 @@
 # Spectra (SPHEREx Spectral Explorers)
 ## Exhaustive Engineering Architecture, Scientific Pipeline & Systems Specification
-**Document Version:** 2.4.0-PROD  
+**Document Version:** 2.5.0-PROD  
 **Target Mission:** NASA SPHEREx (Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer)  
 **Primary Archive:** NASA/IPAC Infrared Science Archive (IRSA) — SPHEREx Quick Release 3 (QR3 / DOI: 10.26131/IRSA662)  
 **System Repository:** `Panoptic-Beta` / `Spectra`
@@ -173,7 +173,7 @@ flowchart TD
     subgraph SupabaseTier["Supabase Managed Cloud / Local Infrastructure"]
         SupaDB[("PostgreSQL 16 Relational Engine")]
         PGVector["pgvector: 102-Band Spectral Cosine Similarity (<=>)"]
-        SupaAuth["Supabase Auth (Admin JWT & Role Issuer)"]
+        SupaRLS["Supabase RLS & Edge API Gateway"]
         SupaRealtime["Supabase Realtime (Discussion WebSocket Broadcast)"]
         SupaStorage["Supabase Storage (Cutout S3 Pre-Render Cache)"]
     end
@@ -713,7 +713,6 @@ The root router (`react-router-dom` v6) partitions the frontend into two complet
 // src/App.tsx
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import ProtectedAdminRoute from './components/auth/ProtectedAdminRoute';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NuqsAdapter } from 'nuqs/adapters/react';
 
@@ -726,6 +725,7 @@ const queryClient = new QueryClient({
   },
 });
 
+// Lazy-loaded route chunks (Zero-Auth Route Isolation)
 const PublicExplorerPortal = lazy(() => import('./portals/PublicExplorerPortal'));
 const AdminMissionControl = lazy(() => import('./portals/AdminMissionControl'));
 
@@ -738,9 +738,8 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/explore" replace />} />
               <Route path="/explore/*" element={<PublicExplorerPortal />} />
-              <Route element={<ProtectedAdminRoute />}>
-                <Route path="/admin/*" element={<AdminMissionControl />} />
-              </Route>
+              {/* Zero-Auth Route-Isolated Admin Suite (No blocking login screens) */}
+              <Route path="/admin/*" element={<AdminMissionControl />} />
               <Route path="*" element={<Navigate to="/explore" replace />} />
             </Routes>
           </Suspense>
@@ -768,13 +767,15 @@ export interface EphemerisTarget {
 
 export interface CutoutFrame {
   epochIndex: number;
-  epochLabel: string;
+  epochLabel: string;            // e.g. 'Survey Pass 1 (2025-05)'
   mjd: number;
-  bands: Record<string, string>; // base64 encoded PNGs for D1..D6
-  rawMatrixD4: number[][];       // Unstretched Float32 matrices for client-side diff
-  rawMatrixD5: number[][];
-  rawUnrectifiedB64?: string;    // Raw sensor array (LVF smile un-warped preview)
-  flagCoords: [number, number][]; // [y, x] flagged pixel locations
+  binaryFloat32Buffer?: ArrayBuffer; // Raw IEEE-754 32-bit float tensor (D1..D6, full scientific dynamic range)
+  bandsFallback: Record<string, string>; // Base64 encoded PNGs for D1..D6 (fallback preview only)
+  rawMatrixD4?: number[][];      // Unstretched Float32 array slice (D4: 2.42-3.82 um)
+  rawMatrixD5?: number[][];      // Unstretched Float32 array slice (D5: 3.82-4.42 um)
+  rawUnrectifiedB64?: string;    // Raw unrectified detector array (LVF smile un-warped preview)
+  flagCoords: [number, number][]; // [y, x] flagged pixel locations from HDU 2 (FLAGS)
+  sourceType: 'benchmark' | 'irsa_live' | 'synthetic_injection'; // Data honesty attribution badge
 }
 
 export interface SpectralChannel {
@@ -946,6 +947,36 @@ In Tab 2 (Time-Domain Comparator), standard 8-bit Base64 PNGs introduce severe b
 4. **Interactive Hover-Crosshair HUD:**
    Hovering over any pixel dynamically probes the underlying `Float32Array` and WCS coordinates, rendering a live HUD in JetBrains Mono font:
    `[RA: 133.737400° | Dec: -7.240380° | Flux: 14.82 MJy/sr | SNR: 28.4 | FLAGS: 0x000 (CLEAN)]`.
+
+#### 6.1.7 Hardware Compatibility, Science Realism & Data Honesty
+1. **WebGL2 Float Texture Feature Detection:**
+   On mobile browsers and some Safari/iOS hardware, `gl.R32F` textures cannot use linear interpolation without the `OES_texture_float_linear` extension. The rendering engine executes a startup capability probe:
+   ```typescript
+   const ext = gl.getExtension('OES_texture_float_linear');
+   if (!ext) {
+       // Graceful fallback to nearest-neighbor filtering or half-float textures (gl.R16F)
+       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+   }
+   ```
+2. **Sub-Pixel Motion Centroid Pin (Epsilon Indi B):**
+   At SPHEREx's $6.2''/	ext{pixel}$ scale, targets with proper motions $<6.2''/	ext{yr}$ (such as Epsilon Indi B at $4.8''/	ext{yr} = 0.77\,	ext{px/yr}$) shift less than a single pixel between annual passes. To make this motion unmistakably visible without exaggerating raw pixels:
+   - Tab 2 overlays a high-precision 2D sub-pixel centroid reticle derived from Gaia DR3 coordinates propagated to each epoch.
+   - The HUD displays: `[Motion: 0.77 px/yr | Deblended Centroid Displacement: Δx=-0.61 px, Δy=-0.47 px]`.
+3. **Faint Target Inverse-Variance Coaddition (WISE 0855):**
+   WISE 0855 is extremely faint ($>17\,	ext{mag}_{	ext{AB}}$) in Bands D1–D3 ($0.75-2.42\,\mu	ext{m}$) and peaks in Band D5 ($4.1-4.4\,\mu	ext{m}$). Tab 2 provides an inverse-variance weighted co-add mode:
+   $$I_{	ext{coadd}}(x, y) = rac{\sum_k I_k(x, y) / \sigma_k^2(x, y)}{\sum_k 1 / \sigma_k^2(x, y)}$$
+   which suppresses background photon noise and reveals the cold brown dwarf even in single-exposure passes.
+4. **Discrete Survey Epoch Stepping:**
+   Instead of misleading 60 FPS animation that implies continuous planetary video, the temporal scrubber snaps to real discrete survey epochs:
+   `[Pass 1: 2025-05-14]` $ightarrow$ `[Pass 2: 2025-11-18]` $ightarrow$ `[Pass 3: 2026-05-20]`.
+5. **Data Honesty Attribution Badges:**
+   Every displayed frame and spectrum features a prominent, institutional source badge in the header:
+   - `[NASA Benchmark Target: Pre-Cached Ground Truth]` (for Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis)
+   - `[IRSA Live S3 Pipeline: SPHEREx QR3]` (for arbitrary user-queried sky coordinates)
+   - `[Synthetic Source Injection Mode]` (when evaluating artificial test sources `synth_a` / `synth_b`)
+6. **Plotly Bundle Optimization:**
+   To keep initial bundle size $<500\,	ext{KB}$, the full 3.5 MB `plotly.js` library is strictly excluded. Admin 3D boundary and internal modules dynamically import `plotly.js-gl3d-dist` (<400 KB) only when Tab 3 or Tab 2 of `/admin` is mounted.
 
 #### 6.1.6 Live Discussion Synchronization via Supabase Realtime Channels
 Inside Tab 5 (Observation Discussions), the discussion feed avoids polling by subscribing directly to PostgreSQL row events:
@@ -1121,7 +1152,7 @@ The core motion detection and visual blinking engine, combining *WiseView* image
    - Canvas resolution matches cutout tensor dimensions ($N \times N$, typically $128 \times 128$ or $256 \times 256$ pixels), scaled to display container using CSS `image-rendering: pixelated`.
    - Frame 0 Loop Reset Indicator: When `activeEpochIndex === 0`, draws an inner dashed cyan border ($1\,\text{px}$, `#00f0ff`) inside the canvas boundary so the human eye immediately recognizes loop reset vs continuous linear motion.
 2. **Client-Side Pixel Arithmetic Engine:**
-   - **Blink Mode:** Renders `ImageBitmap` created from the pre-stretched Base64 PNGs for the active epoch.
+   - **Blink Mode:** Renders via WebGL2 `Float32Array` texture shader with GPU Asinh stretch (fallback to `ImageBitmap` created from pre-stretched preview if WebGL2 float textures are unavailable on client device).
    - **Pairwise Difference Mode ($t_N - t_0$):**
      Executes in floating-point space using the raw matrices (`rawMatrixD4` or `rawMatrixD5`):
      $$\Delta I(x, y) = I_{t_N}(x, y) - I_{t_0}(x, y)$$
@@ -1303,7 +1334,7 @@ The citizen-science collaboration hub modeled on Zooniverse Talk, connecting raw
 ---
 
 ### 6.4 Hidden Admin Portal (`/admin` — Mission Control & ML Observability Suite)
-Accessible strictly via direct URL navigation and protected by Bearer token authentication (`ProtectedAdminRoute`). To eliminate dashboard clutter and give each complex data science tool dedicated screen real estate, the administrative portal is partitioned into a **5-Tab Mission Control Architecture**:
+Accessible via direct URL navigation (`/admin`) with clean route-level isolation from public explorer routes (Zero-Auth model, no login barrier for judges). To eliminate dashboard clutter and give each complex data science tool dedicated screen real estate, the administrative portal is partitioned into a **5-Tab Mission Control Architecture**:
 
 ```
 +-------------------------------------------------------------------------------------------------------------------------------+
@@ -1495,7 +1526,7 @@ Format: Compact NDJSON Frame (<24 KB per epoch)
 [Go API Gateway Telemetry Hub (goroutine)]
 Route: GET /api/admin/ws/training
          |
-         +--> Validates Admin Bearer Token
+         +--> Checks origin and WebSocket parameters (Zero-Auth Route Isolation)
          +--> Maintains Ring Buffer of last 100 epochs (prevents state loss on tab switch)
          +--> Broadcasts frames to active admin WebSocket clients
          |
@@ -1687,68 +1718,147 @@ R Draconis       RA: 16h 32m 40.25s (248.167690 deg)     Separation to NEP is 8.
 
 ---
 
-## 8. Implementation Roadmap & Execution Sequence
+## 8. Implementation Roadmap & Execution Sequence (Phase-Gated by Priority)
+
+To guarantee maximum engineering velocity and eliminate the risk of a partially working demo, implementation is structured as **four sequential, priority-gated phases**. On completion of each phase, the system reaches a 100% self-contained, testable, and demonstrable milestone before work begins on the next phase.
 
 ```mermaid
 gantt
-    title Spectra Full Production Implementation Roadmap
+    title Spectra Sequential Priority-Gated Implementation Roadmap
     dateFormat  YYYY-MM-DD
-    section Phase 1: Python Science Worker
-    SIA2 pyvo Client & S3 Byte-Range Ingestion   :active, p1_1, 2026-11-01, 2d
-    WCS North-Up Tangent Reprojection (reproject):p1_2, after p1_1, 3d
-    HDU 6 WCS-WAVE Bilinear Extraction Engine    :p1_3, after p1_2, 2d
-    DoG Dipole Filter & Synthetic Source Engine  :p1_4, after p1_3, 3d
-    Benchmark Target Seeding (5 Targets)         :p1_5, after p1_4, 2d
-    section Phase 2: Supabase & Go API Gateway
-    Supabase CLI Setup & pgvector DDL Migrations :p2_1, after p1_2, 2d
-    sqlc Code Generation & pgx/v5 Pool Setup     :p2_2, after p2_1, 2d
-    Chi Router & sync.RWMutex LRU In-Memory Cache:p2_3, after p2_2, 2d
-    Supabase Auth JWT Middleware & WebSockets    :p2_4, after p2_3, 2d
-    Bayesian Consensus & Shannon Queue Engine    :p2_5, after p2_4, 2d
-    section Phase 3: Public UI Workspaces
-    Global Navigation Header & State Store       :p3_1, after p2_1, 2d
-    Tab 1: Aladin Lite v3 WebGL2 Globe & Dive    :p3_2, after p3_1, 3d
-    Tab 2: Canvas Blinker & Raw vs Rectified Mode:p3_3, after p3_2, 3d
-    Tab 3: 102-Band Spectrophotometer & Redshift :p3_4, after p3_3, 3d
-    Tab 4: Molecular Studio, Brush & Column Dens :p3_5, after p3_4, 2d
-    Tab 5: Observation Discussions (Talk Forum)  :p3_6, after p3_5, 2d
-    section Phase 4: Hidden Admin & Final Verification
-    Protected /admin Console & ML Telemetry      :p4_1, after p3_6, 3d
-    Hard-Negative Mining & 4 Dataset Exporters   :p4_2, after p4_1, 2d
-    Full End-to-End Scientific Validation        :p4_3, after p4_2, 2d
+    section Phase 1 (P0: Core NASA Challenge)
+    uv Python Worker (IRSA SIA2 + Float32 Stream)  :active, p1_1, 2026-11-01, 2d
+    Go Gateway (Chi + LRU + Observer Session)     :p1_2, after p1_1, 2d
+    Supabase DB + seed_benchmarks.sql (5 Targets) :p1_3, after p1_2, 1d
+    Tab 1: Aladin Lite v3 WebGL2 Dome & Dive      :p1_4, after p1_3, 2d
+    Tab 2: WebGL2 Blinker + Diff + Asinh Shader   :p1_5, after p1_4, 3d
+    Milestone Gate 1 Verification (100% Core Done):milestone, m1, after p1_5, 0d
+    section Phase 2 (P1: Science Differentiator)
+    WCS-WAVE Hyperspectral 102-Band Extractor     :p2_1, after m1, 2d
+    Supabase pgvector 102-Band Cosine Index       :p2_2, after p2_1, 2d
+    Tab 3: 102-Band Spectrophotometer (uPlot 60fps):p2_3, after p2_2, 2d
+    Tab 5: Discussion Forum + Supabase Realtime   :p2_4, after p2_3, 2d
+    Milestone Gate 2 Verification (Science Done)  :milestone, m2, after p2_4, 0d
+    section Phase 3 (P2: Institutional Polish)
+    Tab 4: Molecular & Ice Studio + Column Dens   :p3_1, after m2, 2d
+    Admin Console Tabs 1-5 (Dynamics, 3D Meshgrid):p3_2, after p3_1, 3d
+    PyTorch Training WebSocket + Pre-Trained WS   :p3_3, after p3_2, 2d
+    Milestone Gate 3 Verification (Flagship Done) :milestone, m3, after p3_3, 0d
+    section Phase 4 (Production Hardening & Deploy)
+    Hugging Face Space Dockerfile + start.sh      :p4_1, after m3, 1d
+    Cloudflare Pages Deploy + Fallback JSON Cache :p4_2, after p4_1, 1d
+    cron-job.org Keep-Alive + 24h Code Freeze     :p4_3, after p4_2, 1d
+    Milestone Gate 4 Verification (Live & Offline):milestone, m4, after p4_3, 0d
 ```
 
-### Phase 1: Python Science Microservice (`astro-worker`)
-1. Scaffold `astro-worker/` directory with `spherex_pipeline.py`, `main.py`, and `requirements.txt`.
-2. Implement IRSA SIAv2 querying (`pyvo`) and S3 byte-range section slicing (`astropy.io.fits` + `fsspec`).
-3. Build WCS North-Up reprojection module (`reproject_interp` for flux/variance; nearest-neighbor for bitmask flags).
-4. Implement HDU 6 (`WCS-WAVE`) lookup table evaluator for calibrated 102-channel extraction.
-5. Implement Difference-of-Gaussians dipole matched filter and synthetic source injection module (`synth_a` / `synth_b`).
-6. Write `seed_benchmarks.py` to pre-cache the 5 benchmark targets at their epoch 2025.5 propagated coordinates.
+---
 
-### Phase 2: Supabase Infrastructure & Go API Gateway (`api-gateway`)
-1. Initialize local Supabase stack via `supabase init` and `supabase start`, provisioning PostgreSQL 16 with `pgvector`.
-2. Apply `api-gateway/db/schema.sql` migrations creating `subjects` (with `vector(102)`), `classifications`, `volunteers`, `discussion_threads`, and `discussion_replies`.
-3. Configure `sqlc.yaml` and execute `sqlc generate` to produce type-safe Go structs and queries using `pgx/v5`.
-4. Initialize Chi router on port `:8080` with `sync.RWMutex` LRU cache proxying `/api/cutout` and `/api/spectrum` to `astro-worker:8001`.
-5. Implement Supabase Auth JWT verification middleware securing `/api/admin/*` and the PyTorch training WebSocket (`/api/admin/ws/training`).
-6. Build Bayesian consensus engine, Shannon entropy active-learning queue prioritizer, and 102-band spectral vector search.
+### Phase 1: Core NASA Challenge Foundation (P0 Priority — The Hackathon Core)
+**Objective:** Satisfy 100% of the NASA Space Apps challenge prompt. Enable an arbitrary user to enter any astronomical coordinate or target name and view an animated, multi-epoch blinking visualization, verified against the 5 NASA benchmark systems.
 
-### Phase 3: Public Explorer Portal (`web-client/src/portals/PublicExplorerPortal`)
-1. Scaffold React + Vite application with Zustand telemetry store and URL hash synchronization.
-2. Implement Global Command Header with sexagesimal regex parsing, CDS Sesame resolver, and 5 benchmark pills.
-3. Integrate Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx MOC, Gaia DR3, and 3-stage camera dive in Tab 1.
-4. Build HTML5 Canvas multi-epoch player with dual-cadence scrubbing, difference subtraction ($t_N - t_0$), Raw vs. Rectified toggle, and D1–D6 chemical mixer in Tab 2.
-5. Construct interactive 102-channel spectral plot with error bars, animated epoch playback, composite de-blending, automated photo-$z$ solver, and interactive redshift ($z$) ruler scrubber in Tab 3.
-6. Implement continuum-normalized optical depth view, molecular feature rulers, spatial brush, and column density integrator in Tab 4.
-7. Build 3-column discussion forum with embedded URL state snapshots and `[Submit & Open Discussion]` workflow in Tab 5.
+#### Deliverables & Sequential Steps:
+1. **Python Science Microservice (`astro-worker` via `uv`):**
+   - Initialize project with `uv init` and install dependencies: `fastapi`, `uvicorn`, `astropy`, `pyvo`, `reproject`, `numpy`, `scipy`.
+   - Implement IRSA SIAv2 client (`pyvo`) querying `https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr3&POS=circle+{ra}+{dec}+{radius}`.
+   - S3 byte-range section reader (`astropy.io.fits` + `fsspec`) slicing bounding boxes from `s3://nasa-irsa-spherex/qr3/` without downloading full 2040x2040 frames.
+   - WCS North-Up tangent plane reprojection engine (`reproject_interp` for flux/variance; nearest-neighbor for FLAGS bitmasks).
+   - Zero-copy binary Float32 tensor streamer endpoint: `GET /worker/cutout/binary` returning raw IEEE-754 multi-epoch arrays.
+2. **Go API Gateway & Cache (`api-gateway` via `air`):**
+   - Initialize Go module with Chi router listening on port `:8080`.
+   - Thread-safe `sync.RWMutex` in-memory LRU cache ($<15\,	ext{ms}$ response for repeated queries).
+   - Zero-Auth Observer Session Middleware parsing `X-Observer-ID` and `X-Observer-Callsign` headers.
+   - Proxy handler routing `/api/cutout` requests to `astro-worker:8001`.
+3. **Database Seeding (`seed_benchmarks.sql`):**
+   - Execute PostgreSQL schema migrations creating `subjects` and `observers`.
+   - Apply `seed_benchmarks.sql` pre-populating the 5 NASA targets (Barnard's Star, WISE 0855, Epsilon Indi B, RW Aurigae, R Draconis) at epoch 2025.5 propagated coordinates.
+4. **Public Frontend Workspaces (Tabs 1 & 2):**
+   - Scaffold React 18 + Vite 5 + TypeScript with `nuqs` (type-safe URL parameters: `tab`, `ra`, `dec`, `mode`, `preset`) and TanStack Query v5.
+   - Global Command Header with sexagesimal coordinate parsing, CDS Sesame resolver, 5 benchmark quick-loader pills, and `cmdk` command bar (`Ctrl+K`).
+   - **Tab 1 (Celestial Navigator):** Aladin Lite v3 WebGL2 3D celestial sphere (`SIN` projection) with SPHEREx MOC layer, Gaia DR3 vectors, target reticle, and 3-stage camera dive.
+   - **Tab 2 (Time-Domain Comparator):** WebGL2 multi-epoch player with Asinh stretch slider, pairwise difference subtraction ($t_N - t_0$), inverse-variance coaddition for faint WISE 0855, sub-pixel Gaia centroid pins for Epsilon Indi B ($0.77\,	ext{px/yr}$), discrete survey epoch stepping (`Pass 1: 2025-05`, `Pass 2: 2025-11`, `Pass 3: 2026-05`), and live hover crosshair HUD.
 
-### Phase 4: Hidden Admin Console & Verification (`web-client/src/portals/AdminMissionControl`)
-1. Construct token-guarded `/admin` route with `ProtectedAdminRoute` authentication guard.
-2. Build active-learning model convergence dashboard (loss curves, precision/recall, confusion matrices) and hard-negative mining inspector.
-3. Implement expert escalation queue with side-by-side raw FITS HDU 1–6 inspection and 1-click catalog promotion.
-4. Implement 1-click dataset exporter generating the 4 named community data products (Citizen Candidate Catalog, Ice Feature Atlas, Variability Alert List, Artifact Atlas) and PyTorch HDF5 training bundles.
-5. Execute end-to-end scientific validation across all 5 benchmark NASA targets.
+> [!IMPORTANT]
+> **Milestone Gate 1 Verification:** Run `task dev`. Verify that typing any coordinate or clicking any of the 5 benchmark pills immediately renders a smooth, de-warped time-domain blink comparison and difference image. At this point, the application is **100% shippable and fully satisfies the hackathon challenge prompt**.
+
+---
+
+### Phase 2: Scientific Differentiator & Community Intelligence (P1 Priority)
+**Objective:** Unlock SPHEREx's signature capability: 102-channel hyperspectral cubes and citizen science peer review.
+
+#### Deliverables & Sequential Steps:
+1. **Hyperspectral Extraction Pipeline (`astro-worker`):**
+   - Implement HDU 6 (`WCS-WAVE`) lookup table evaluator: bilinear interpolation over detector coordinates $(x_{	ext{det}}, y_{	ext{det}})$ to extract exact wavelength $\lambda_k$ and bandpass $\Delta\lambda_k$.
+   - Stepped exposure binning: inverse-variance weighted mean flux into the 102 standard SPHEREx wavelength channels ($0.75-5.00\,\mu	ext{m}$).
+   - Continuum baseline normalization ($3\sigma$-clipped Chebyshev polynomial).
+   - Python Pydantic models with automated OpenAPI 3.1 export to `api.d.ts` via `openapi-typescript`.
+2. **PostgreSQL `pgvector` Hyperspectral Indexing:**
+   - Add `spectrum_vector vector(102)` column and HNSW index (`vector_cosine_ops`) to `subjects`.
+   - Implement `sqlc` query `FindSimilarSpectra` utilizing cosine distance (`<=>`) executing in $<2\,	ext{ms}$.
+3. **Tab 3: Spectrophotometric Lab (`/explore?tab=spectrophotometer`):**
+   - Canvas `uPlot` chart rendering 102 calibrated flux channels with `VARIANCE` error bars at 60 FPS.
+   - Synchronized epoch-by-epoch spectral animation linked to active survey pass.
+   - Two-component composite spectral unmixing ($a \cdot T_1 + b \cdot T_2$) demonstrating de-blending of Epsilon Indi B into T1+T6 brown dwarfs.
+   - Automated galaxy photo-$z$ solver ($P(z)$, lookback time, Mpc distance) with interactive redshift slider ($z = 0.0 - 2.5$).
+4. **Tab 5: Observation Discussions & Community Consensus (`/explore?tab=discussions`):**
+   - 3-column scientific forum layout with channel filters (`#movers`, `#spectra`, `#ices`, `#artifacts`, `#confirmed`).
+   - Embedded interactive URL deep-link snapshots with inline dipole + spectrum preview and `[Load in Workbench]` action.
+   - Real-time live synchronization via Supabase Realtime `postgres_changes`.
+   - Go Bayesian consensus engine ($P(c|s)$), Shannon entropy uncertainty ranking ($H(s)$), and volunteer reliability calibration tracking ($w_u$).
+
+> [!IMPORTANT]
+> **Milestone Gate 2 Verification:** Verify that clicking any pixel in Tab 2 instantly updates the 102-channel spectrum in Tab 3, queries the 5 closest spectral templates via `pgvector`, and allows submitting a candidate directly to Tab 5 with instant live broadcast.
+
+---
+
+### Phase 3: Institutional Polish & Mission Control Suite (P2 Priority)
+**Objective:** Deliver an institutional-grade research platform with real-time machine learning observability and biogenic ice mapping.
+
+#### Deliverables & Sequential Steps:
+1. **Tab 4: Molecular & Ice Mapping Studio (`/explore?tab=ice_studio`):**
+   - Continuum-normalized transmission ($F/F_{	ext{cont}}$) and optical depth view ($	au_\lambda = -\ln(F/F_{	ext{cont}})$).
+   - Interactive laboratory molecular rulers: $	ext{H}_2	ext{O}$ ($3.05\,\mu	ext{m}$), $	ext{CH}_4$ ($3.32\,\mu	ext{m}$), $	ext{CO}_2$ ($4.27\,\mu	ext{m}$), $	ext{CO}$ ($4.67\,\mu	ext{m}$).
+   - Numerical column density integration ($N = rac{1}{A} \int 	au(
+u) d
+u$) in $	ext{cm}^{-2}$ with $	ext{CO}_2/	ext{H}_2	ext{O}$ abundance ratios.
+   - Spatial ice brush tool for regional nebulosity averaging and diffuse EBL foreground point-source masking.
+2. **Hidden Admin Mission Control (`/admin` 5-Tab Architecture):**
+   - Route-level isolation (`/admin/*`) with zero-auth entry and automatic `posted_from_admin = TRUE` badge tagging.
+   - **Tab 1 (`/admin/dynamics`):** Real-time scalar learning curves (train vs. validation loss, accuracy, gradient L2 norms) via `uPlot`.
+   - **Tab 2 (`/admin/internals`):** Sequential 3D ridgeline weight/bias histograms across training epochs and convolutional/spectral layer activations.
+   - **Tab 3 (`/admin/boundaries`):** Dynamic 3D decision boundary morphing over astrophysical feature space via `plotly.js-gl3d-dist` WebGL surfaces.
+   - **Tab 4 (`/admin/triage`):** Hard-negative disagreement queue ($|P_{	ext{AI}} - P_{	ext{Human}}|$) with raw FITS HDU 1–6 inspection.
+   - **Tab 5 (`/admin/exports`):** 1-click exporter generating the 4 official SPHEREx community data products (CSV, VOTable, JSON) and PyTorch HDF5 training bundles.
+3. **PyTorch Training WebSocket Pipeline (`/api/admin/ws/training`):**
+   - Python worker forward/backward hooks streaming compact NDJSON epoch frames over WebSocket to Go gateway.
+   - Go 100-frame ring buffer preserving telemetry across browser reconnects.
+   - Pre-computed diagnostic model weights for instant 60 FPS live demo playback.
+
+> [!IMPORTANT]
+> **Milestone Gate 3 Verification:** Verify that `/admin` renders all 5 mission control tabs, live WebSocket telemetry streams without dropped frames, and data product exports generate valid files.
+
+---
+
+### Phase 4: Production Deployment, Hardening & Compliance
+**Objective:** Ensure 100% reliable 24/7 cloud hosting at $0 cost alongside an offline-capable venue demo fallback.
+
+#### Deliverables & Sequential Steps:
+1. **Unified Backend Deployment (Hugging Face Spaces):**
+   - Multi-stage Dockerfile compiling Go gateway (`CGO_ENABLED=0`) and configuring Python 3.11 with `uv` and CPU-only PyTorch.
+   - Process supervisor `start.sh` running Go on public port `7860` and Python worker on internal `127.0.0.1:8001`.
+   - Dual-action `/api/health` keep-alive endpoint touching Go, Python, and Supabase PostgreSQL in a single ping.
+2. **Frontend Edge CDN (Cloudflare Pages):**
+   - Deploy `web-client` with environment variables: `VITE_API_BASE_URL`, `VITE_WS_BASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+   - Pre-seed `web-client/public/benchmarks/` with static `.json` and `.f32` fallback files for $<15\,	ext{ms}$ loading.
+3. **Database & Keep-Alive Automation:**
+   - Supabase Cloud setup with Session Pooler (port `5432`, IPv4 compatible) and strict Row Level Security (RLS) policies.
+   - Configure cron-job.org primary pinger (every 5 minutes) and GitHub Actions backup pinger (`heartbeat.yml` every 15 minutes).
+4. **Demo-Day Offline Mirror & Hackathon Compliance:**
+   - Configure local development stack via `task dev` on the demo laptop, fully pre-seeded with benchmark tensors for offline presentation if venue Wi-Fi fails.
+   - Enforce 24-hour pre-judging code freeze.
+   - Include persistent UI footer citations: NASA SPHEREx QR3 DOI (`10.26131/IRSA662`), IRSA IPAC, Gaia DR3, AllWISE, and GPL-3 open-source license.
+
+> [!IMPORTANT]
+> **Milestone Gate 4 Verification:** Run smoke test suite across both public Cloudflare URL and offline `localhost:5173`. Confirm all 5 benchmark targets load, live queries execute, and health pingers report 100% uptime.
 
 ---
 
@@ -1834,7 +1944,7 @@ To ensure 100% functionality even during network outages at the hackathon venue:
 | Service | Local Address / Port | Responsibility |
 |---|---|---|
 | **Vite Frontend Client** | `http://localhost:5173` | React 18 / Tailwind / Aladin Lite v3 / `nuqs` / TanStack Query |
-| **Go API Gateway** | `http://localhost:8080` | Chi Router, JWT Middleware, `sqlc` + `pgx/v5`, LRU Cache |
+| **Go API Gateway** | `http://localhost:8080` | Chi Router, Observer Session Middleware, `sqlc` + `pgx/v5`, LRU Cache |
 | **Python Science Worker** | `http://127.0.0.1:8001` | FastAPI, Astropy, PyVO, `reproject`, WCS-WAVE Evaluator |
 | **Supabase PostgreSQL** | `localhost:54322` | PostgreSQL 16 + `pgvector` + `cube` + `earthdistance` |
 | **Supabase Studio UI** | `http://localhost:54323` | Local Database Visual Table Editor & Query Runner |
