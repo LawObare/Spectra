@@ -109,8 +109,9 @@ class RealTimeTrainingInstrument:
         model.eval()
         self._active, self._act, self._grad = True, None, None
         try:
+            px = probe_x if probe_x.requires_grad else probe_x.detach().requires_grad_(True)
             with torch.enable_grad():
-                logits = model(probe_x)
+                logits = model(px)
                 prob = F.softmax(logits, dim=1)[0, class_idx].item()
                 model.zero_grad(set_to_none=True)
                 logits[0, class_idx].backward()
