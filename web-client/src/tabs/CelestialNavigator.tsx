@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { startTransition, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import A from 'aladin-lite';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
@@ -10,9 +10,13 @@ import {
 import { Button, Badge, Input, Select } from '../components/ui';
 import {
   DownloadingSection,
+  DownloadingSectionMeta,
+  InstalledSection,
   findMatchingSection,
   formatSectionBytes,
-  useSectionManager,
+  useDownloadingSections,
+  useDownloadingSummary,
+  useInstalledSectionState,
 } from '../lib/installedSections';
 
 // Deep Field Centers (Ecliptic Poles in J2000 coordinates, radius = 5.64 deg -> ~100 deg^2)
@@ -334,6 +338,127 @@ function generateSpherexExposuresForCoord(raDeg: number, decDeg: number): Sphere
   return exposures;
 }
 
+function mergeDownloadingSectionsWithLibrary(
+  downloadingSections: DownloadingSection[],
+  installedSections: InstalledSection[]
+): DownloadingSection[] {
+  const merged: DownloadingSection[] = [...downloadingSections];
+  installedSections.forEach((sec) => {
+    if (sec.status !== 'installing') return;
+    const alreadyTracked = merged.some(
+      (d) =>
+        (d.section_id && d.section_id === sec.section_id) ||
+        (Math.abs(d.ra - sec.ra) < 0.002 &&
+          Math.abs(d.dec - sec.dec) < 0.002 &&
+          Math.abs(d.fov_arcsec - sec.fov_arcsec) <= 1)
+    );
+    if (!alreadyTracked) {
+      merged.push({
+        key: sec.section_id,
+        section_id: sec.section_id,
+        task_id: sec.task_id || undefined,
+        label: sec.label,
+        ra: sec.ra,
+        dec: sec.dec,
+        fov_arcsec: sec.fov_arcsec,
+        progress: 0.15,
+        message: 'Downloading cutout section…',
+      });
+    }
+  });
+  return merged;
+}
+
+const MatchingDownloadStatusButton: React.FC<{
+  ra: number;
+  dec: number;
+  fovArcsec: number;
+  queueState?: 'queued' | 'installing';
+}> = React.memo(({ ra, dec, fovArcsec, queueState }) => {
+  const liveDownloads = useDownloadingSections();
+  const match = liveDownloads.find(
+    (d) =>
+      Math.abs(d.ra - ra) < 0.002 &&
+      Math.abs(d.dec - dec) < 0.002 &&
+      Math.abs(d.fov_arcsec - fovArcsec) <= 1
+  );
+  const resolvedQueueState = match?.queueState ?? queueState;
+  const pct = Math.round((match?.progress ?? 0.15) * 100);
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="xs"
+      disabled
+      className="flex-1 h-7 text-[11px] border-orange-500/50 bg-orange-500/15 text-orange-300"
+    >
+      {resolvedQueueState === 'queued'
+        ? 'Queued for Download'
+        : `Downloading (${pct}%)`}
+    </Button>
+  );
+});
+
+const ActiveDownloadsQueuePanel: React.FC<{
+  installedSections: InstalledSection[];
+  onCancelQueued: (key: string) => void;
+}> = React.memo(({ installedSections, onCancelQueued }) => {
+  const liveDownloads = useDownloadingSections();
+  const items = useMemo(
+    () => mergeDownloadingSectionsWithLibrary(liveDownloads, installedSections),
+    [liveDownloads, installedSections]
+  );
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      {items.map((dl) => {
+        const isQueued = dl.queueState === 'queued';
+        return (
+          <div
+            key={dl.key}
+            className="rounded border border-orange-500/50 bg-orange-500/10 px-2.5 py-1.5"
+          >
+            <div className="flex items-center justify-between gap-2 text-[10px] text-orange-300">
+              <span className="truncate font-medium">
+                {dl.label} · {Math.round(dl.fov_arcsec)}&quot;
+              </span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="font-mono tabular-nums">
+                  {isQueued ? 'Queued' : `${Math.round(dl.progress * 100)}%`}
+                </span>
+                {isQueued && (
+                  <button
+                    type="button"
+                    onClick={() => onCancelQueued(dl.key)}
+                    className="rounded px-1 text-orange-300/80 hover:bg-orange-500/20 hover:text-orange-100"
+                    title="Remove from install queue"
+                    aria-label={`Cancel queued section ${dl.label}`}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-0.5 truncate text-[9px] text-orange-200/80">
+              {dl.message}
+            </div>
+            <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-background">
+              <div
+                className={`h-full transition-[width] duration-150 ${isQueued ? 'bg-orange-400/50' : 'bg-orange-500'}`}
+                style={{
+                  width: isQueued
+                    ? '15%'
+                    : `${Math.max(5, Math.min(100, Math.round(dl.progress * 100)))}%`,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
 export const CelestialNavigator: React.FC = () => {
   const aladinContainerRef = useRef<HTMLDivElement>(null);
   const aladinInstanceRef = useRef<any>(null);
@@ -396,13 +521,13 @@ export const CelestialNavigator: React.FC = () => {
   const [coverageZones, setCoverageZones] = useState<Array<{ ra: number; dec: number; count: number }>>([]);
   const {
     installedSections,
-    downloadingSections,
     installError,
     refreshInstalledSections,
     startSectionInstall,
     cancelQueuedInstall,
     uninstallSectionById,
-  } = useSectionManager();
+  } = useInstalledSectionState();
+  const { downloadingMeta } = useDownloadingSummary();
   const [archiveStatus, setArchiveStatus] = useState<'idle' | 'loading' | 'ready' | 'partial' | 'empty' | 'error'>('idle');
   const [gaiaStatus, setGaiaStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
   const [skybotStatus, setSkybotStatus] = useState<'loading' | 'live' | 'cached_only' | 'unavailable'>('loading');
@@ -521,8 +646,8 @@ export const CelestialNavigator: React.FC = () => {
     [readyInstalledSections]
   );
 
-  const activeDownloadingSections = useMemo<DownloadingSection[]>(() => {
-    const merged: DownloadingSection[] = [...downloadingSections];
+  const activeDownloadingSections = useMemo<DownloadingSectionMeta[]>(() => {
+    const merged: DownloadingSectionMeta[] = [...downloadingMeta];
     installedSections.forEach((sec) => {
       if (sec.status !== 'installing') return;
       const alreadyTracked = merged.some(
@@ -541,13 +666,11 @@ export const CelestialNavigator: React.FC = () => {
           ra: sec.ra,
           dec: sec.dec,
           fov_arcsec: sec.fov_arcsec,
-          progress: 0.15,
-          message: 'Downloading cutout section…',
         });
       }
     });
     return merged;
-  }, [downloadingSections, installedSections]);
+  }, [downloadingMeta, installedSections]);
   const activeDownloadingSectionsRef = useRef(activeDownloadingSections);
   activeDownloadingSectionsRef.current = activeDownloadingSections;
   const downloadingSectionsGeometryKey = useMemo(
@@ -817,15 +940,17 @@ export const CelestialNavigator: React.FC = () => {
 
             if (posDebounceTimerRef.current) clearTimeout(posDebounceTimerRef.current);
             posDebounceTimerRef.current = setTimeout(() => {
-              setCoordinates(
-                normRa,
-                normDec,
-                `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
-                SIMULATED_PREVIEW_BADGE
-              );
-              setRa(normRa);
-              setDec(normDec);
-            }, 120);
+              startTransition(() => {
+                setCoordinates(
+                  normRa,
+                  normDec,
+                  `Field ${normRa.toFixed(4)}°, ${normDec >= 0 ? '+' : ''}${normDec.toFixed(4)}°`,
+                  SIMULATED_PREVIEW_BADGE
+                );
+                setRa(normRa);
+                setDec(normDec);
+              });
+            }, 250);
           }
         });
 
@@ -1462,6 +1587,8 @@ export const CelestialNavigator: React.FC = () => {
     }
   }, [showLvfFootprints, filteredArchiveExposures, filteredExposures]);
 
+  const isMatchingDownloading = Boolean(matchingDownloadingSection);
+
   // Synchronize Cutout Bounding Box Overlay
   useEffect(() => {
     const overlay = cutoutOverlayRef.current;
@@ -1472,15 +1599,15 @@ export const CelestialNavigator: React.FC = () => {
         const sizeDeg = fovArcsec / 3600;
         const corners = getFootprintCorners(ra, dec, sizeDeg, sizeDeg, 0);
         const poly = A.polygon(corners, {
-          color: matchingDownloadingSection ? '#F97316' : '#38BDF8',
-          lineWidth: matchingDownloadingSection ? 2.5 : 1.5,
+          color: isMatchingDownloading ? '#F97316' : '#38BDF8',
+          lineWidth: isMatchingDownloading ? 2.5 : 1.5,
         });
         overlay.add(poly);
       }
     } catch (e) {
       console.warn('Error updating cutout box overlay:', e);
     }
-  }, [showCutoutBox, fovArcsec, ra, dec, matchingDownloadingSection]);
+  }, [showCutoutBox, fovArcsec, ra, dec, isMatchingDownloading]);
 
   // Direct Zoom Preset Handler
   const applyZoom = useCallback((nextFovDeg: number) => {
@@ -1590,7 +1717,7 @@ export const CelestialNavigator: React.FC = () => {
                 className="inline-flex items-center gap-1 rounded border border-orange-500/50 bg-orange-500/15 px-2 py-0.5 font-mono text-[10px] text-orange-300"
                 title="Active section downloads remain highlighted in orange while you adjust FoV or pan"
               >
-                <span className="inline-block h-2 w-2 animate-pulse rounded-sm bg-orange-400" />
+                <span className="inline-block h-2 w-2 rounded-sm bg-orange-400" />
                 Downloading ({activeDownloadingSections.length})
               </span>
             )}
@@ -1774,14 +1901,14 @@ export const CelestialNavigator: React.FC = () => {
             </div>
           )}
 
-          <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 rounded-lg border border-neutral-800 bg-neutral-950/90 px-2.5 py-1 font-mono text-[9px] text-neutral-400 backdrop-blur shadow-sm">
+          <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 rounded-lg border border-neutral-800 bg-neutral-950/92 px-2.5 py-1 font-mono text-[9px] text-neutral-400 shadow-sm">
             <span>Gaia DR3: {gaiaStatus}</span>
             <span className="text-neutral-700">|</span>
             <span>SkyBot: {skybotStatus}</span>
           </div>
 
           {/* Top-Left Astrometric Compass / Status */}
-          <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-xl border border-neutral-800 bg-neutral-950/90 px-3 py-2 backdrop-blur shadow-sm">
+          <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-2.5 rounded-xl border border-neutral-800 bg-neutral-950/92 px-3 py-2 shadow-sm">
             <svg className="h-7 w-7 text-primary" viewBox="0 0 32 32" fill="none">
               <circle cx="16" cy="16" r="13" stroke="#262626" strokeWidth="1" />
               <path d="M16 5L16 20" stroke="#288BFF" strokeWidth="1.5" />
@@ -1813,7 +1940,7 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           {/* Bottom-Right Calibrated Angular Scale Bar */}
-          <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1 rounded-lg border border-neutral-800 bg-neutral-950/90 px-2.5 py-1.5 backdrop-blur shadow-sm">
+          <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1 rounded-lg border border-neutral-800 bg-neutral-950/92 px-2.5 py-1.5 shadow-sm">
             <span className="font-mono text-[10px] tabular-nums text-white">
               Scale: {scaleBar.label} (FoV {formatFieldFov(displayFovDeg)})
             </span>
@@ -1872,7 +1999,7 @@ export const CelestialNavigator: React.FC = () => {
       <aside
         onMouseDown={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        className="absolute right-3 top-12 z-30 flex max-h-[calc(100%-4rem)] w-[360px] xl:w-[410px] flex-col overflow-y-auto rounded-xl border border-border bg-card/95 backdrop-blur-md shadow-2xl"
+        className="absolute right-3 top-12 z-30 flex max-h-[calc(100%-4rem)] w-[360px] xl:w-[410px] flex-col overflow-y-auto rounded-xl border border-border bg-card shadow-2xl"
       >
         {/* 1. Target Position & Spatial Cutout Parameters */}
         <div className="border-b border-border p-3">
@@ -2010,17 +2137,12 @@ export const CelestialNavigator: React.FC = () => {
                   Installed ✓ · Remove
                 </Button>
               ) : matchingDownloadingSection ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="xs"
-                  disabled
-                  className="flex-1 h-7 text-[11px] border-orange-500/50 bg-orange-500/15 text-orange-300"
-                >
-                  {matchingDownloadingSection.queueState === 'queued'
-                    ? 'Queued for Download'
-                    : `Downloading (${Math.round(matchingDownloadingSection.progress * 100)}%)`}
-                </Button>
+                <MatchingDownloadStatusButton
+                  ra={ra}
+                  dec={dec}
+                  fovArcsec={fovArcsec}
+                  queueState={matchingDownloadingSection.queueState}
+                />
               ) : (
                 <Button
                   type="button"
@@ -2042,52 +2164,10 @@ export const CelestialNavigator: React.FC = () => {
             </div>
 
             {activeDownloadingSections.length > 0 && (
-              <div className="space-y-1.5">
-                {activeDownloadingSections.map((dl) => {
-                  const isQueued = dl.queueState === 'queued';
-                  return (
-                    <div
-                      key={dl.key}
-                      className="rounded border border-orange-500/50 bg-orange-500/10 px-2.5 py-1.5"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-[10px] text-orange-300">
-                        <span className="truncate font-medium">
-                          {dl.label} · {Math.round(dl.fov_arcsec)}&quot;
-                        </span>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <span className="font-mono tabular-nums">
-                            {isQueued ? 'Queued' : `${Math.round(dl.progress * 100)}%`}
-                          </span>
-                          {isQueued && (
-                            <button
-                              type="button"
-                              onClick={() => cancelQueuedInstall(dl.key)}
-                              className="rounded px-1 text-orange-300/80 hover:bg-orange-500/20 hover:text-orange-100"
-                              title="Remove from install queue"
-                              aria-label={`Cancel queued section ${dl.label}`}
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-0.5 truncate text-[9px] text-orange-200/80">
-                        {dl.message}
-                      </div>
-                      <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-background">
-                        <div
-                          className={`h-full transition-all duration-200 ${isQueued ? 'bg-orange-400/50' : 'bg-orange-500'}`}
-                          style={{
-                            width: isQueued
-                              ? '15%'
-                              : `${Math.max(5, Math.min(100, Math.round(dl.progress * 100)))}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <ActiveDownloadsQueuePanel
+                installedSections={installedSections}
+                onCancelQueued={cancelQueuedInstall}
+              />
             )}
 
             {installError && (
