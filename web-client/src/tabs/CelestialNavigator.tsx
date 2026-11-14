@@ -507,6 +507,19 @@ export const CelestialNavigator: React.FC = () => {
     () => installedSections.filter((s) => s.status === 'ready'),
     [installedSections]
   );
+  const readyInstalledSectionsRef = useRef(readyInstalledSections);
+  readyInstalledSectionsRef.current = readyInstalledSections;
+  const readySectionsGeometryKey = useMemo(
+    () =>
+      readyInstalledSections
+        .map(
+          (s) =>
+            `${s.section_id}:${s.ra.toFixed(5)}:${s.dec.toFixed(5)}:${Math.round(s.fov_arcsec)}`
+        )
+        .sort()
+        .join('|'),
+    [readyInstalledSections]
+  );
 
   const activeDownloadingSections = useMemo<DownloadingSection[]>(() => {
     const merged: DownloadingSection[] = [...downloadingSections];
@@ -535,6 +548,18 @@ export const CelestialNavigator: React.FC = () => {
     });
     return merged;
   }, [downloadingSections, installedSections]);
+  const activeDownloadingSectionsRef = useRef(activeDownloadingSections);
+  activeDownloadingSectionsRef.current = activeDownloadingSections;
+  const downloadingSectionsGeometryKey = useMemo(
+    () =>
+      activeDownloadingSections
+        .map(
+          (s) => `${s.key}:${s.ra.toFixed(5)}:${s.dec.toFixed(5)}:${Math.round(s.fov_arcsec)}`
+        )
+        .sort()
+        .join('|'),
+    [activeDownloadingSections]
+  );
 
   const matchedInstalledSection = useMemo(
     () => findMatchingSection(installedSections, ra, dec, fovArcsec),
@@ -984,7 +1009,7 @@ export const CelestialNavigator: React.FC = () => {
     cachedMocsRef.current = [];
     if (!showInstalledSections) return;
 
-    readyInstalledSections.forEach((region) => {
+    readyInstalledSectionsRef.current.forEach((region) => {
       if (typeof A.MOCFromPolygon !== 'function') return;
       const corners = getFootprintCorners(region.ra, region.dec, region.fov_arcsec / 3600, region.fov_arcsec / 3600, 0);
       try {
@@ -1003,7 +1028,7 @@ export const CelestialNavigator: React.FC = () => {
       cachedMocsRef.current.forEach((moc) => aladin.removeOverlay?.(moc));
       cachedMocsRef.current = [];
     };
-  }, [readyInstalledSections, aladinReady, showInstalledSections]);
+  }, [readySectionsGeometryKey, aladinReady, showInstalledSections]);
 
   // Keep downloading cutout sections highlighted in bright orange independently of FoV/pan changes
   useEffect(() => {
@@ -1021,7 +1046,7 @@ export const CelestialNavigator: React.FC = () => {
     downloadingMocsRef.current = [];
     overlay?.removeAll?.();
 
-    activeDownloadingSections.forEach((sec) => {
+    activeDownloadingSectionsRef.current.forEach((sec) => {
       const sizeDeg = Math.max(sec.fov_arcsec, 60) / 3600;
       const corners = getFootprintCorners(sec.ra, sec.dec, sizeDeg, sizeDeg, 0);
       if (typeof A.MOCFromPolygon === 'function') {
@@ -1064,7 +1089,7 @@ export const CelestialNavigator: React.FC = () => {
       downloadingMocsRef.current = [];
       overlay?.removeAll?.();
     };
-  }, [activeDownloadingSections, aladinReady]);
+  }, [downloadingSectionsGeometryKey, aladinReady]);
 
   // Query Gaia DR3 near the active field and render five-year proper-motion vectors.
   useEffect(() => {
