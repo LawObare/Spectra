@@ -390,9 +390,14 @@ function resolveInitialTarget(
   ra: number,
   dec: number
 ): IceTarget {
-  const bySection =
-    findMatchingSection(readySections as any, ra, dec) ||
-    readySections[0];
+  const exactMatch =
+    readySections.find(
+      (section) => Math.abs(section.ra - ra) < 1e-4 && Math.abs(section.dec - dec) < 1e-4
+    ) ||
+    readySections.find(
+      (section) => distanceArcsec(section.ra, section.dec, ra, dec) < 0.2
+    );
+  const bySection = exactMatch || findMatchingSection(readySections as any, ra, dec) || readySections[0];
   if (bySection) {
     const brownDwarf = isBrownDwarfTarget(bySection.label, bySection.ra, bySection.dec);
     return {
@@ -464,10 +469,18 @@ export const MolecularIceStudio: React.FC = () => {
       setSelectedSectionId('');
       return;
     }
-    const match = findMatchingSection(readyInstalledSections, ra, dec) || readyInstalledSections[0];
-    setSelectedSectionId((prev) =>
-      prev && readyInstalledSections.some((s) => s.section_id === prev) ? prev : match.section_id
-    );
+
+    const exactMatch =
+      readyInstalledSections.find(
+        (section) => Math.abs(section.ra - ra) < 1e-4 && Math.abs(section.dec - dec) < 1e-4
+      ) ||
+      readyInstalledSections.find(
+        (section) => distanceArcsec(section.ra, section.dec, ra, dec) < 0.2
+      );
+
+    const fallbackMatch = findMatchingSection(readyInstalledSections, ra, dec) || readyInstalledSections[0];
+    const nextSection = exactMatch || fallbackMatch;
+    setSelectedSectionId(nextSection ? nextSection.section_id : '');
   }, [readyInstalledSections, ra, dec]);
 
   const liveTargets = useMemo<IceTarget[]>(() => {
@@ -489,17 +502,38 @@ export const MolecularIceStudio: React.FC = () => {
     return base;
   }, [activeTargetName, ra, dec]);
 
+  useEffect(() => {
+    const exactLiveTarget =
+      liveTargets.find(
+        (target) => Math.abs(target.ra - ra) < 1e-4 && Math.abs(target.dec - dec) < 1e-4
+      ) ||
+      liveTargets.find((target) => distanceArcsec(target.ra, target.dec, ra, dec) < 0.2);
+
+    if (exactLiveTarget) {
+      setSelectedLiveId((prev) => (prev === exactLiveTarget.id ? prev : exactLiveTarget.id));
+    }
+  }, [liveTargets, ra, dec]);
+
   const selectedTarget = useMemo<IceTarget>(() => {
     if (sourceMode === 'installed') {
       const activeSec =
         readyInstalledSections.find((s) => s.section_id === selectedSectionId) ||
+        readyInstalledSections.find(
+          (s) => Math.abs(s.ra - ra) < 1e-4 && Math.abs(s.dec - dec) < 1e-4
+        ) ||
         findMatchingSection(readyInstalledSections, ra, dec) ||
         readyInstalledSections[0];
       if (activeSec) {
         return resolveInitialTarget([activeSec], activeSec.label, activeSec.ra, activeSec.dec);
       }
     }
-    const picked = liveTargets.find((t) => t.id === selectedLiveId);
+    const picked =
+      liveTargets.find((t) => t.id === selectedLiveId) ||
+      liveTargets.find(
+        (t) => Math.abs(t.ra - ra) < 1e-4 && Math.abs(t.dec - dec) < 1e-4
+      ) ||
+      liveTargets.find((t) => distanceArcsec(t.ra, t.dec, ra, dec) < 0.2) ||
+      liveTargets[0];
     if (picked) return picked;
     return resolveInitialTarget(readyInstalledSections, activeTargetName, ra, dec);
   }, [sourceMode, readyInstalledSections, selectedSectionId, ra, dec, liveTargets, selectedLiveId, activeTargetName]);
