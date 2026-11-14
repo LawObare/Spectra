@@ -100,68 +100,6 @@ const CLASSIFICATION_SHORTCUTS: ClassificationShortcut[] = [
   },
 ];
 
-const INITIAL_THREADS: DiscussionThread[] = [
-  {
-    id: 'thr-wise0855-d5',
-    title: 'WISE 0855-0714: Clean 8.15"/yr westward motion in Band D5 (4.12 µm) with expected D1–D3 dropout',
-    authorHandle: 'Obs-7F3A',
-    isModerator: false,
-    timestampIso: '2026-11-04T08:14:00Z',
-    classification: 'moving_brown_dwarf',
-    confidencePct: 98,
-    ra: 133.73712,
-    dec: -7.24038,
-    fovArcsec: 120,
-    renderMode: 'difference',
-    targetName: 'WISE 0855-0714',
-    body: 'Wavelength-matched difference subtraction between Pass 1 (MJD 60810) and Pass 4 (MJD 61360) in Band D5 (R=110) isolates the dipole shift at Δα = -8.12"/yr, PA = 265°. Bands D1–D3 (<2.4 µm) show pure zodiacal background noise consistent with Teff ~ 250 K CH4/H2O atmospheric opacity.',
-    upvotes: 14,
-    replies: [
-      {
-        id: 'rep-1',
-        authorHandle: 'SPHEREx-CalTeam',
-        isModerator: true,
-        timestampIso: '2026-11-04T08:42:00Z',
-        body: 'Verified against QR2 astrometric solution. Note that Pass 3 had a 1.4° LVF roll offset; the pre-reprojection WCS-WAVE filter properly retained only exposures within the Δλ/λ <= 1/(2R) window.',
-      },
-    ],
-  },
-  {
-    id: 'thr-m42-ice',
-    title: 'Orion Trapezium (M42) sightline: Deep H2O (3.05 µm) and CO2 (4.27 µm) ice optical depth in D4/D5',
-    authorHandle: 'Obs-C91E',
-    isModerator: false,
-    timestampIso: '2026-11-04T09:05:00Z',
-    classification: 'interstellar_ice',
-    confidencePct: 92,
-    ra: 83.82208,
-    dec: -5.39111,
-    fovArcsec: 180,
-    renderMode: 'coadd',
-    targetName: 'Orion Nebula (M42 / Trapezium)',
-    body: 'Extracted 102-channel spectrum on embedded protostellar point source 14" NE of Theta1 Ori C. Laboratory Gerakines (1995) A-value integration yields N(H2O) = 2.4e18 cm^-2 and N(CO2)/N(H2O) = 0.19.',
-    upvotes: 9,
-    replies: [],
-  },
-  {
-    id: 'thr-rwaur-dim',
-    title: 'RW Aurigae A: >1.6 mag continuum dimming in Band D1 (0.93 µm) with stable D4/D5 thermal dust excess',
-    authorHandle: 'Obs-44B2',
-    isModerator: false,
-    timestampIso: '2026-11-04T10:19:00Z',
-    classification: 'circumstellar_disk',
-    confidencePct: 95,
-    ra: 76.95647,
-    dec: 30.4013,
-    fovArcsec: 120,
-    renderMode: 'blink',
-    targetName: 'RW Aurigae',
-    body: 'Stationary monopole centroid matches Gaia DR3 within 0.08 px. Forced 3x3 aperture photometry shows steep short-wavelength extinction event between MJD 60810 and MJD 61178 while 4.1 µm warm inner-disk emission remains constant.',
-    upvotes: 11,
-    replies: [],
-  },
-];
-
 // Web Crypto API identity generator (satisfies DESIGN.md §6)
 function ensureZeroAuthIdentity(): { observerId: string; observerKey: string; handle: string } {
   let obsId = localStorage.getItem('spx_observer_id');
@@ -215,8 +153,8 @@ export const ObservationDiscussions: React.FC = () => {
 
   const identity = useMemo(() => ensureZeroAuthIdentity(), []);
 
-  const { threads, setThreads, sseConnected } =
-    useRealtimeDiscussions<DiscussionThread>(INITIAL_THREADS);
+  const { threads, setThreads, sseConnected, isLoading, loadError } =
+    useRealtimeDiscussions<DiscussionThread>([]);
   const [scopeFilter, setScopeFilter] = useState<'ALL' | 'TARGET'>('ALL');
   const [classFilter, setClassFilter] = useState<string>('ALL');
   const [newTitle, setNewTitle] = useState<string>('');
@@ -226,6 +164,8 @@ export const ObservationDiscussions: React.FC = () => {
     useState<ClassificationShortcut | null>(null);
   const [newConfidence, setNewConfidence] = useState<number>(90);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const filteredThreads = useMemo(() => {
     return threads.filter((t) => {
@@ -243,39 +183,18 @@ export const ObservationDiscussions: React.FC = () => {
   // Submit new observation thread (attaches X-Observer-ID and X-Observer-Key per SPECIFICATION.md §3.3)
   const handleCreateThread = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newBody.trim()) return;
+    if (!newTitle.trim() || !newBody.trim() || isSubmitting) return;
 
+    setSubmitError(null);
+    setIsSubmitting(true);
     const hashtags = selectedShortcut ? [selectedShortcut.hashtag] : [];
     const taggedBody = hashtags.length > 0 && !newBody.includes(hashtags[0])
       ? `${newBody.trim()} ${hashtags[0]}`
       : newBody.trim();
-    const created: DiscussionThread = {
-      id: `thr-${Date.now()}`,
-      title: newTitle.trim(),
-      authorHandle: identity.handle,
-      isModerator: false,
-      timestampIso: new Date().toISOString(),
-      classification: newClass,
-      confidencePct: newConfidence,
-      ra,
-      dec,
-      fovArcsec,
-      renderMode,
-      targetName:
-        activeTargetName ||
-        `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`,
-      body: taggedBody,
-      upvotes: 1,
-      replies: [],
-      hashtags,
-      classVotes: selectedShortcut ? { [selectedShortcut.voteKey]: 1 } : {},
-    };
-
-    setThreads((prev) => [created, ...prev]);
-    setNewTitle('');
-    setNewBody('');
-    setSelectedShortcut(null);
-    setNewClass('moving_brown_dwarf');
+    const draftTitle = newTitle.trim();
+    const targetName =
+      activeTargetName ||
+      `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`;
 
     try {
       const response = await fetch('/api/forum/threads', {
@@ -286,61 +205,55 @@ export const ObservationDiscussions: React.FC = () => {
           'X-Observer-Key': identity.observerKey,
         },
         body: JSON.stringify({
-          title: created.title,
-          body: created.body,
-          classification: created.classification,
-          confidencePct: created.confidencePct,
-          ra: created.ra,
-          dec: created.dec,
-          fovArcsec: created.fovArcsec,
-          renderMode: created.renderMode,
-          targetName: created.targetName,
+          title: draftTitle,
+          body: taggedBody,
+          classification: newClass,
+          confidencePct: newConfidence,
+          ra,
+          dec,
+          fovArcsec,
+          renderMode,
+          targetName,
           hashtags,
           classificationVote: selectedShortcut?.id ?? null,
           channel: selectedShortcut?.channel ?? 'discoveries',
         }),
       });
-      if (response.ok) {
-        const payload = (await response.json()) as { thread?: Partial<DiscussionThread> };
-        if (payload.thread?.id !== undefined) {
-          const saved = {
-            ...created,
-            ...payload.thread,
-            id: String(payload.thread.id),
-            replies: payload.thread.replies ?? [],
-          } as DiscussionThread;
-          setThreads((prev) =>
-            prev.map((thread) => (thread.id === created.id ? saved : thread))
-          );
-        }
+      if (!response.ok) {
+        setSubmitError(`Failed to publish observation (HTTP ${response.status}).`);
+        return;
       }
-    } catch {
-      // Optimistic local state preserved when backend is offline
+      const payload = (await response.json()) as { thread?: Partial<DiscussionThread> };
+      if (payload.thread?.id !== undefined) {
+        const saved = {
+          ...payload.thread,
+          id: String(payload.thread.id),
+          replies: payload.thread.replies ?? [],
+        } as DiscussionThread;
+        setThreads((prev) =>
+          prev.some((thread) => thread.id === saved.id)
+            ? prev.map((thread) => (thread.id === saved.id ? saved : thread))
+            : [saved, ...prev]
+        );
+      }
+      setNewTitle('');
+      setNewBody('');
+      setSelectedShortcut(null);
+      setNewClass('moving_brown_dwarf');
+    } catch (err: unknown) {
+      setSubmitError(err instanceof Error ? err.message : 'Unable to reach forum API.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleAddReply = async (threadId: string) => {
     const text = (replyDrafts[threadId] || '').trim();
-    if (!text) return;
+    if (!text || !/^\d+$/.test(threadId)) return;
 
-    const reply: DiscussionReply = {
-      id: `rep-${Date.now()}`,
-      authorHandle: identity.handle,
-      isModerator: false,
-      timestampIso: new Date().toISOString(),
-      body: text,
-    };
-
-    setThreads((prev) =>
-      prev.map((t) =>
-        t.id === threadId ? { ...t, replies: [...t.replies, reply] } : t
-      )
-    );
-    setReplyDrafts((prev) => ({ ...prev, [threadId]: '' }));
-
-    if (!/^\d+$/.test(threadId)) return;
+    setSubmitError(null);
     try {
-      await fetch('/api/forum/replies', {
+      const response = await fetch('/api/forum/replies', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -349,8 +262,21 @@ export const ObservationDiscussions: React.FC = () => {
         },
         body: JSON.stringify({ threadId: Number(threadId), body: text }),
       });
-    } catch {
-      // Keep the optimistic reply visible while the API reconnects.
+      if (!response.ok) {
+        setSubmitError(`Failed to post reply (HTTP ${response.status}).`);
+        return;
+      }
+      const payload = (await response.json()) as { thread?: Partial<DiscussionThread> };
+      if (payload.thread) {
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.id === threadId ? ({ ...t, ...payload.thread, id: threadId } as DiscussionThread) : t
+          )
+        );
+      }
+      setReplyDrafts((prev) => ({ ...prev, [threadId]: '' }));
+    } catch (err: unknown) {
+      setSubmitError(err instanceof Error ? err.message : 'Unable to post reply.');
     }
   };
 
@@ -358,22 +284,7 @@ export const ObservationDiscussions: React.FC = () => {
     thread: DiscussionThread,
     shortcut: ClassificationShortcut
   ) => {
-    if (!/^\d+$/.test(thread.id)) {
-      setThreads((prev) =>
-        prev.map((item) =>
-          item.id === thread.id
-            ? {
-                ...item,
-                classVotes: {
-                  ...item.classVotes,
-                  [shortcut.voteKey]: (item.classVotes?.[shortcut.voteKey] ?? 0) + 1,
-                },
-              }
-            : item
-        )
-      );
-      return;
-    }
+    if (!/^\d+$/.test(thread.id)) return;
 
     try {
       const response = await fetch(`/api/forum/threads/${thread.id}/classifications`, {
@@ -396,7 +307,7 @@ export const ObservationDiscussions: React.FC = () => {
         )
       );
     } catch {
-      // Keep the current discussion usable when the backend is offline.
+      // Surface feed availability via loadError / submitError rather than mutating unpersisted state.
     }
   };
 
@@ -413,7 +324,7 @@ export const ObservationDiscussions: React.FC = () => {
       t.ra,
       t.dec,
       t.targetName,
-      isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
+      isBench ? '[NASA Benchmark (Pre-cached)]' : '[Community Observation]'
     );
     setRa(t.ra);
     setDec(t.dec);
@@ -470,9 +381,9 @@ export const ObservationDiscussions: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
-      {/* LEFT 32%: External Archive Cross-Match & Zero-Auth Telemetry Session Panel */}
-      <aside className="flex w-[360px] xl:w-[400px] shrink-0 flex-col border-r border-border bg-card overflow-y-auto p-4 gap-4">
+    <div className="flex h-full w-full flex-col lg:flex-row overflow-hidden bg-background font-sans text-xs text-foreground">
+      {/* LEFT PANEL: External Archive Cross-Match & Zero-Auth Telemetry Session */}
+      <aside className="flex w-full lg:w-[320px] xl:w-[340px] shrink-0 flex-col max-h-56 lg:max-h-none border-b lg:border-b-0 lg:border-r border-border bg-card overflow-y-auto p-4 gap-4">
         {/* Active Coordinate Cross-Match Header */}
         <div className="rounded-sm border border-border bg-background p-3">
           <div className="flex items-center justify-between">
@@ -533,56 +444,59 @@ export const ObservationDiscussions: React.FC = () => {
         </div>
       </aside>
 
-      {/* RIGHT 68%: Observation Note Composer & Threaded Candidate Feed */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      {/* CENTERED CHAT SECTION: Observation Note Composer & Threaded Candidate Feed */}
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden items-center">
         {/* Top Filter Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
-          <div className="flex items-center gap-1.5">
-            <Button
-              variant={scopeFilter === 'ALL' ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setScopeFilter('ALL')}
-              className={scopeFilter === 'ALL' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-            >
-              All Sky Observations ({threads.length})
-            </Button>
-            <Button
-              variant={scopeFilter === 'TARGET' ? 'secondary' : 'ghost'}
-              size="xs"
-              onClick={() => setScopeFilter('TARGET')}
-              className={scopeFilter === 'TARGET' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
-            >
-              Near {ra.toFixed(2)}°, {dec.toFixed(2)}° (r ≤ 1.5°)
-            </Button>
-          </div>
+        <div className="w-full border-b border-border bg-card px-4 py-2.5 sm:px-6">
+          <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant={scopeFilter === 'ALL' ? 'secondary' : 'ghost'}
+                size="xs"
+                onClick={() => setScopeFilter('ALL')}
+                className={scopeFilter === 'ALL' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
+              >
+                All Sky Observations ({threads.length})
+              </Button>
+              <Button
+                variant={scopeFilter === 'TARGET' ? 'secondary' : 'ghost'}
+                size="xs"
+                onClick={() => setScopeFilter('TARGET')}
+                className={scopeFilter === 'TARGET' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
+              >
+                Near {ra.toFixed(2)}°, {dec.toFixed(2)}° (r ≤ 1.5°)
+              </Button>
+            </div>
 
-          <div className="flex items-center gap-2">
-            <label htmlFor="forum-class-filter" className="text-[11px] text-muted-foreground">
-              Classification:
-            </label>
-            <Select
-              id="forum-class-filter"
-              sizeVariant="xs"
-              value={classFilter}
-              onChange={(e) => setClassFilter(e.target.value)}
-              className="bg-background text-foreground"
-            >
-              <option value="ALL">All Classifications</option>
-              {CLASSIFICATION_CATEGORIES.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </Select>
+            <div className="flex items-center gap-2">
+              <label htmlFor="forum-class-filter" className="text-[11px] text-muted-foreground">
+                Classification:
+              </label>
+              <Select
+                id="forum-class-filter"
+                sizeVariant="xs"
+                value={classFilter}
+                onChange={(e) => setClassFilter(e.target.value)}
+                className="bg-background text-foreground"
+              >
+                <option value="ALL">All Classifications</option>
+                {CLASSIFICATION_CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* New Observation Note Composer */}
-          <form
-            onSubmit={handleCreateThread}
-            className="rounded-sm border border-border bg-card p-3.5"
-          >
+        <div className="w-full flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+            {/* New Observation Note Composer */}
+            <form
+              onSubmit={handleCreateThread}
+              className="rounded-sm border border-border bg-card p-3.5"
+            >
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border">
               <span className="font-semibold text-foreground">
                 Log Observation Note & Pin Current Sky State
@@ -693,18 +607,41 @@ export const ObservationDiscussions: React.FC = () => {
                 type="submit"
                 variant="default"
                 size="sm"
+                disabled={isSubmitting || !newTitle.trim() || !newBody.trim()}
               >
-                Publish Observation Note
+                {isSubmitting ? 'Publishing…' : 'Publish Observation Note'}
               </Button>
             </div>
+            {submitError && (
+              <p className="mt-2 font-mono text-[11px] text-destructive" role="alert">
+                {submitError}
+              </p>
+            )}
           </form>
 
           {/* Threaded Observations List */}
-          <div className="space-y-3">
+          <div className="space-y-3.5">
+            {isLoading && (
+              <div className="rounded-sm border border-border bg-card p-6 text-center font-mono text-xs text-muted-foreground">
+                Loading community discussions from archive database…
+              </div>
+            )}
+            {!isLoading && loadError && (
+              <div className="rounded-sm border border-destructive/50 bg-card p-4 text-center font-mono text-xs text-destructive" role="alert">
+                Forum archive unavailable ({loadError}). Check database connectivity.
+              </div>
+            )}
+            {!isLoading && !loadError && filteredThreads.length === 0 && (
+              <div className="rounded-sm border border-border bg-card p-6 text-center text-xs text-muted-foreground">
+                No community observations match the active spatial or classification filter.
+              </div>
+            )}
             {filteredThreads.map((t) => {
               const catLabel =
-                CLASSIFICATION_CATEGORIES.find((c) => c.id === t.classification)?.label ||
-                t.classification;
+                t.classification === 'unclassified'
+                  ? 'Unclassified'
+                  : CLASSIFICATION_CATEGORIES.find((c) => c.id === t.classification)?.label ||
+                    t.classification;
               return (
                 <article
                   key={t.id}
@@ -720,7 +657,7 @@ export const ObservationDiscussions: React.FC = () => {
                         )}
                         <span>·</span>
                         <Badge variant="sky">
-                          {catLabel} ({t.confidencePct}%)
+                          {t.confidencePct > 0 ? `${catLabel} (${t.confidencePct}%)` : catLabel}
                         </Badge>
                         <span>·</span>
                         <span className="font-mono text-[10px]">
@@ -754,6 +691,19 @@ export const ObservationDiscussions: React.FC = () => {
                   <p className="mt-2.5 text-xs leading-relaxed text-foreground/90">
                     {t.body}
                   </p>
+
+                  {t.hashtags && t.hashtags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {t.hashtags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-sm border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-primary"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
                     <span className="mr-1 text-[10px] text-muted-foreground">
@@ -808,7 +758,13 @@ export const ObservationDiscussions: React.FC = () => {
                   )}
 
                   {/* Quick Reply Input */}
-                  <div className="mt-2.5 flex items-center gap-2">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void handleAddReply(t.id);
+                    }}
+                    className="mt-2.5 flex items-center gap-2"
+                  >
                     <Input
                       type="text"
                       value={replyDrafts[t.id] || ''}
@@ -819,19 +775,21 @@ export const ObservationDiscussions: React.FC = () => {
                       className="flex-1 h-7 text-xs bg-background"
                     />
                     <Button
+                      type="submit"
                       variant="secondary"
                       size="xs"
-                      onClick={() => handleAddReply(t.id)}
+                      disabled={!(replyDrafts[t.id] || '').trim()}
                     >
                       Reply
                     </Button>
-                  </div>
+                  </form>
                 </article>
               );
             })}
           </div>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 };
