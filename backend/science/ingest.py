@@ -1424,13 +1424,28 @@ async def ingest_exposures_for_target(
             previous_mjd = mjd
 
         # Time-domain requests keep one exposure per pass and detector. A
-        # spectrum needs every exposure because the LVF maps each detector
-        # position to a different wavelength sample.
+        # spectrum samples multiple exposures per band across the LVF so the
+        # 102-channel wavelength grid is covered without fetching 300+ redundant 3MB PSF cubes.
         if spectrum_mode:
-            selected = [
-                exp for exp in exposures
-                if str(exp.get("band", "")).upper() in {f"D{i}" for i in range(1, 7)}
-            ]
+            max_per_band = 8
+            by_band: dict[str, list[dict[str, Any]]] = {}
+            for exp in exposures:
+                band = str(exp.get("band", "")).upper()
+                if band in {f"D{i}" for i in range(1, 7)}:
+                    by_band.setdefault(band, []).append(exp)
+            selected = []
+            for band_exps in by_band.values():
+                if len(band_exps) <= max_per_band:
+                    selected.extend(band_exps)
+                else:
+                    indices = np.linspace(0, len(band_exps) - 1, max_per_band, dtype=int)
+                    seen_idx: set[int] = set()
+                    for idx in indices:
+                        i_val = int(idx)
+                        if i_val not in seen_idx:
+                            seen_idx.add(i_val)
+                            selected.append(band_exps[i_val])
+            selected.sort(key=lambda exp: float(exp["mjd"]))
         else:
             selected = []
             for pass_exposures in grouped.values():
