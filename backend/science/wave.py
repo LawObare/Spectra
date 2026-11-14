@@ -269,7 +269,7 @@ def bin_observations_to_102_channels(
     flux_arr = np.zeros(n_chan, dtype=np.float64)
     var_arr = np.full(n_chan, 1e-6, dtype=np.float64)
     flags_arr = np.zeros(n_chan, dtype=np.int32)
-    mjd_arr = np.full(n_chan, 60750.0, dtype=np.float64)
+    mjd_arr = np.zeros(n_chan, dtype=np.float64)
 
     # Buckets per channel
     buckets: list[list[ChannelPoint]] = [[] for _ in range(n_chan)]
@@ -544,7 +544,7 @@ def generate_benchmark_sed_102(
     target: dict[str, Any],
     grid_waves: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[float], bool]:
-    """Generate physically grounded 102-channel synthetic SED for benchmark targets."""
+    """Reference-template SED generator for the in-memory similarity template library only."""
     waves = grid_waves
     base_f = target.get("base_flux_jy", 0.05)
     slope = target.get("slope", -1.0)
@@ -602,48 +602,28 @@ def extract_102_channel_spectrum(
     normalize: bool = False,
     custom_observations: list[ChannelPoint] | None = None,
 ) -> CalibratedSpectrum:
-    """Extract complete 102-channel near-infrared spectrum at coordinates (ra, dec).
+    """Bin archive HDU 5/6 observations at (ra, dec) into the 102-channel SPHEREx grid.
 
-    1. Checks if coordinate matches one of the 5 NASA Benchmark Targets.
-    2. If matched, generates authentic SED matching empirical SPHEREx specs.
-    3. If custom observations provided (from live cutouts / HDU 6 smile inversion),
-       bins points into standard grid via inverse-variance weighting.
-    4. If normalize=True, evaluates 3σ-clipped 4th-order Chebyshev baseline continuum.
+    Raises:
+      ValueError: If no archive observations are supplied (never synthesizes fake spectra).
     """
+    if not custom_observations:
+        raise ValueError("Archive observations are required to extract a 102-channel spectrum")
+
     grid_waves = get_standard_channel_grid()
     benchmark = match_benchmark_target(ra, dec)
 
-    if custom_observations and len(custom_observations) > 0:
-        flux, variance, flg, mjds = bin_observations_to_102_channels(custom_observations, grid_waves)
-        coverage = [False] * len(grid_waves)
-        for observation in custom_observations:
-            channel_index = _channel_for_observation(observation, grid_waves)
-            if channel_index is not None:
-                coverage[channel_index] = True
-        mjd_valid = [p.mjd for p in custom_observations]
-        mjd_span = [float(min(mjd_valid)), float(max(mjd_valid))] if mjd_valid else [60789.85, 60789.85]
-        is_simultaneous = (mjd_span[1] - mjd_span[0]) <= 1.0
-        target_name = benchmark["name"] if benchmark else None
-        source_badge = "[IRSA Live (spherex_qr2)]"
-    elif benchmark is not None:
-        flux, variance, flg, mjds, mjd_span, is_simultaneous = generate_benchmark_sed_102(
-            benchmark, grid_waves
-        )
-        target_name = benchmark["name"]
-        source_badge = "[NASA Benchmark (Pre-cached)]"
-        coverage = [True] * len(grid_waves)
-    else:
-        # Default arbitrary field star: standard stellar blackbody/photosphere
-        base_f = 0.02
-        flux = base_f * (grid_waves / 1.0) ** (-1.1)
-        variance = (flux * 0.03) ** 2 + 1e-10
-        flg = np.zeros(len(grid_waves), dtype=np.int32)
-        mjds = np.linspace(60789.85, 61237.87, len(grid_waves))
-        mjd_span = [60789.85, 61237.87]
-        is_simultaneous = False
-        target_name = f"SPX J{ra:.4f}{dec:+.4f}"
-        source_badge = "[Community Product]"
-        coverage = [True] * len(grid_waves)
+    flux, variance, flg, mjds = bin_observations_to_102_channels(custom_observations, grid_waves)
+    coverage = [False] * len(grid_waves)
+    for observation in custom_observations:
+        channel_index = _channel_for_observation(observation, grid_waves)
+        if channel_index is not None:
+            coverage[channel_index] = True
+    mjd_valid = [p.mjd for p in custom_observations]
+    mjd_span = [float(min(mjd_valid)), float(max(mjd_valid))] if mjd_valid else [0.0, 0.0]
+    is_simultaneous = (mjd_span[1] - mjd_span[0]) <= 1.0
+    target_name = benchmark["name"] if benchmark else None
+    source_badge = "[IRSA Live (spherex_qr2)]"
 
     cont_flux = None
     tau = None
