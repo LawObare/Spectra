@@ -61,16 +61,16 @@ export interface PhotographicSurveySpec {
 
 export const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
+    id: 'unwise-neo7',
+    label: 'unWISE Infrared',
+    badge: 'NASA 3.4 & 4.6 µm (All-Sky)',
+    description: 'NASA WISE/NEOWISE all-sky cryogenic co-adds covering 100% of the celestial sphere. Matches SPHEREx infrared regime; reveals substellar objects and galactic dust.',
+  },
+  {
     id: 'ls-dr10',
     label: 'Legacy Survey DR10',
     badge: 'Optical (Resolved Galaxies)',
-    description: 'DESI Legacy Imaging Surveys DR10 (g, r, z). Resolves galaxy spiral arms, stellar bulges, and dust lanes with photographic clarity.',
-  },
-  {
-    id: 'unwise-neo7',
-    label: 'unWISE Infrared',
-    badge: 'NASA Infrared (3.4 / 4.6 µm)',
-    description: 'NASA WISE/NEOWISE all-sky cryogenic co-adds. Matches SPHEREx infrared regime; reveals interstellar dust and brown dwarfs.',
+    description: 'DESI Legacy Imaging Surveys DR10 (g, r, z). Resolves galaxy spiral arms, stellar bulges, and star-forming regions with photographic clarity.',
   },
 ];
 
@@ -97,6 +97,16 @@ function getCutoutTileUrl(
   const clampDec = Math.max(-89.0, Math.min(89.0, decDeg)).toFixed(5);
   const clampScale = Math.max(0.262, Math.min(30.0, pixscale)).toFixed(3);
   return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${survey}&pixscale=${clampScale}&size=${size}`;
+}
+
+// Fixed Zoom Octaves for stable tile keys during zoom & pan
+function getZoomOctave(fovDeg: number): { plateSizeDeg: number; pixscale: number; level: number } {
+  if (fovDeg > 12.0) return { plateSizeDeg: 20.0, pixscale: 25.0, level: 0 };
+  if (fovDeg > 4.5) return { plateSizeDeg: 7.5, pixscale: 14.0, level: 1 };
+  if (fovDeg > 1.4) return { plateSizeDeg: 2.5, pixscale: 5.0, level: 2 };
+  if (fovDeg > 0.45) return { plateSizeDeg: 0.8, pixscale: 1.6, level: 3 };
+  if (fovDeg > 0.14) return { plateSizeDeg: 0.25, pixscale: 0.5, level: 4 };
+  return { plateSizeDeg: 0.08, pixscale: 0.262, level: 5 };
 }
 
 // SPHEREx Level-2 Spectral Image Exposure Metadata (Modelled after IRSA spherex_qr2 MEF table)
@@ -261,7 +271,7 @@ export const CelestialNavigator: React.FC = () => {
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(true);
   const [showProperMotion, setShowProperMotion] = useState<boolean>(true);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
-  const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('ls-dr10');
+  const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('unwise-neo7');
   const [selectedBandFilter, setSelectedBandFilter] = useState<string>('ALL');
   const [hoveredObsId, setHoveredObsId] = useState<string | null>(null);
   const [selectedObsId, setSelectedObsId] = useState<string | null>(null);
@@ -431,37 +441,70 @@ export const CelestialNavigator: React.FC = () => {
       ctx.fillStyle = '#06080D';
       ctx.fillRect(0, 0, width, height);
 
-      // 2. Stitched Real Space Photography Mosaic Engine
+      // 2. Base Astrometric Field Starfield (Instant 60 FPS Orientation & Stellar Grounding)
+      const starPalette = ['#cfe4ff', '#eef6ff', '#fff9eb', '#ffe3b3', '#ffbe85', '#ff9b6a'];
+      const octaves = [
+        { cellDeg: 2.0, minFov: 0.01, maxFov: 65.0, starsPerCell: 8, brightBoost: 1.25 },
+        { cellDeg: 0.5, minFov: 0.01, maxFov: 16.0, starsPerCell: 9, brightBoost: 1.0 },
+      ];
+
+      octaves.forEach((oct, octIdx) => {
+        if (fovDeg > oct.maxFov || fovDeg < oct.minFov) return;
+        const cRaStart = Math.floor((centerRa - raSpan) / oct.cellDeg);
+        const cRaEnd = Math.ceil((centerRa + raSpan) / oct.cellDeg);
+        const cDecStart = Math.floor((centerDec - halfFovY * 1.2) / oct.cellDeg);
+        const cDecEnd = Math.ceil((centerDec + halfFovY * 1.2) / oct.cellDeg);
+        const wrapCount = Math.max(1, Math.round(360 / oct.cellDeg));
+
+        for (let cDec = cDecStart; cDec <= cDecEnd; cDec++) {
+          const decCenter = cDec * oct.cellDeg;
+          if (decCenter < -89.5 || decCenter > 89.5) continue;
+          for (let cRa = cRaStart; cRa <= cRaEnd; cRa++) {
+            const wrappedRa = ((cRa % wrapCount) + wrapCount) % wrapCount;
+            for (let s = 0; s < oct.starsPerCell; s++) {
+              const saltBase = octIdx * 100 + s * 5;
+              const u = hashSkyCell(wrappedRa, cDec, saltBase + 1);
+              const v = hashSkyCell(wrappedRa, cDec, saltBase + 2);
+              const magH = hashSkyCell(wrappedRa, cDec, saltBase + 3);
+              const colH = hashSkyCell(wrappedRa, cDec, saltBase + 4);
+
+              const starRa = (cRa + u) * oct.cellDeg;
+              const starDec = (cDec + v) * oct.cellDeg;
+              const pos = worldToScreen(starRa, starDec);
+              if (!pos.inBounds) continue;
+
+              const radiusPx = (0.7 + Math.pow(1 - magH, 2.6) * 2.4) * oct.brightBoost;
+              const alpha = 0.35 + (1 - magH) * 0.65;
+              const colorHex = starPalette[Math.floor(colH * starPalette.length)];
+
+              if (radiusPx > 1.8) {
+                ctx.globalAlpha = alpha * 0.25;
+                ctx.fillStyle = colorHex;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, radiusPx * 2.2, 0, Math.PI * 2);
+                ctx.fill();
+              }
+
+              ctx.globalAlpha = alpha;
+              ctx.fillStyle = colorHex;
+              ctx.beginPath();
+              ctx.arc(pos.x, pos.y, radiusPx, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      });
+      ctx.globalAlpha = 1.0;
+
+      // 3. Stitched Real Space Photography Mosaic Engine
       // Dynamically tiles photographic survey plates covering the active viewport
-      const plateSizeDeg =
-        fovDeg > 14.0
-          ? 18.0
-          : fovDeg > 5.0
-          ? 6.0
-          : fovDeg > 1.6
-          ? 2.0
-          : fovDeg > 0.45
-          ? 0.65
-          : fovDeg > 0.12
-          ? 0.22
-          : 0.08;
-
-      const pixscale = Math.max(
-        0.262,
-        Math.min(28.0, (plateSizeDeg * 3600) / 512)
-      );
-
-      const stepDeg = plateSizeDeg * 0.82; // Overlap prevents edge seams during reprojection
-      const minDec = Math.max(
-        -88.5,
-        Math.floor((centerDec - halfFovY * 1.15) / stepDeg) * stepDeg
-      );
-      const maxDec = Math.min(
-        88.5,
-        Math.ceil((centerDec + halfFovY * 1.15) / stepDeg) * stepDeg
-      );
-      const minRa = Math.floor((centerRa - raSpan * 1.15) / stepDeg) * stepDeg;
-      const maxRa = Math.ceil((centerRa + raSpan * 1.15) / stepDeg) * stepDeg;
+      const octave = getZoomOctave(fovDeg);
+      const { plateSizeDeg, pixscale, level } = octave;
+      const stepDeg = plateSizeDeg * 0.75;
+      const minDec = Math.max(-88.5, Math.floor((centerDec - halfFovY * 1.1) / stepDeg) * stepDeg);
+      const maxDec = Math.min(88.5, Math.ceil((centerDec + halfFovY * 1.1) / stepDeg) * stepDeg);
+      const minRa = Math.floor((centerRa - raSpan * 1.1) / stepDeg) * stepDeg;
+      const maxRa = Math.ceil((centerRa + raSpan * 1.1) / stepDeg) * stepDeg;
 
       const now = Date.now();
 
@@ -469,12 +512,12 @@ export const CelestialNavigator: React.FC = () => {
       for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
         for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
           const normRa = ((pRa % 360) + 360) % 360;
-          const plateKey = `${state.activeSurvey}_${plateSizeDeg.toFixed(2)}_${normRa.toFixed(4)}_${pDec.toFixed(4)}`;
+          const plateKey = `${state.activeSurvey}_L${level}_${normRa.toFixed(3)}_${pDec.toFixed(3)}`;
           const plate = plateCacheRef.current.get(plateKey);
 
           if (!plate) {
             const img = new Image();
-            img.crossOrigin = 'anonymous';
+            // Note: Public survey cutouts lack CORS headers; do not set crossOrigin
             const newPlate: PhotographicPlate = {
               key: plateKey,
               img,
@@ -500,11 +543,11 @@ export const CelestialNavigator: React.FC = () => {
         }
       }
 
-      // LRU cache eviction if cache exceeds 60 plates
-      if (plateCacheRef.current.size > 60) {
+      // LRU cache eviction if cache exceeds 50 plates
+      if (plateCacheRef.current.size > 50) {
         const entries = Array.from(plateCacheRef.current.entries());
         entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-        for (let i = 0; i < entries.length - 45; i++) {
+        for (let i = 0; i < entries.length - 35; i++) {
           plateCacheRef.current.delete(entries[i][0]);
         }
       }
@@ -516,7 +559,6 @@ export const CelestialNavigator: React.FC = () => {
       );
       loadedPlates.sort((a, b) => b.sizeDeg - a.sizeDeg);
 
-      let renderedPlateCount = 0;
       loadedPlates.forEach((plate) => {
         const cosPDec = Math.max(0.08, Math.cos((plate.dec * Math.PI) / 180));
         const halfWidthRa = (plate.sizeDeg / 2) / cosPDec;
@@ -537,24 +579,8 @@ export const CelestialNavigator: React.FC = () => {
           pTopLeft.y + dy > 0
         ) {
           ctx.drawImage(plate.img, pTopLeft.x, pTopLeft.y, dx, dy);
-          renderedPlateCount++;
         }
       });
-
-      // Subtle field grounding if plates are still downloading on cold start
-      if (renderedPlateCount === 0) {
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
-        ctx.lineWidth = 1;
-        for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
-          for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
-            const normRa = ((pRa % 360) + 360) % 360;
-            const pos = worldToScreen(normRa, pDec);
-            const w = (stepDeg * scalePxPerDeg) / cosCenterDec;
-            const h = stepDeg * scalePxPerDeg;
-            ctx.strokeRect(pos.x - w / 2, pos.y - h / 2, w, h);
-          }
-        }
-      }
 
       // 3. J2000 WCS Coordinate Grid (Toggleable)
       if (state.showWcsGrid) {
