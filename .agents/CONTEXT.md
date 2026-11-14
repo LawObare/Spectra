@@ -2602,3 +2602,25 @@ To ensure that **any** agent working in the repository—whether running via Ant
 - Run `verify_spec_integrity.py`: Passed 100% of structural integrity checks (2,537 lines, 177,917 chars).
 - Residual audit: 0 stale architecture tokens outside the historical evolution log table.
 - `SPECIFICATION.md` is clean, fully aligned with v3.0.0-PROD single FastAPI architecture.
+
+---
+
+## Exchange #38: Integration of Validated VO & WCS Precision Enhancements
+
+### Context & Decisions
+- Selected and integrated the scientifically valid, performance-enhancing details from candidate draft while strictly excluding superseded architecture (Go gateway, SQLite, detector-only coaddition, fake star generation, 2D Canvas CPU loops).
+
+### Changes Integrated into SPECIFICATION.md
+1. **FITS WCS Sub-Array Offset Restoration (§4.1.2):**
+   - Explicitly documented restoration of parent detector coordinates $(x_{\text{det}}, y_{\text{det}})$ using `CRPIX1A` / `CRPIX2A` FITS cutout keywords before HDU 6 `WCS-WAVE` smile lookup.
+2. **In-Memory Catalog Map & VO Circuit Breakers (§5.3.1 & §6.3.1):**
+   - Added in-memory `LOCAL_CATALOG_MAP` (the 5 NASA benchmarks + 50 common infrared reference objects) for instant $<1\,\text{ms}$ resolution in `GET /api/resolve`.
+   - Added 2.0-second circuit breaker on CDS Sesame.
+   - Added 2.0-second circuit breaker on IMCCE SkyBot ephemerides with graceful `"skybot_status": "cached_only"` fallback to ensure VO latency never delays primary cutouts.
+   - VizieR Gaia DR3 ConeSearch restricted to 50 brightest stars within $300''$ radius with compact JSON delivery.
+3. **Tab 2 Viewport Alignment (§6.3.2):**
+   - Standardized Tab 2 wireframe viewport label to `[Viewport: WebGL2 Float32 Canvas (gl.R32F)]`.
+
+### Status
+- Passed all integrity checks.
+- Clean git working tree on `main`.
