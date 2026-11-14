@@ -82,7 +82,44 @@ export interface TelemetryFrame {
 
 export type ModelArchitecture = 'SpectralResNet102' | 'DipoleConvNet3D' | 'AstroFeatureSVM';
 
+export interface TrainedModelCard {
+  model_id: string;
+  custom_name: string;
+  model_name: ModelArchitecture;
+  base_model: string;
+  run_id: string;
+  source: string;
+  trained_at: string;
+  epochs_completed: number;
+  val_acc: number;
+  val_loss: number;
+  entropy: number;
+  lora_r: number;
+  lora_alpha: number;
+  loss_type: 'nll' | 'dft';
+  param_summary?: Record<string, number>;
+}
+
+export interface BaseModelCard {
+  model_name: ModelArchitecture;
+  title: string;
+  family: string;
+  input_shape: string;
+  layers_summary: string;
+  total_params: number;
+  recommended_for: string;
+  has_trained_checkpoint: boolean;
+  active_checkpoint: TrainedModelCard | null;
+}
+
+export interface ModelsRegistryResponse {
+  base_models: BaseModelCard[];
+  trained_models: TrainedModelCard[];
+  training_active: boolean;
+}
+
 export interface Hyperparameters {
+  customName: string;
   model: ModelArchitecture;
   batchSize: number;
   lr: number;
@@ -100,6 +137,7 @@ export interface Hyperparameters {
 }
 
 export const DEFAULT_HYPERPARAMS: Hyperparameters = {
+  customName: '',
   model: 'SpectralResNet102',
   batchSize: 32,
   lr: 3e-3,
@@ -354,6 +392,24 @@ function generateOfflineFallbackFrames(hyper: Hyperparameters): TelemetryFrame[]
 export function useAdminTelemetry() {
   const [hyperparams, setHyperparams] = useState<Hyperparameters>(DEFAULT_HYPERPARAMS);
   const [activeEpoch, setActiveEpoch] = useState<number>(1);
+  const [modelsRegistry, setModelsRegistry] = useState<ModelsRegistryResponse | null>(null);
+
+  const refreshModelsRegistry = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/models');
+      if (!res.ok) return;
+      const data: ModelsRegistryResponse = await res.json();
+      if (data && Array.isArray(data.base_models)) {
+        setModelsRegistry(data);
+      }
+    } catch {
+      // Backend offline or unavailable; ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshModelsRegistry();
+  }, [refreshModelsRegistry]);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [playbackSpeedMs, setPlaybackSpeedMs] = useState<number>(250);
@@ -445,6 +501,7 @@ export function useAdminTelemetry() {
               setIsTrainingLive(false);
               setIsRunning(false);
               setStatusMessage(`Training complete (${data.model}) — checkpoint cached for Tab 2 & Tab 3`);
+              void refreshModelsRegistry();
             } else if (data.mode === 'error') {
               setIsTrainingLive(false);
               setIsRunning(false);
@@ -536,6 +593,7 @@ export function useAdminTelemetry() {
           setIsTrainingLive(false);
           setIsRunning(false);
           setStatusMessage(`Training complete (${hyperRef.current.model}) — checkpoint ready in Graph & Co-Pilot`);
+          void refreshModelsRegistry();
         }
       } catch {
         // Ignore transient poll errors
@@ -548,7 +606,7 @@ export function useAdminTelemetry() {
         pollRef.current = null;
       }
     };
-  }, [isTrainingLive]);
+  }, [isTrainingLive, refreshModelsRegistry]);
 
   // Offline replay timer only when backend live run is not active and user plays replay
   useEffect(() => {
@@ -590,6 +648,7 @@ export function useAdminTelemetry() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: cfg.model,
+          custom_name: cfg.customName.trim() || undefined,
           epochs: cfg.totalEpochs,
           learning_rate: cfg.lr,
           batch_size: cfg.batchSize,
@@ -667,6 +726,8 @@ export function useAdminTelemetry() {
     selectedProbeTarget,
     setSelectedProbeTarget,
     overfittingAnalysis,
+    modelsRegistry,
+    refreshModelsRegistry,
     startTrainingRun,
     pauseTrainingRun,
     resumeTrainingRun,
