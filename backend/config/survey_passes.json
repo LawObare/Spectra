@@ -6,7 +6,7 @@
   "collection": "spherex_qr2",
   "clustering": {
     "method": "gap-based temporal clustering on exposure t_min MJD values across 5 NASA benchmarks",
-    "gap_days_threshold": 3.0,
+    "gap_days_threshold": 25.0,
     "search_radius_arcsec": 127.2792
   },
   "passes": {
