@@ -4,6 +4,14 @@ import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { WebGLComparatorCanvas, HoverPixelInfo } from '../components/WebGLComparatorCanvas';
 import { MANDATORY_BENCHMARKS } from '../components/GlobalCommandHeader';
 import type { TensorHeader, TensorWorkerResponse } from '../workers/tensorWorker';
+import {
+  fetchInstalledSections,
+  findMatchingSection,
+  formatSectionBytes,
+  startSectionInstall,
+  useSectionManager,
+  type InstalledSection,
+} from '../lib/installedSections';
 
 function pixelToSky(
   x: number,
@@ -85,6 +93,39 @@ function sampleBoxMullerGaussian(rng: () => number, sigma: number): number {
   return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2) * sigma;
 }
 
+function getPlaneMaxNExp(plane: Uint16Array | null | undefined): number {
+  if (!plane || plane.length === 0) return 0;
+  let max = 0;
+  for (let i = 0; i < plane.length; i++) {
+    if (plane[i] > max) max = plane[i];
+  }
+  return max;
+}
+
+function pickObservedCell(
+  nExpData: Uint16Array[][],
+  preferredBandIndex: number
+): { epochIndex: number; bandIndex: number } {
+  const epochs = nExpData.length;
+  const bands = nExpData[0]?.length ?? 6;
+  // 1. Keep preferred band if epoch 0 or any epoch has real coverage
+  for (let e = 0; e < epochs; e++) {
+    if (getPlaneMaxNExp(nExpData[e]?.[preferredBandIndex]) > 0) {
+      return { epochIndex: e, bandIndex: preferredBandIndex };
+    }
+  }
+  // 2. Otherwise prefer thermal/longer bands first (D5, D6, D4, D3, D2, D1)
+  for (const b of [4, 5, 3, 2, 1, 0]) {
+    if (b >= bands) continue;
+    for (let e = 0; e < epochs; e++) {
+      if (getPlaneMaxNExp(nExpData[e]?.[b]) > 0) {
+        return { epochIndex: e, bandIndex: b };
+      }
+    }
+  }
+  return { epochIndex: 0, bandIndex: preferredBandIndex };
+}
+
 const CANVAS_PIXEL_DIM = 29; // Standard 29x29 cutout stamp (~180" FoV at 6.2"/px)
 
 export interface TimeDomainComparatorProps {
@@ -96,6 +137,9 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     ra: urlRa,
     dec: urlDec,
     fov: urlFov,
+    setRa: setUrlRa,
+    setDec: setUrlDec,
+    setFov: setUrlFov,
     mode: urlMode,
     setMode: setUrlMode,
     probeX: urlPx,
@@ -129,6 +173,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   } = store;
 
   const [activeBandIndex, setActiveBandIndex] = useState<number>(4); // Default to Band D5 (index 4)
+  const activeBandRef = useRef<number>(activeBandIndex);
+  activeBandRef.current = activeBandIndex;
   const [hoverPixel, setHoverPixel] = useState<HoverPixelInfo | null>(null);
   const [measuringMotion, setMeasuringMotion] = useState<boolean>(false);
   const [motionPoints, setMotionPoints] = useState<Array<{ x: number; y: number; epoch: number }>>([]);
@@ -158,11 +204,71 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     mjdRanges?: number[][][];
     exposureIds?: string[][] | string[];
   } | null>(null);
-  const [dataStatus, setDataStatus] = useState<'loading' | 'error' | 'ready'>('loading');
-  const [dataMessage, setDataMessage] = useState('Contacting the SPHEREx archive…');
+  const [dataStatus, setDataStatus] = useState<'loading' | 'error' | 'ready' | 'uninstalled'>('loading');
+  const [dataMessage, setDataMessage] = useState('Checking installed cutout sections…');
   const [dataProgress, setDataProgress] = useState(0);
   const [loadedCutoutCount, setLoadedCutoutCount] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const { installedSections, downloadingSections } = useSectionManager();
+  const [activeInstalledSection, setActiveInstalledSection] = useState<InstalledSection | null>(null);
+  const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
+  const prevMatchingDownloadRef = useRef<boolean>(false);
+  const [canvasZoom, setCanvasZoom] = useState<'fit' | '1x' | '2x' | '4x'>('fit');
+  const [isSmoothRendering, setIsSmoothRendering] = useState(false);
+
+  const currentCoordKey = `${urlRa.toFixed(5)},${urlDec.toFixed(5)},${Math.round(urlFov || 180)}`;
+  const readyInstalledSections = useMemo(
+    () => installedSections.filter((s) => s.status === 'ready'),
+    [installedSections]
+  );
+
+  const matchingDownloadingSection = useMemo(
+    () =>
+      downloadingSections.find(
+        (d) =>
+          Math.abs(d.ra - urlRa) < 0.002 &&
+          Math.abs(d.dec - urlDec) < 0.002 &&
+          Math.abs(d.fov_arcsec - Math.round(urlFov || 180)) <= 1
+      ) || null,
+    [downloadingSections, urlRa, urlDec, urlFov]
+  );
+
+  const isInstallingHere = Boolean(matchingDownloadingSection);
+
+  useEffect(() => {
+    const isActive = Boolean(matchingDownloadingSection);
+    if (prevMatchingDownloadRef.current && !isActive && !loadedTensor) {
+      setLoadAttempt((a) => a + 1);
+    }
+    prevMatchingDownloadRef.current = isActive;
+  }, [matchingDownloadingSection, loadedTensor]);
+
+  const handleSelectInstalledSection = useCallback(
+    (section: InstalledSection) => {
+      setForceLiveCoordKey(null);
+      setUrlRa(Number(section.ra.toFixed(5)));
+      setUrlDec(Number(section.dec.toFixed(5)));
+      setUrlFov(Math.round(section.fov_arcsec || 180));
+      useTelemetryStore.setState({
+        ra: section.ra,
+        dec: section.dec,
+        activeTargetName: section.label,
+      });
+    },
+    [setUrlRa, setUrlDec, setUrlFov]
+  );
+
+  const handleInstallSectionHere = useCallback(() => {
+    const label =
+      store.activeTargetName ||
+      `Field (${urlRa.toFixed(4)}°, ${urlDec >= 0 ? '+' : ''}${urlDec.toFixed(4)}°)`;
+    void startSectionInstall({
+      ra: urlRa,
+      dec: urlDec,
+      fovArcsec: Math.round(urlFov || 180),
+      label,
+    });
+  }, [store.activeTargetName, urlDec, urlFov, urlRa]);
 
   const handleSubmitClassification = async () => {
     setIsSubmittingClassification(true);
@@ -430,7 +536,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     const requestTimeout = window.setTimeout(() => {
       requestTimedOut = true;
       requestController.abort();
-    }, 180_000);
+    }, 480_000);
 
     const decodeBinaryTensorBuffer = (buf: ArrayBuffer, worker: Worker): Promise<TensorWorkerResponse> =>
       new Promise((resolve, reject) => {
@@ -511,10 +617,110 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       setDataStatus('loading');
       setDataProgress(0);
       setLoadedCutoutCount(0);
-      setDataMessage('Querying IRSA for real SPHEREx exposures…');
+      setDataMessage('Checking installed cutout sections…');
       setLoadedTensor(null);
       setEpochIndex(0);
+      const applyLoadedTensor = (
+        parsed: ReturnType<typeof mapDecodedTensor>,
+        badge: string
+      ) => {
+        if (cancelled) return;
+        const firstCell = pickObservedCell(parsed.nExpData, activeBandRef.current);
+        useTelemetryStore.setState({
+          sourceBadge: badge,
+          totalEpochs: Math.max(1, parsed.epochs),
+        });
+        setLoadedTensor(parsed);
+        setDataStatus('ready');
+        setDataProgress(1);
+        setDataMessage(badge);
+        setActiveBandIndex(firstCell.bandIndex);
+        setEpochIndex(firstCell.epochIndex);
+      };
+
       try {
+        // 1. Check installed sections first so tabs never re-query IRSA unnecessarily
+        let sections: InstalledSection[] = [];
+        try {
+          sections = await fetchInstalledSections(requestController.signal);
+        } catch {
+          // If backend list is unreachable, fall back cleanly
+        }
+        if (cancelled) return;
+
+        let matchedSection = findMatchingSection(sections, urlRa, urlDec, urlFov || 180);
+
+        // If backend is actively seeding/installing this coordinate in the background, wait & auto-load when ready
+        if (!matchedSection && forceLiveCoordKey !== currentCoordKey) {
+          const installingSection = sections.find(
+            (s) =>
+              s.status === 'installing' &&
+              Math.abs(s.ra - urlRa) < 0.002 &&
+              Math.abs(s.dec - urlDec) < 0.002 &&
+              Math.abs((s.fov_arcsec || 180) - Math.round(urlFov || 180)) <= 5
+          );
+          if (installingSection) {
+            setDataStatus('loading');
+            setDataProgress(0.25);
+            setDataMessage(`Installing "${installingSection.label}" from live IRSA SPHEREx archives…`);
+            while (!cancelled && !matchedSection) {
+              await new Promise((resolve) => window.setTimeout(resolve, 3500));
+              if (cancelled) return;
+              try {
+                const latest = await fetchInstalledSections(requestController.signal);
+                matchedSection = findMatchingSection(latest, urlRa, urlDec, urlFov || 180);
+                if (matchedSection) break;
+                const latestRow = latest.find((s) => s.section_id === installingSection.section_id);
+                if (latestRow && latestRow.status !== 'installing') {
+                  break;
+                }
+              } catch {
+                // Retry polling on transient backend hiccup
+              }
+            }
+            if (cancelled) return;
+          }
+        }
+
+        if (matchedSection) {
+          setActiveInstalledSection(matchedSection);
+          setDataMessage(`Loading installed section "${matchedSection.label}"…`);
+          setDataProgress(0.4);
+          const secRes = await fetch(`/api/sections/${matchedSection.section_id}/tensor`, {
+            signal: requestController.signal,
+          });
+          if (secRes.ok) {
+            const decoded = await decodeBinaryTensorBuffer(await secRes.arrayBuffer(), getDecoderWorker());
+            decoderWorker?.terminate();
+            decoderWorker = null;
+            const parsed = mapDecodedTensor(decoded);
+            const installedBadge = parsed.sourceBadge.startsWith('[Installed]')
+              ? parsed.sourceBadge
+              : `[Installed] ${parsed.sourceBadge}`;
+            parsed.sourceBadge = installedBadge;
+            applyLoadedTensor(parsed, installedBadge);
+            return;
+          }
+        } else if (!cancelled) {
+          setActiveInstalledSection(null);
+        }
+
+        // 2. Do NOT auto-query IRSA on tab switch unless the user explicitly clicked Query Live
+        if (forceLiveCoordKey !== currentCoordKey) {
+          if (!cancelled) {
+            setDataStatus('uninstalled');
+            setDataProgress(0);
+            setDataMessage(
+              sections.some((s) => s.status === 'ready')
+                ? 'No cutout section is installed at this sky coordinate yet. Choose an installed section below or install this region once.'
+                : 'No cutout sections are installed yet. Select a region in the Sky Navigator or install this coordinate below.'
+            );
+            useTelemetryStore.setState({ sourceBadge: '[Not Installed]' });
+          }
+          return;
+        }
+
+        setDataMessage('Querying IRSA for real SPHEREx exposures…');
         const postRes = await fetch('/api/cutout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -530,7 +736,20 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           const body = await postRes.json().catch(() => ({}));
           throw new Error(body.detail || `IRSA request failed (${postRes.status})`);
         }
-        const { task_id } = await postRes.json();
+        const postData = await postRes.json();
+        const task_id = postData.task_id;
+        if (postData.status === 'complete') {
+          // Instant completion (e.g. pre-cached NASA Benchmark or in-memory LRU hit)
+          const tensorRes = await fetch(`/api/cutout/${task_id}/tensor`, { signal: requestController.signal });
+          if (tensorRes.ok) {
+            const decoded = await decodeBinaryTensorBuffer(await tensorRes.arrayBuffer(), getDecoderWorker());
+            decoderWorker?.terminate();
+            decoderWorker = null;
+            const parsed = mapDecodedTensor(decoded);
+            applyLoadedTensor(parsed, parsed.sourceBadge);
+            return;
+          }
+        }
         const progressRes = await fetch(`/api/cutout/progress/${task_id}?stream=1`, {
           headers: { Accept: 'text/event-stream' },
           signal: requestController.signal,
@@ -612,13 +831,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         decoderWorker?.terminate();
         decoderWorker = null;
         const parsed = mapDecodedTensor(decoded);
-        if (parsed.isSimulated) {
+        if (parsed.isSimulated && !activeBenchmark && !parsed.sourceBadge.includes('Benchmark')) {
           throw new Error('The archive returned no verified real-data tensor. No synthetic preview is shown.');
         }
         if (!cancelled) {
-          setLoadedTensor(parsed);
-          setDataStatus('ready');
-          useTelemetryStore.setState({ sourceBadge: parsed.sourceBadge });
+          applyLoadedTensor(parsed, parsed.sourceBadge);
         }
       } catch (error) {
         decoderWorker?.terminate();
@@ -642,7 +859,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       window.clearTimeout(requestTimeout);
       decoderWorker?.terminate();
     };
-  }, [activeBenchmark, urlRa, urlDec, urlFov, loadAttempt, setEpochIndex]);
+  }, [activeBenchmark, urlRa, urlDec, urlFov, loadAttempt, forceLiveCoordKey, currentCoordKey, setEpochIndex]);
 
   const activeTensors = loadedTensor || scienceTensors;
   const isSimulatedDisplay = loadedTensor ? loadedTensor.isSimulated : true;
@@ -652,10 +869,19 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
   // Active planes for current selection
   const safeEpochIndex = activeEpochIndex % totalEpochsCount;
+  const referenceEpochIndex = useMemo(() => {
+    for (let e = 0; e < totalEpochsCount; e++) {
+      if (getPlaneMaxNExp(activeTensors.nExpData?.[e]?.[activeBandIndex]) > 0) {
+        return e;
+      }
+    }
+    return 0;
+  }, [activeTensors, totalEpochsCount, activeBandIndex]);
+
   const currentFluxPlane = activeTensors.fluxData[safeEpochIndex]?.[activeBandIndex] || null;
-  const referenceFluxPlane = activeTensors.fluxData[0]?.[activeBandIndex] || null;
+  const referenceFluxPlane = activeTensors.fluxData[referenceEpochIndex]?.[activeBandIndex] || null;
   const currentVarPlane = activeTensors.varData[safeEpochIndex]?.[activeBandIndex] || null;
-  const referenceVarPlane = activeTensors.varData[0]?.[activeBandIndex] || null;
+  const referenceVarPlane = activeTensors.varData[referenceEpochIndex]?.[activeBandIndex] || null;
   const currentFlagsPlane = activeTensors.flagsData[safeEpochIndex]?.[activeBandIndex] || null;
 
   // 3-Band RGB False-Color Planes (D5 = Red, D3 = Green, D1 = Blue)
@@ -777,34 +1003,40 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     [measuringMotion, currentFluxPlane, activeEpochIndex, surveyPasses, setProbedPixel, setUrlProbeX, setUrlProbeY]
   );
 
-  // Forced 3x3 Aperture Light Curve Data across epochs (D1 vs D5)
+  // Forced Aperture Light Curve Data across epochs (D1 vs D5), skipping masked/NaN core pixels
   const lightCurveData = useMemo(() => {
-    return surveyPasses.map((pass, eIdx) => {
-      // Sample 3x3 center aperture flux in D1 and D5
-      const ep = eIdx % totalEpochsCount;
-      const d1Plane = activeTensors.fluxData[ep]?.[0];
-      const d5Plane = activeTensors.fluxData[ep]?.[4];
-      const center = Math.floor(currentWidth / 2);
-      let d1Sum = 0;
-      let d5Sum = 0;
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const px = center + dx;
-          const py = center + dy;
-          if (px >= 0 && px < currentWidth && py >= 0 && py < currentHeight) {
-            const idx = py * currentWidth + px;
-            d1Sum += d1Plane?.[idx] || 0;
-            d5Sum += d5Plane?.[idx] || 0;
+    const sampleFiniteMean = (plane: Float32Array | undefined): number => {
+      if (!plane) return 0;
+      const cx = Math.floor(currentWidth / 2);
+      const cy = Math.floor(currentHeight / 2);
+      for (const radius of [1, 2]) {
+        let sum = 0;
+        let cnt = 0;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const px = cx + dx;
+            const py = cy + dy;
+            if (px >= 0 && px < currentWidth && py >= 0 && py < currentHeight) {
+              const v = plane[py * currentWidth + px];
+              if (Number.isFinite(v)) {
+                sum += v;
+                cnt++;
+              }
+            }
           }
         }
+        if (cnt > 0) return sum / cnt;
       }
+      return 0;
+    };
 
+    return surveyPasses.map((pass, eIdx) => {
+      const ep = eIdx % totalEpochsCount;
       return {
         epoch: pass.label,
         mjd: pass.mjd,
-        fluxD1: d1Sum / 9.0,
-        fluxD5: d5Sum / 9.0,
+        fluxD1: sampleFiniteMean(activeTensors.fluxData[ep]?.[0]),
+        fluxD5: sampleFiniteMean(activeTensors.fluxData[ep]?.[4]),
       };
     });
   }, [activeTensors, surveyPasses, totalEpochsCount, currentWidth, currentHeight]);
@@ -813,17 +1045,30 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const activeBand = BANDS[activeBandIndex];
 
   if (!loadedTensor) {
+    const activeDownload = matchingDownloadingSection;
+    const isShowingProgress = dataStatus === 'loading' || Boolean(activeDownload);
+    const displayProgress = activeDownload ? activeDownload.progress : dataProgress;
+    const displayMessage = activeDownload ? activeDownload.message : dataMessage;
     return (
-      <main className="min-h-[70vh] bg-slate-950 px-6 py-16 text-slate-100">
-        <section className="mx-auto max-w-2xl rounded-2xl border border-cyan-900/60 bg-slate-900/80 p-8">
-          <p className="font-mono text-xs uppercase tracking-[0.22em] text-cyan-300">
-            {dataStatus === 'loading' ? 'IRSA archive request' : 'Real data unavailable'}
+      <main className="min-h-[70vh] bg-slate-950 px-6 py-12 text-slate-100">
+        <section className="mx-auto max-w-3xl rounded-2xl border border-cyan-900/60 bg-slate-900/80 p-8">
+          <p className={`font-mono text-xs uppercase tracking-[0.22em] ${activeDownload ? 'text-orange-300' : 'text-cyan-300'}`}>
+            {activeDownload
+              ? 'Installing section in background'
+              : dataStatus === 'loading'
+                ? 'Loading cutout section'
+                : dataStatus === 'uninstalled'
+                  ? 'Installed section workflow'
+                  : 'Real data unavailable'}
           </p>
           <h1 className="mt-3 text-2xl font-semibold">Time-domain observations</h1>
-          <p className="mt-4 text-sm leading-6 text-slate-300" role={dataStatus === 'loading' ? 'status' : 'alert'}>
-            {dataMessage}
+          <p className="mt-2 font-mono text-xs text-slate-400">
+            Active target: RA {urlRa.toFixed(5)}°, Dec {urlDec >= 0 ? '+' : ''}{urlDec.toFixed(5)}° · FOV {Math.round(urlFov || 180)}″
           </p>
-          {dataStatus === 'loading' ? (
+          <p className="mt-4 text-sm leading-6 text-slate-300" role={isShowingProgress ? 'status' : 'alert'}>
+            {displayMessage}
+          </p>
+          {isShowingProgress ? (
             <>
               <div
                 className="mt-6 h-1 overflow-hidden rounded bg-slate-800"
@@ -831,28 +1076,87 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 aria-label="SPHEREx data loading progress"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={Math.round(dataProgress * 100)}
+                aria-valuenow={Math.round(displayProgress * 100)}
               >
                 <div
-                  className="h-full rounded bg-cyan-400 transition-[width] duration-300 ease-out"
-                  style={{ width: `${Math.max(1, dataProgress * 100)}%` }}
+                  className={`h-full rounded transition-[width] duration-300 ease-out ${activeDownload ? 'bg-orange-500' : 'bg-cyan-400'}`}
+                  style={{ width: `${Math.max(1, displayProgress * 100)}%` }}
                 />
               </div>
-              <p className="mt-1 text-right font-mono text-[10px] text-slate-500">
-                {Math.round(dataProgress * 100)}%
+              <p className={`mt-1 text-right font-mono text-[10px] ${activeDownload ? 'text-orange-300' : 'text-slate-500'}`}>
+                {Math.round(displayProgress * 100)}%
               </p>
             </>
           ) : (
-            <button
-              type="button"
-              className="mt-6 rounded-lg border border-cyan-700 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-950"
-              onClick={() => setLoadAttempt((attempt) => attempt + 1)}
-            >
-              Retry archive query
-            </button>
+            <div className="mt-6 space-y-6">
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  disabled={isInstallingHere}
+                  onClick={handleInstallSectionHere}
+                  className="rounded-lg border border-emerald-600/70 bg-emerald-950/60 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-900/60 disabled:opacity-50"
+                >
+                  {isInstallingHere ? 'Installing section…' : 'Install & Load Section Here'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForceLiveCoordKey(currentCoordKey);
+                    setLoadAttempt((attempt) => attempt + 1);
+                  }}
+                  className="rounded-lg border border-cyan-700 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-950"
+                >
+                  {dataStatus === 'error' ? 'Retry live IRSA query' : 'Query IRSA Live (Temporary)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('navigator')}
+                  className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                >
+                  Select in Sky Navigator
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
+                    Installed Sections ({readyInstalledSections.length})
+                  </h2>
+                  <span className="text-[11px] text-slate-500">
+                    Instant reuse across Time-Domain, Spectrum &amp; Ice Studio
+                  </span>
+                </div>
+                {readyInstalledSections.length === 0 ? (
+                  <p className="mt-3 text-xs text-slate-400">
+                    No sections installed yet. Use Sky Navigator to browse footprints and click &ldquo;Install Cutout Section&rdquo;, or install this coordinate above.
+                  </p>
+                ) : (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {readyInstalledSections.map((sec) => (
+                      <button
+                        key={sec.section_id}
+                        type="button"
+                        onClick={() => handleSelectInstalledSection(sec)}
+                        className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2.5 text-left transition-colors hover:border-emerald-500/60 hover:bg-slate-800/80"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="truncate text-xs font-semibold text-white">{sec.label}</div>
+                          <div className="mt-0.5 font-mono text-[10px] text-slate-400">
+                            {sec.ra.toFixed(4)}°, {sec.dec >= 0 ? '+' : ''}{sec.dec.toFixed(4)}° · {Math.round(sec.fov_arcsec)}″ · {sec.epochs} ep
+                          </div>
+                        </div>
+                        <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-950/60 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
+                          {formatSectionBytes(sec.size_bytes)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
           <p className="mt-6 text-xs text-slate-500">
-            Only verified IRSA cutouts are rendered. Synthetic benchmark previews are disabled in this viewer.
+            Installed cutout sections stay saved locally on disk so switching tabs never re-queries IRSA unnecessarily.
           </p>
         </section>
       </main>
@@ -884,6 +1188,27 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 </svg>
               </button>
             )}
+            {readyInstalledSections.length > 0 && (
+              <select
+                aria-label="Switch installed section"
+                value={activeInstalledSection?.section_id || ''}
+                onChange={(e) => {
+                  const chosen = readyInstalledSections.find((s) => s.section_id === e.target.value);
+                  if (chosen) handleSelectInstalledSection(chosen);
+                }}
+                className="max-w-[200px] rounded-full border border-emerald-600/50 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 focus:outline-none"
+                title="Switch directly to any installed cutout section without querying IRSA"
+              >
+                {!activeInstalledSection && (
+                  <option value="">Installed ({readyInstalledSections.length})</option>
+                )}
+                {readyInstalledSections.map((sec) => (
+                  <option key={sec.section_id} value={sec.section_id}>
+                    {sec.label} ({sec.epochs} ep)
+                  </option>
+                ))}
+              </select>
+            )}
             <span className="rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 font-mono text-[10px] text-neutral-400">
               {store.sourceBadge}
             </span>
@@ -899,20 +1224,52 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             )}
           </div>
 
-          {/* Raw vs. Rectified Toggle */}
-          <div className="flex items-center space-x-2 text-xs">
-            <span className="text-neutral-400">Sensor alignment:</span>
-            <button
-              type="button"
-              onClick={() => setRawVsRectified(rawVsRectified === 'rectified' ? 'raw_sensor' : 'rectified')}
-              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
-                rawVsRectified === 'raw_sensor'
-                  ? 'border-amber-500 bg-amber-500/15 text-amber-400'
-                  : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-600 hover:text-white'
-              }`}
-            >
-              {rawVsRectified === 'raw_sensor' ? `Raw sensor (θ = ${activePass.rollAngleDeg}°)` : 'Rectified North-Up'}
-            </button>
+          {/* Controls: Canvas Zoom/Smoothing + Raw vs. Rectified Toggle */}
+          <div className="flex items-center space-x-3 text-xs">
+            <div className="flex items-center space-x-1 border-r border-neutral-800 pr-3">
+              <span className="text-neutral-400 text-[11px] mr-1">Scale:</span>
+              {(['fit', '1x', '2x', '4x'] as const).map((z) => (
+                <button
+                  key={z}
+                  type="button"
+                  onClick={() => setCanvasZoom(z)}
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                    canvasZoom === z
+                      ? 'border border-primary bg-primary/20 text-white font-bold'
+                      : 'border border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  {z.toUpperCase()}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setIsSmoothRendering(!isSmoothRendering)}
+                title="Toggle between pixelated (crisp) and bilinear (smooth) interpolation"
+                className={`ml-1.5 rounded px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                  isSmoothRendering
+                    ? 'border-cyan-500 bg-cyan-500/20 text-cyan-300'
+                    : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-white'
+                }`}
+              >
+                {isSmoothRendering ? 'Smooth' : 'Crisp'}
+              </button>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <span className="text-neutral-400">Sensor:</span>
+              <button
+                type="button"
+                onClick={() => setRawVsRectified(rawVsRectified === 'rectified' ? 'raw_sensor' : 'rectified')}
+                className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                  rawVsRectified === 'raw_sensor'
+                    ? 'border-amber-500 bg-amber-500/15 text-amber-400'
+                    : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-600 hover:text-white'
+                }`}
+              >
+                {rawVsRectified === 'raw_sensor' ? `Raw (θ = ${activePass.rollAngleDeg}°)` : 'Rectified North-Up'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -958,8 +1315,18 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         )}
 
         {/* Central WebGL2 Canvas Viewport (Expansive & Fluid) */}
-        <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black p-4">
-          <div className="relative h-full w-full max-h-[calc(100vh-220px)] max-w-[calc(100vh-220px)] aspect-square rounded-xl border border-neutral-800 bg-black shadow-2xl overflow-hidden flex items-center justify-center">
+        <div className="relative flex flex-1 items-center justify-center overflow-auto bg-black p-4">
+          <div
+            className={`relative rounded-xl border border-neutral-800 bg-black shadow-2xl overflow-hidden flex items-center justify-center transition-all ${
+              canvasZoom === 'fit'
+                ? 'h-full w-full max-h-[calc(100vh-220px)] max-w-[calc(100vh-220px)] aspect-square'
+                : canvasZoom === '1x'
+                ? 'w-[240px] h-[240px]'
+                : canvasZoom === '2x'
+                ? 'w-[420px] h-[420px]'
+                : 'w-[600px] h-[600px]'
+            }`}
+          >
             <WebGLComparatorCanvas
               fluxData={currentFluxPlane}
               refFluxData={referenceFluxPlane}
@@ -973,10 +1340,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               diffScale={0.8}
               colorPalette={colorPalette}
               rgbBandsData={activeRgbPreset === 'custom' ? null : null}
-              isFrameZero={activeEpochIndex === 0}
+              isFrameZero={safeEpochIndex === referenceEpochIndex}
               gaiaPin={gaiaReticle}
               onPixelHover={setHoverPixel}
               onPixelClick={handlePixelClick}
+              smooth={isSmoothRendering}
               className="h-full w-full"
             />
 
@@ -1290,11 +1658,10 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                     </td>
                     {BANDS.map((band, bIdx) => {
                       const epIdx = pIdx % totalEpochsCount;
-                      const centerIdx = Math.floor((currentHeight * currentWidth) / 2);
-                      const nExpCount = activeTensors.nExpData?.[epIdx]?.[bIdx]?.[centerIdx] ?? 18;
-                      const isWiseUndetected =
-                        (activeBenchmark?.id === 'wise0855' && bIdx <= 2) || nExpCount === 0;
-                      const isSelected = activeEpochIndex === pIdx && activeBandIndex === bIdx;
+                      const nExpCount = getPlaneMaxNExp(activeTensors.nExpData?.[epIdx]?.[bIdx]);
+                      const isUnobserved = nExpCount === 0;
+                      const isWiseFaint = activeBenchmark?.id === 'wise0855' && bIdx <= 2;
+                      const isSelected = safeEpochIndex === pIdx && activeBandIndex === bIdx;
                       return (
                         <td
                           key={band.id}
@@ -1305,17 +1672,21 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                           className={`p-2 text-center cursor-pointer border-l border-neutral-800/50 transition-all ${
                             isSelected
                               ? 'bg-primary font-bold text-white shadow-inner'
-                              : isWiseUndetected
+                              : isUnobserved
                               ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                              : isWiseFaint
+                              ? 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
                               : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
                           }`}
                           title={
-                            isWiseUndetected
-                              ? 'Below detection depth (>17 mag in NIR; detected in D5/D6)'
+                            isUnobserved
+                              ? `No exposures in ${pass.label} for ${band.id}`
+                              : isWiseFaint
+                              ? `${band.id} (${nExpCount}x coverage; cold Y4 brown dwarf is faint >17 mag in NIR)`
                               : `${band.id} (${nExpCount} wavelength-matched exposures co-added, R=${band.resPower})`
                           }
                         >
-                          {isWiseUndetected ? 'Undet.' : `${nExpCount}x`}
+                          {isUnobserved ? 'Undet.' : `${nExpCount}x`}
                         </td>
                       );
                     })}
@@ -1333,43 +1704,57 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             <span className="font-mono text-[10px] text-neutral-400">3×3 px Aperture</span>
           </div>
           <p className="mb-2 text-[11px] text-neutral-400">
-            Evolution of calibrated flux across all 4 survey passes in Optical/NIR (D1) versus Thermal Infrared (D5).
+            Evolution of calibrated flux across all {totalEpochsCount} survey passes in Optical/NIR (D1) versus Thermal Infrared (D5).
           </p>
 
           <div className="h-28 w-full rounded-lg border border-neutral-800 bg-black/60 p-2">
-            <svg className="h-full w-full" viewBox="0 0 200 80">
-              {/* Gridlines */}
-              <line x1="20" y1="10" x2="190" y2="10" stroke="#262626" strokeWidth="0.5" />
-              <line x1="20" y1="40" x2="190" y2="40" stroke="#262626" strokeWidth="0.5" />
-              <line x1="20" y1="70" x2="190" y2="70" stroke="#262626" strokeWidth="0.5" />
+            {(() => {
+              const peakLcFlux = Math.max(
+                0.5,
+                ...lightCurveData.flatMap((d) => [Math.max(0, d.fluxD1), Math.max(0, d.fluxD5)])
+              );
+              const xForIdx = (i: number) =>
+                lightCurveData.length <= 1
+                  ? 105
+                  : 24 + (i / (lightCurveData.length - 1)) * 162;
+              const yForFlux = (val: number) =>
+                70 - Math.min(58, (Math.max(0, val) / peakLcFlux) * 56);
+              return (
+                <svg className="h-full w-full" viewBox="0 0 200 80">
+                  {/* Gridlines */}
+                  <line x1="20" y1="10" x2="190" y2="10" stroke="#262626" strokeWidth="0.5" />
+                  <line x1="20" y1="40" x2="190" y2="40" stroke="#262626" strokeWidth="0.5" />
+                  <line x1="20" y1="70" x2="190" y2="70" stroke="#262626" strokeWidth="0.5" />
 
-              {/* D1 Light curve stroke (NASA Blue) */}
-              <polyline
-                fill="none"
-                stroke="#288BFF"
-                strokeWidth="1.5"
-                points={lightCurveData
-                  .map((d, i) => `${30 + i * 45},${70 - Math.min(60, d.fluxD1 * 3)}`)
-                  .join(' ')}
-              />
-              {/* D5 Light curve stroke (NASA Amber) */}
-              <polyline
-                fill="none"
-                stroke="#F59E0B"
-                strokeWidth="1.5"
-                points={lightCurveData
-                  .map((d, i) => `${30 + i * 45},${70 - Math.min(60, d.fluxD5 * 3)}`)
-                  .join(' ')}
-              />
+                  {/* D1 Light curve stroke (NASA Blue) */}
+                  <polyline
+                    fill="none"
+                    stroke="#288BFF"
+                    strokeWidth="1.5"
+                    points={lightCurveData
+                      .map((d, i) => `${xForIdx(i)},${yForFlux(d.fluxD1)}`)
+                      .join(' ')}
+                  />
+                  {/* D5 Light curve stroke (NASA Amber) */}
+                  <polyline
+                    fill="none"
+                    stroke="#F59E0B"
+                    strokeWidth="1.5"
+                    points={lightCurveData
+                      .map((d, i) => `${xForIdx(i)},${yForFlux(d.fluxD5)}`)
+                      .join(' ')}
+                  />
 
-              {/* Data points */}
-              {lightCurveData.map((d, i) => (
-                <g key={i}>
-                  <circle cx={30 + i * 45} cy={70 - Math.min(60, d.fluxD1 * 3)} r="2.5" fill="#288BFF" />
-                  <circle cx={30 + i * 45} cy={70 - Math.min(60, d.fluxD5 * 3)} r="2.5" fill="#F59E0B" />
-                </g>
-              ))}
-            </svg>
+                  {/* Data points */}
+                  {lightCurveData.map((d, i) => (
+                    <g key={i}>
+                      <circle cx={xForIdx(i)} cy={yForFlux(d.fluxD1)} r="2.5" fill="#288BFF" />
+                      <circle cx={xForIdx(i)} cy={yForFlux(d.fluxD5)} r="2.5" fill="#F59E0B" />
+                    </g>
+                  ))}
+                </svg>
+              );
+            })()}
           </div>
 
           <div className="mt-2.5 flex items-center justify-between text-[11px] font-sans">
