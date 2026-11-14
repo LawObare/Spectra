@@ -21,22 +21,30 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 try:
+    from backend.api.sections import (
+        _get_pool,
+        find_installed_section_for_coord,
+        get_installed_section_spectrum,
+    )
     from backend.science.wave import (
         TOTAL_SPHEREX_CHANNELS,
         extract_102_channel_spectrum,
         extract_live_observations,
-        match_benchmark_target,
     )
 except ImportError:
+    from api.sections import (
+        _get_pool,
+        find_installed_section_for_coord,
+        get_installed_section_spectrum,
+    )
     from science.wave import (
         TOTAL_SPHEREX_CHANNELS,
         extract_102_channel_spectrum,
         extract_live_observations,
-        match_benchmark_target,
     )
 
 logger = logging.getLogger(__name__)
@@ -89,14 +97,25 @@ class SpectrumResponse(BaseModel):
     ),
 )
 async def get_spectrum(
+    request: Request,
     ra: float = Query(..., ge=0.0, le=360.0, description="Right Ascension in J2000 decimal degrees [0, 360]"),
     dec: float = Query(..., ge=-90.0, le=90.0, description="Declination in J2000 decimal degrees [-90, +90]"),
     normalize: bool = Query(False, description="Apply 3σ-clipped 4th-order Chebyshev polynomial continuum normalization"),
 ) -> SpectrumResponse:
-    """Synchronously extract an archive-backed spectrum for API clients."""
-    if match_benchmark_target(ra, dec, match_radius_arcsec=60.0):
-        spec = extract_102_channel_spectrum(ra=ra, dec=dec, normalize=normalize, custom_observations=None)
-        return _response_from_spectrum(spec)
+    """Synchronously extract an archive-backed spectrum from installed sections or live IRSA."""
+    pool = await _get_pool(request)
+    if pool is not None:
+        installed = await find_installed_section_for_coord(pool, ra, dec)
+        if installed is not None:
+            section_spec = await get_installed_section_spectrum(
+                str(installed["section_id"]),
+                request=request,
+                px=None,
+                py=None,
+                epoch=None,
+                normalize=normalize,
+            )
+            return SpectrumResponse(**section_spec)
 
     try:
         observations, releases, exposure_ids = await extract_live_observations(ra, dec)
