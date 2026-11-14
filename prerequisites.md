@@ -12,8 +12,8 @@ The following baseline runtimes are mandatory for the multi-service architecture
 |---|---|---|---|
 | **Linux / macOS / WSL2** | Ubuntu 22.04+ / macOS 13+ | `uname -srm` | Native host operating system with POSIX shell and Docker support. |
 | **Docker & Docker Compose** | Docker 24.0+ / Compose v2 | `docker --version && docker compose version` | Hosts local Supabase PostgreSQL 16 container with `pgvector` and Studio UI. |
-| **Go** | Go 1.22+ (1.23 recommended) | `go version` | Powers the high-concurrency API Gateway, LRU cache, and WebSocket hub (`api-gateway/`). |
-| **Python** | Python 3.11+ | `python3 --version` | Powers the Astropy, PyVO, SciPy, PyTorch science microservice (`astro-worker/`). |
+| **Python** | Python 3.11+ | `python3 --version` | Powers the primary single-service FastAPI backend (`backend/`), Astropy, PyVO, SciPy, and Reproject pipeline. |
+| **Go (Optional)** | Go 1.22+ (1.23 recommended) | `go version` | Optional gateway passthrough and concurrent proxy (`api-gateway/`). |
 | **Node.js & npm** | Node.js 20+ (LTS) / npm 10+ | `node -v && npm -v` | Powers the React 18, Vite 5, Tailwind CSS frontend client (`web-client/`). |
 
 ---
