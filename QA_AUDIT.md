@@ -142,6 +142,25 @@ Spectra splits the analysis of a single celestial coordinate across 5 isolated w
 - When an observer probes a dipole in Tab 2, they cannot verify if it has methane absorption without abandoning the image and switching to Tab 3.
 - If they want to test a neighboring point source in the same cluster, they must switch back to Tab 2, click the new pixel, and switch back to Tab 3.
 
+### 4. The "Cold Drop" Anti-Pattern: A Tool That Fails to Explain Itself Before Use
+Unlike **Backyard Worlds (Planet-9)**, which functions as an explanatory narrative website *before* exposing the classification engine, Spectra currently commits the **Cold Drop Anti-Pattern**:
+- When a user navigates to `/`, the application immediately and silently redirects to `/explore?tab=navigator`.
+- The user is dropped cold onto an interactive sky survey canvas with coordinates `269.44639, +4.76676` without a single introductory sentence.
+- There is zero contextual priming to answer:
+  1. *What is SPHEREx, and why does photographing the sky in 102 infrared bands matter?*
+  2. *Why are we looking for motion across 6-month survey passes?*
+  3. *Why can't computers find these objects automatically? (Why is a human volunteer needed?)*
+  4. *What does a moving planet or brown dwarf actually look like compared to a diffraction artifact?*
+
+**How Planet-9 Solved This:**
+On `backyardworlds.org`, a volunteer is never dropped cold into data. The landing page acts as an educational and motivational primer:
+1. **The Scientific Mission:** Explains that the Sun is surrounded by thousands of undiscovered cold brown dwarfs and potentially a massive distant planet (Planet Nine) that emit faint infrared heat.
+2. **The Human Advantage:** Explains why machine learning algorithms struggle (infrared images have thousands of optical persistence glitches, diffraction spikes, and cosmic ray hits that trip automated filters, whereas human visual pattern recognition instantly filters them).
+3. **The 3-Slide Field Guide:** Shows concrete, animated before-and-after examples of moving dipoles, variable stars, and optical ghosts *before* the user ever clicks their first subject.
+4. **The Clear Handoff:** Only after the user understands the objective do they launch into the classification viewer.
+
+In contrast, Spectra presents the user with an active operating console without any prior briefing. The user must reverse-engineer the purpose of the platform by exploring complex tabs and decyphering astrophysical headers.
+
 ---
 
 ## 5. SPHEREx Mission Alignment & Scientific Feasibility
@@ -211,6 +230,15 @@ flowchart LR
 ### Recommendation 3: Add an Optical Cross-Match Toggle (Pan-STARRS PS1 / DSS2)
 - Add a single-click switch: **`[Overlay Optical Counterpart]`**.
 - If a moving infrared dipole disappears in the optical Pan-STARRS overlay, it is instantly confirmed as an ultracool brown dwarf ($T_{\text{eff}} < 1000\,\text{K}$). If it is bright in optical, it is a nearby red dwarf. This provides volunteers with an immediate discovery verdict.
+
+### Recommendation 4: Implement the Pre-Use "Mission Briefing & Pattern Primer" (The Explanatory Front Door)
+- Address the "Cold Drop" defect by introducing an interactive **Mission Briefing Modal / Landing Banner**:
+  - Automatically launches on first visit (tracked via `localStorage.getItem('spx_briefed')`).
+  - Always re-openable via a persistent **`[?] Mission Briefing`** button in the global header.
+  - Presents a 3-step visual narrative before complex data is shown:
+    1. **The SPHEREx Mission:** Why 102 infrared bands over 6-month survey passes matter for finding cold, dark objects.
+    2. **The 3 Visual Signatures:** Interactive before-and-after animations of a **Moving Dipole**, **Pulsing Variable**, and **Instrumental Glitch**.
+    3. **How to Use the Tool:** Clear guidance on using benchmark pills, blinking passes, and toggling difference modes.
 
 ---
 
