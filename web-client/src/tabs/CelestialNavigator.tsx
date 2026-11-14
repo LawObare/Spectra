@@ -1730,7 +1730,7 @@ export const CelestialNavigator: React.FC = () => {
   };
 
   return (
-    <div className="relative flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
+    <div className="relative flex h-full min-h-[calc(100dvh-110px)] lg:min-h-0 w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
       {/* LEFT 70%: Native Aladin Lite v3 WebGL2 Sky Viewport */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         {/* Top Overlay Instrument Toolbar (Modelled after IRSA Firefly Layer & Band Bar) */}
@@ -1739,9 +1739,9 @@ export const CelestialNavigator: React.FC = () => {
           onDoubleClick={(e) => e.stopPropagation()}
           className="z-20 flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-1.5"
         >
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <div className="flex flex-nowrap lg:flex-wrap items-center gap-2 min-w-0 overflow-x-auto py-0.5">
           {/* Layer Toggles */}
-          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Sky overlay layers">
+          <div className="flex flex-nowrap lg:flex-wrap items-center gap-1.5 shrink-0" role="group" aria-label="Sky overlay layers">
             <Button
               variant={showLvfFootprints ? 'secondary' : 'ghost'}
               size="xs"
@@ -1801,7 +1801,7 @@ export const CelestialNavigator: React.FC = () => {
             </Button>
 
             {/* Photographic Sky Survey Layer Selector */}
-            <div className="flex items-center gap-1.5 ml-1" role="group" aria-label="Photographic survey layer">
+            <div className="flex items-center gap-1.5 ml-1 shrink-0" role="group" aria-label="Photographic survey layer">
               <span className="text-[11px] text-muted-foreground">Survey:</span>
               <Select
                 sizeVariant="xs"
@@ -1820,7 +1820,7 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           {/* SPHEREx Detector Band Filter (D1-D6) */}
-          <div className="flex items-center gap-1" role="group" aria-label="SPHEREx detector filter">
+          <div className="flex items-center gap-1 shrink-0" role="group" aria-label="SPHEREx detector filter">
             <span className="mr-1 text-[11px] text-muted-foreground">Detector:</span>
             <Button
               variant={selectedBandFilter === 'ALL' ? 'secondary' : 'ghost'}
@@ -1861,7 +1861,7 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           {/* Field of View Zoom Controls */}
-          <div className="flex items-center rounded-sm border border-border bg-background p-0.5 gap-0.5">
+          <div className="flex items-center rounded-sm border border-border bg-background p-0.5 gap-0.5 shrink-0">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1981,8 +1981,8 @@ export const CelestialNavigator: React.FC = () => {
         </div>
 
         {/* Bottom 32px High-Frequency Cursor Telemetry Strip */}
-        <footer className="z-20 flex h-[34px] items-center justify-between border-t border-border bg-card px-3 text-[11px]">
-          <div className="flex items-center gap-3 overflow-hidden">
+        <footer className="z-20 flex min-h-[34px] flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border bg-card px-3 py-1 text-[11px]">
+          <div className="flex items-center gap-3 overflow-hidden min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Cursor J2000:</span>
               <span
@@ -2015,7 +2015,7 @@ export const CelestialNavigator: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] tabular-nums text-muted-foreground">
             <span>β_ecl = {coverageDepth.eclipticLatDeg >= 0 ? '+' : ''}{coverageDepth.eclipticLatDeg.toFixed(1)}°</span>
             <span className="text-border">·</span>
             <span className="text-foreground">{coverageDepth.cadenceLabel}</span>
@@ -2028,7 +2028,7 @@ export const CelestialNavigator: React.FC = () => {
       <aside
         onMouseDown={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        className="absolute right-3 top-12 z-30 flex max-h-[calc(100%-4rem)] w-[360px] xl:w-[410px] flex-col overflow-y-auto rounded-xl border border-border bg-card shadow-2xl"
+        className="absolute left-2 right-2 sm:left-auto sm:right-3 top-12 z-30 flex max-h-[calc(100%-3.5rem)] w-auto sm:w-[360px] xl:w-[410px] flex-col overflow-y-auto rounded-xl border border-border bg-card shadow-2xl"
       >
         {/* 1. Target Position & Spatial Cutout Parameters */}
         <div className="border-b border-border p-3">
