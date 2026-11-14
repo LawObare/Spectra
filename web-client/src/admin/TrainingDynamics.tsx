@@ -671,8 +671,8 @@ trainer.train()`,
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
       {/* TOP BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/70 px-5 py-2.5 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 border-b border-border bg-card/70 px-3 sm:px-5 py-2.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div>
             <h2 className="text-sm font-semibold text-foreground">
               SFT & LoRA Training Studio
@@ -693,7 +693,7 @@ trainer.train()`,
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -730,9 +730,9 @@ trainer.train()`,
       </div>
 
       {/* MAIN 2-COLUMN WORKSPACE */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
         {/* LEFT COLUMN: 4-STEP TRAINING STUDIO */}
-        <aside className="w-[380px] shrink-0 border-r border-border bg-card/30 overflow-y-auto p-4 flex flex-col gap-3.5">
+        <aside className="w-full lg:w-[350px] xl:w-[380px] shrink-0 border-b lg:border-b-0 lg:border-r border-border bg-card/30 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-3.5">
           {/* STEP 1: ARCHITECTURE & PEFT LORA */}
           <Card className="border-border">
             <CardHeader className="py-2.5 px-3.5 bg-secondary/40 border-b border-border flex flex-row items-center justify-between">
@@ -991,7 +991,7 @@ trainer.train()`,
         </aside>
 
         {/* RIGHT WORKSPACE: LIVE TELEMETRY & SCRIPT */}
-        <section className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <section className="flex-1 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-4">
           {showScriptDrawer && (
             <Card className="border-sky-500/40 bg-slate-950/90">
               <CardHeader className="py-2 px-4 border-b border-border flex flex-row items-center justify-between">
