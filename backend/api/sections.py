@@ -69,10 +69,13 @@ _seed_lock = asyncio.Lock()
 _seed_runner_task: asyncio.Task[None] | None = None
 
 
+BENCHMARK_FOV_ARCSEC = 300.0
+
+
 class SectionInstallRequest(BaseModel):
     ra: float = Field(..., ge=0.0, lt=360.0)
     dec: float = Field(..., ge=-90.0, le=90.0)
-    fov_arcsec: float = Field(180.0, ge=30.0, le=600.0)
+    fov_arcsec: float = Field(BENCHMARK_FOV_ARCSEC, ge=30.0, le=600.0)
     label: str = Field("", max_length=120)
     adaptive_window: bool = True
     zodi_subtracted: bool = True
@@ -468,7 +471,7 @@ async def _run_benchmark_seed_queue(pool: asyncpg.Pool, targets: list[dict[str, 
                 pool,
                 ra=ra,
                 dec=dec,
-                fov_arcsec=180.0,
+                fov_arcsec=BENCHMARK_FOV_ARCSEC,
                 label=label,
             )
             install_task = _active_installs.get(section_id)
@@ -478,6 +481,10 @@ async def _run_benchmark_seed_queue(pool: asyncpg.Pool, targets: list[dict[str, 
     try:
         await asyncio.gather(*(_install_one(t) for t in targets))
         benchmark_ids = [
+            section_id_for(float(t["ra"]), float(t["dec"]), BENCHMARK_FOV_ARCSEC)
+            for t in BENCHMARK_TARGETS.values()
+        ]
+        legacy_ids = [
             section_id_for(float(t["ra"]), float(t["dec"]), 180.0)
             for t in BENCHMARK_TARGETS.values()
         ]
@@ -494,8 +501,20 @@ async def _run_benchmark_seed_queue(pool: asyncpg.Pool, targets: list[dict[str, 
             1 for r in ready_rows if r["tensor_path"] and Path(str(r["tensor_path"])).exists()
         )
         if ready_valid >= len(benchmark_ids):
+            async with pool.acquire() as conn:
+                removed = await conn.fetch(
+                    "DELETE FROM installed_sections WHERE section_id = ANY($1::text[]) RETURNING tensor_path",
+                    legacy_ids,
+                )
+            for row in removed:
+                tp = row["tensor_path"]
+                if tp:
+                    Path(str(tp)).unlink(missing_ok=True)
             SECTIONS_DIR.mkdir(parents=True, exist_ok=True)
-            _BENCHMARKS_SEEDED_MARKER.write_text(f"ready={ready_valid}\n", encoding="utf-8")
+            _BENCHMARKS_SEEDED_MARKER.write_text(
+                f"fov={int(BENCHMARK_FOV_ARCSEC)};gap=25;ready={ready_valid}\n",
+                encoding="utf-8",
+            )
             logger.info("All %d real IRSA benchmark sections installed and verified.", ready_valid)
         else:
             logger.warning(
@@ -517,7 +536,12 @@ async def ensure_benchmarks_preinstalled(
     global _seed_runner_task
     if pool is None:
         return 0
-    if not force and _BENCHMARKS_SEEDED_MARKER.exists():
+    expected_marker = f"fov={int(BENCHMARK_FOV_ARCSEC)};gap=25;"
+    if (
+        not force
+        and _BENCHMARKS_SEEDED_MARKER.exists()
+        and expected_marker in _BENCHMARKS_SEEDED_MARKER.read_text(encoding="utf-8")
+    ):
         return 0
     if not force and _seed_runner_task is not None and not _seed_runner_task.done():
         if wait:
@@ -525,7 +549,11 @@ async def ensure_benchmarks_preinstalled(
         return 0
 
     async with _seed_lock:
-        if not force and _BENCHMARKS_SEEDED_MARKER.exists():
+        if (
+            not force
+            and _BENCHMARKS_SEEDED_MARKER.exists()
+            and expected_marker in _BENCHMARKS_SEEDED_MARKER.read_text(encoding="utf-8")
+        ):
             return 0
         if not force and _seed_runner_task is not None and not _seed_runner_task.done():
             return 0
@@ -547,7 +575,7 @@ async def ensure_benchmarks_preinstalled(
         for target in BENCHMARK_TARGETS.values():
             ra = float(target["ra"])
             dec = float(target["dec"])
-            sid = section_id_for(ra, dec, 180.0)
+            sid = section_id_for(ra, dec, BENCHMARK_FOV_ARCSEC)
             row = existing_map.get(sid)
             is_real_ready = bool(
                 not force
@@ -563,7 +591,10 @@ async def ensure_benchmarks_preinstalled(
 
         if not to_install:
             SECTIONS_DIR.mkdir(parents=True, exist_ok=True)
-            _BENCHMARKS_SEEDED_MARKER.write_text(f"ready={len(BENCHMARK_TARGETS)}\n", encoding="utf-8")
+            _BENCHMARKS_SEEDED_MARKER.write_text(
+                f"fov={int(BENCHMARK_FOV_ARCSEC)};gap=25;ready={len(BENCHMARK_TARGETS)}\n",
+                encoding="utf-8",
+            )
             return 0
 
         _BENCHMARKS_SEEDED_MARKER.unlink(missing_ok=True)
