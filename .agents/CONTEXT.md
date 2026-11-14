@@ -2624,3 +2624,28 @@ To ensure that **any** agent working in the repository—whether running via Ant
 ### Status
 - Passed all integrity checks.
 - Clean git working tree on `main`.
+
+---
+
+## Exchange #39: Creation of Comprehensive System Architecture & Design Document (SYSTEM_ARCHITECTURE.md)
+
+### Context & Goals
+- Author an authoritative, comprehensive System Design Document (SDD) / Solutions Architecture Document in a separate file: `SYSTEM_ARCHITECTURE.md` (and symlinked `SYSTEM_DESIGN.md`).
+- Ground the document 100% in `SPECIFICATION.md` v3.0.0-PROD and the unified single FastAPI backend architecture.
+
+### Document Structure & Core Sections Completed
+1. **Overview & Scope:** Executive summary, problem statement, SPHEREx mission scope, evaluator personas.
+2. **Requirements & Constraints:** FR-01 to FR-08, NFR-01 to NFR-06, $0 free-tier constraints, scientific constraints (LVF smile, proper motion propagation, flux conservation).
+3. **System Architecture & Views (4+1 Model):** Logical view, process view (concurrency queue & SSE streaming), development view (repo layout), physical/deployment view (Cloudflare Pages + Hugging Face Spaces + Supabase Cloud).
+4. **Component & Service Design:** Frontend client subsystems (Tabs 1–5 + /admin), backend mission engine subsystems (ingest, reproject_exact, wave smile inversion, PSF centroiding, in-memory cosine similarity, SSE/WS hubs).
+5. **Data Architecture:** PostgreSQL 16 schema & relations, Mermaid ERD, 4-tier caching hierarchy, storage lifecycle budgets.
+6. **Interface & Integration Design:** Complete REST & SSE/WS endpoints, zero-copy IEEE-754 Float32 binary streaming protocol, VO integrations with 2.0s circuit breakers.
+7. **Security & Access Control:** Zero-auth cryptographic session protocol (`spx_observer_id` + `sha256(spx_observer_key)`), route isolation (`/explore` vs `/admin`), RLS perimeter, CORS whitelisting, rate limiting.
+8. **Technology Stack Matrix:** Exhaustive framework, language, runtime, and dependency manifest.
+9. **Deployment & Operational Infrastructure:** Dockerfile, supervisor start.sh, $0 always-warm keep-alive loop, CI/CD, offline venue demo fallback.
+10. **Architectural Decision Records (ADRs):** ADR-001 (Single FastAPI) through ADR-008 (Native PSF Centroiding).
+11. **Verification Matrix & Sign-Off:** Verification anchors across all core systems.
+
+### Status
+- `SYSTEM_ARCHITECTURE.md` created (809 lines, 51,430 chars).
+- Passed all integrity checks and code fence validations.
