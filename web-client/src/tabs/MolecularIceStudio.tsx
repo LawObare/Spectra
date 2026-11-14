@@ -26,18 +26,14 @@ import {
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 
-export interface SplicesTarget {
+export interface IceTarget {
   id: string;
   name: string;
   ra: number;
   dec: number;
   catalog: string;
   environment: string;
-  snr: number;
-  teffK: number;
-  avMag: number;
   badge: string;
-  columns: Record<IceKey, number>;
   isBrownDwarf?: boolean;
 }
 
@@ -74,17 +70,6 @@ export interface IceSolution {
   bands: IceColumnResult[];
   ratioPercent: number | null;
   brownDwarfNotice: string | null;
-}
-
-export interface AperturePhotometry {
-  apertureRadiusPx: number;
-  annulusInnerPx: number;
-  annulusOuterPx: number;
-  psfFwhmPx: number;
-  skyLevel: number;
-  sourceFraction: number;
-  backgroundSubtractedFlux: number;
-  snr: number;
 }
 
 export interface SpectrumSource {
@@ -168,109 +153,15 @@ export const PHOTOSPHERIC_CH4_NOTICE =
   'photospheric gas, not solid interstellar ice. Laboratory solid-ice A-values are not ' +
   'applied to brown-dwarf photospheres, and spurious ice column densities are suppressed.';
 
-const SPLICES_COLUMNS: Array<Record<IceKey, number>> = [
-  { h2o: 2.45e18, co2: 4.12e17, co2_13: 6.4e16, co: 8.9e17, ch3oh: 1.2e17 },
-  { h2o: 3.1e18, co2: 5.8e17, co2_13: 8.1e16, co: 1.05e18, ch3oh: 1.9e17 },
-  { h2o: 1.62e18, co2: 2.95e17, co2_13: 4.6e16, co: 5.4e17, ch3oh: 7.8e16 },
-  { h2o: 1.1e18, co2: 1.88e17, co2_13: 2.7e16, co: 3.2e17, ch3oh: 4.2e16 },
-  { h2o: 4.05e18, co2: 7.2e17, co2_13: 1.08e17, co: 1.4e18, ch3oh: 2.6e17 },
-  { h2o: 2.9e18, co2: 4.9e17, co2_13: 7.1e16, co: 9.6e17, ch3oh: 1.55e17 },
-];
-
-export const SPLICES_BACKGROUND_STARS: SplicesTarget[] = [
-  {
-    id: 'SPLICES-J181410-175200',
-    name: 'SPLICES-J181410-175200',
-    ra: 273.54167,
-    dec: -17.86667,
-    catalog: 'SPLICES Ice Source Candidate (synthetic demo seed)',
-    environment: 'Embedded YSO / dense molecular cloud',
-    snr: 41.8,
-    teffK: 4500,
-    avMag: 14.2,
-    badge: '[Synthetic Injection Mode]',
-    columns: SPLICES_COLUMNS[0],
-  },
-  {
-    id: 'SPLICES-J162813-242734',
-    name: 'SPLICES-J162813-242734',
-    ra: 247.05417,
-    dec: -24.45944,
-    catalog: 'SPLICES Ice Source Candidate (synthetic demo seed)',
-    environment: 'Class 0 protostar / outflow cavity',
-    snr: 37.4,
-    teffK: 3900,
-    avMag: 18.6,
-    badge: '[Synthetic Injection Mode]',
-    columns: SPLICES_COLUMNS[1],
-  },
-  {
-    id: 'SPLICES-J053120+221748',
-    name: 'SPLICES-J053120+221748',
-    ra: 82.83333,
-    dec: 22.29667,
-    catalog: 'SPLICES Ice Source Candidate (synthetic demo seed)',
-    environment: 'Young stellar object / Taurus cloud',
-    snr: 52.1,
-    teffK: 5200,
-    avMag: 9.4,
-    badge: '[Synthetic Injection Mode]',
-    columns: SPLICES_COLUMNS[2],
-  },
-  {
-    id: 'SPLICES-J214131+580438',
-    name: 'SPLICES-J214131+580438',
-    ra: 325.37917,
-    dec: 58.07722,
-    catalog: 'SPLICES Ice Source Candidate (synthetic demo seed)',
-    environment: 'Isolated dense core / Cepheus flare',
-    snr: 33.9,
-    teffK: 6100,
-    avMag: 11.8,
-    badge: '[Synthetic Injection Mode]',
-    columns: SPLICES_COLUMNS[3],
-  },
-  {
-    id: 'SPLICES-J183029-023811',
-    name: 'SPLICES-J183029-023811',
-    ra: 277.62083,
-    dec: -2.63639,
-    catalog: 'SPLICES Ice Source Candidate (synthetic demo seed)',
-    environment: 'Infrared dark cloud / high extinction sightline',
-    snr: 45.6,
-    teffK: 4700,
-    avMag: 21.3,
-    badge: '[Synthetic Injection Mode]',
-    columns: SPLICES_COLUMNS[4],
-  },
-  {
-    id: 'SPLICES-J065754-044520',
-    name: 'SPLICES-J065754-044520',
-    ra: 104.475,
-    dec: -4.75556,
-    catalog: 'SPLICES Ice Source Candidate (synthetic demo seed)',
-    environment: 'Monoceros R2 / massive star-forming region',
-    snr: 29.8,
-    teffK: 7200,
-    avMag: 16.1,
-    badge: '[Synthetic Injection Mode]',
-    columns: SPLICES_COLUMNS[5],
-  },
-];
-
-export const BROWN_DWARF_GUARD_TARGETS: SplicesTarget[] = [
+export const BROWN_DWARF_GUARD_TARGETS: IceTarget[] = [
   {
     id: 'wise_0855',
     name: 'WISE 0855-0714',
     ra: 133.73712,
     dec: -7.24038,
-    catalog: 'NASA Benchmark (Pre-cached)',
+    catalog: 'NASA Benchmark Guardrail',
     environment: 'Y4 cold brown dwarf - photospheric CH4',
-    snr: 0,
-    teffK: 250,
-    avMag: 0,
-    badge: '[NASA Benchmark (Pre-cached)]',
-    columns: { h2o: 0, co2: 0, co2_13: 0, co: 0, ch3oh: 0 },
+    badge: '[IRSA Archive]',
     isBrownDwarf: true,
   },
   {
@@ -278,20 +169,11 @@ export const BROWN_DWARF_GUARD_TARGETS: SplicesTarget[] = [
     name: 'Epsilon Indi B',
     ra: 331.09566,
     dec: -56.80031,
-    catalog: 'NASA Benchmark (Pre-cached)',
+    catalog: 'NASA Benchmark Guardrail',
     environment: 'T1+T6 unresolved brown-dwarf binary - photospheric CH4',
-    snr: 0,
-    teffK: 1200,
-    avMag: 0,
-    badge: '[NASA Benchmark (Pre-cached)]',
-    columns: { h2o: 0, co2: 0, co2_13: 0, co: 0, ch3oh: 0 },
+    badge: '[IRSA Archive]',
     isBrownDwarf: true,
   },
-];
-
-export const ALL_ICE_TARGETS: SplicesTarget[] = [
-  ...SPLICES_BACKGROUND_STARS,
-  ...BROWN_DWARF_GUARD_TARGETS,
 ];
 
 // --------------------------------------------------------------------------------------
@@ -454,116 +336,8 @@ export function isBrownDwarfTarget(name: string | null, ra: number, dec: number)
   );
 }
 
-function hash01(seed: number): number {
-  const value = Math.sin(seed) * 43758.5453123;
-  return value - Math.floor(value);
-}
-
-export function targetBaseFlux(target: SplicesTarget): number {
-  return 0.02 + 0.000008 * target.teffK;
-}
-
-/**
- * Deterministic HDU-5-style PSF aperture photometry proxy.
- *
- * Synthetic mode still evaluates the exact pencil-beam algorithm: a normalized Gaussian
- * point-spread function is rendered onto a pixel grid, the source is summed inside the
- * circular aperture, and the local sky is estimated in the annulus and subtracted by
- * aperture area. The recovered source fraction therefore responds to both controls.
- */
-export function performAperturePhotometry(
-  apertureRadiusPx: number,
-  annulusInnerPx: number,
-  annulusOuterPx: number,
-  target: SplicesTarget
-): AperturePhotometry {
-  const safeAperture = Math.max(0.5, Math.min(4, apertureRadiusPx));
-  const safeInner = Math.max(safeAperture + 0.2, Math.min(6, annulusInnerPx));
-  const safeOuter = Math.max(safeInner + 0.5, Math.min(10, annulusOuterPx));
-  const sigmaPx = 0.85;
-  const psfFwhmPx = 2.3548 * sigmaPx;
-  const sourceAmplitude = 100;
-  const half = Math.max(9, Math.ceil(safeOuter) + 2);
-
-  const skyLevel = 0.004 + 0.0008 * target.avMag + 0.000005 * target.teffK;
-  let apertureSum = 0;
-  let apertureArea = 0;
-  let annulusSum = 0;
-  let annulusArea = 0;
-  let apertureNoiseVariance = 0;
-
-  for (let iy = -half; iy <= half; iy++) {
-    for (let ix = -half; ix <= half; ix++) {
-      const radius = Math.hypot(ix, iy);
-      const psf =
-        (sourceAmplitude * Math.exp(-0.5 * (radius / sigmaPx) ** 2)) /
-        (2 * Math.PI * sigmaPx ** 2);
-      const noise = (hash01(ix * 13.17 + iy * 7.31 + target.ra * 0.37) - 0.5) * 0.004;
-      const pixel = skyLevel + psf + noise;
-      if (radius <= safeAperture) {
-        apertureSum += pixel;
-        apertureArea += 1;
-        apertureNoiseVariance += Math.abs(pixel) + noise ** 2;
-      }
-      if (radius >= safeInner && radius <= safeOuter) {
-        annulusSum += pixel;
-        annulusArea += 1;
-      }
-    }
-  }
-
-  const skyPerPixel = annulusArea > 0 ? annulusSum / annulusArea : skyLevel;
-  const backgroundSubtractedFlux = Math.max(0, apertureSum - skyPerPixel * apertureArea);
-  const sourceFraction = Math.max(0.02, Math.min(1.2, backgroundSubtractedFlux / sourceAmplitude));
-  const noiseFloor = Math.sqrt(Math.max(1e-9, apertureNoiseVariance + skyPerPixel * apertureArea));
-  const snr = backgroundSubtractedFlux / noiseFloor;
-
-  return {
-    apertureRadiusPx: safeAperture,
-    annulusInnerPx: safeInner,
-    annulusOuterPx: safeOuter,
-    psfFwhmPx,
-    skyLevel: skyPerPixel,
-    sourceFraction,
-    backgroundSubtractedFlux,
-    snr,
-  };
-}
-
-export function generateSplicesSpectrum(
-  target: SplicesTarget,
-  nPoints = 1401,
-  sourceFraction = 1
-): { wavelengthsUm: number[]; flux: number[] } {
-  const wavelengthsUm: number[] = [];
-  const flux: number[] = [];
-  const baseFlux = targetBaseFlux(target);
-  for (let index = 0; index < nPoints; index++) {
-    const wave = 0.75 + (index / (nPoints - 1)) * 4.25;
-    const shifted = wave - 2.9;
-    const continuum = baseFlux * (1 + 0.16 * shifted - 0.02 * shifted ** 2);
-    let tauNu = 0;
-    if (target.isBrownDwarf) {
-      tauNu += 0.8 * Math.exp(-0.5 * ((wave - PHOTOSPHERIC_CH4_UM) / 0.12) ** 2);
-      tauNu += 0.55 * Math.exp(-0.5 * ((wave - 1.42) / 0.05) ** 2);
-      tauNu += 0.65 * Math.exp(-0.5 * ((wave - 1.92) / 0.07) ** 2);
-    } else {
-      const nu = wavenumberCm1(wave);
-      ICE_BANDS.forEach((band) => {
-        const column = target.columns[band.key] || 0;
-        const area = column * band.aValue;
-        const norm = band.sigmaCm1 * Math.sqrt(2 * Math.PI);
-        tauNu += (area / norm) * Math.exp(-0.5 * ((nu - wavenumberCm1(band.centerUm)) / band.sigmaCm1) ** 2);
-      });
-    }
-    wavelengthsUm.push(wave);
-    flux.push(Math.max(1e-12, sourceFraction * continuum * Math.exp(-tauNu)));
-  }
-  return { wavelengthsUm, flux };
-}
-
 export function analyzeIceProfile(
-  target: SplicesTarget,
+  target: IceTarget,
   wavelengthsUm: number[],
   flux: number[]
 ): IceSolution {
@@ -610,16 +384,45 @@ function distanceArcsec(ra1: number, dec1: number, ra2: number, dec2: number): n
   return Math.hypot(projected, dec1 - dec2) * 3600;
 }
 
-function resolveInitialTargetId(name: string | null, ra: number, dec: number): string {
-  const normalised = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const byName = ALL_ICE_TARGETS.find((target) =>
-    normalised.includes(target.name.toLowerCase().replace(/[^a-z0-9]/g, ''))
+function resolveInitialTarget(
+  readySections: Array<{ section_id: string; label: string; ra: number; dec: number; source_badge?: string }>,
+  activeName: string | null,
+  ra: number,
+  dec: number
+): IceTarget {
+  const bySection =
+    findMatchingSection(readySections as any, ra, dec) ||
+    readySections[0];
+  if (bySection) {
+    const brownDwarf = isBrownDwarfTarget(bySection.label, bySection.ra, bySection.dec);
+    return {
+      id: bySection.section_id,
+      name: bySection.label,
+      ra: bySection.ra,
+      dec: bySection.dec,
+      catalog: 'Installed IRSA Section',
+      environment: brownDwarf ? 'Brown dwarf - photospheric CH4 guardrail' : 'Point-source line of sight',
+      badge: `[Installed] ${bySection.source_badge || '[IRSA Live]'}`,
+      isBrownDwarf: brownDwarf,
+    };
+  }
+  const guardMatch = BROWN_DWARF_GUARD_TARGETS.find(
+    (target) =>
+      distanceArcsec(ra, dec, target.ra, target.dec) < 30 ||
+      (activeName || '').toLowerCase().includes(target.name.toLowerCase())
   );
-  if (byName) return byName.id;
-  const byPosition = ALL_ICE_TARGETS.find(
-    (target) => distanceArcsec(ra, dec, target.ra, target.dec) < 30
-  );
-  return byPosition?.id || SPLICES_BACKGROUND_STARS[0].id;
+  if (guardMatch) return guardMatch;
+  const brownDwarf = isBrownDwarfTarget(activeName, ra, dec);
+  return {
+    id: `coord_${ra.toFixed(4)}_${dec.toFixed(4)}`,
+    name: activeName || `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`,
+    ra,
+    dec,
+    catalog: 'Active Sky Coordinate',
+    environment: brownDwarf ? 'Brown dwarf - photospheric CH4 guardrail' : 'Point-source line of sight',
+    badge: '[IRSA Live]',
+    isBrownDwarf: brownDwarf,
+  };
 }
 
 // --------------------------------------------------------------------------------------
@@ -629,15 +432,13 @@ function resolveInitialTargetId(name: string | null, ra: number, dec: number): s
 export const MolecularIceStudio: React.FC = () => {
   const { ra, dec, activeTargetName } = useTelemetryStore();
   const { setTab } = useSpectraUrlState();
-  const [selectedId, setSelectedId] = useState<string>(() =>
-    resolveInitialTargetId(activeTargetName, ra, dec)
-  );
+  const [selectedLiveId, setSelectedLiveId] = useState<string>('wise_0855');
   const [selectedSource, setSelectedSource] = useState<'primary' | 'sky'>('primary');
   const [apertureRadius, setApertureRadius] = useState(1.5);
   const [annulusInner, setAnnulusInner] = useState(3.0);
   const [annulusOuter, setAnnulusOuter] = useState(5.0);
   const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('tau');
-  const [sourceMode, setSourceMode] = useState<'installed' | 'live' | 'synthetic'>('installed');
+  const [sourceMode, setSourceMode] = useState<'installed' | 'live'>('installed');
   const { installedSections } = useInstalledSectionState();
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
   const [liveSpectrum, setLiveSpectrum] = useState<SpectrumSource | null>(null);
@@ -645,22 +446,6 @@ export const MolecularIceStudio: React.FC = () => {
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
   const [ledgerState, setLedgerState] = useState<'idle' | 'submitting' | 'logged' | 'offline'>('idle');
   const [ledgerNote, setLedgerNote] = useState<string>('');
-
-  const selectedTarget = useMemo(
-    () => ALL_ICE_TARGETS.find((target) => target.id === selectedId) || ALL_ICE_TARGETS[0],
-    [selectedId]
-  );
-
-  // Real pencil-beam aperture photometry: the controls below actually change the
-  // recovered source fraction (PSF inside the aperture minus annulus sky by area).
-  const photometry = useMemo(
-    () => performAperturePhotometry(apertureRadius, annulusInner, annulusOuter, selectedTarget),
-    [apertureRadius, annulusInner, annulusOuter, selectedTarget]
-  );
-  const syntheticSpectrum = useMemo(
-    () => generateSplicesSpectrum(selectedTarget, 1401, photometry.sourceFraction),
-    [photometry.sourceFraction, selectedTarget]
-  );
 
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
@@ -675,25 +460,52 @@ export const MolecularIceStudio: React.FC = () => {
   }, [installedSections.length]);
 
   useEffect(() => {
-    const ready = installedSections.filter((s) => s.status === 'ready');
-    if (ready.length === 0) {
+    if (readyInstalledSections.length === 0) {
       setSelectedSectionId('');
       return;
     }
-    const match =
-      findMatchingSection(ready, selectedTarget.ra, selectedTarget.dec) ||
-      findMatchingSection(ready, ra, dec) ||
-      ready[0];
-    setSelectedSectionId((prev) => (prev && ready.some((s) => s.section_id === prev) ? prev : match.section_id));
-  }, [installedSections, ra, dec, selectedTarget.ra, selectedTarget.dec]);
+    const match = findMatchingSection(readyInstalledSections, ra, dec) || readyInstalledSections[0];
+    setSelectedSectionId((prev) =>
+      prev && readyInstalledSections.some((s) => s.section_id === prev) ? prev : match.section_id
+    );
+  }, [readyInstalledSections, ra, dec]);
 
-  // Installed section or on-demand live HDU 6 spectrum. Falls back to synthetic template when unavailable.
-  useEffect(() => {
-    if (sourceMode === 'synthetic') {
-      setLiveStatus('idle');
-      setLiveSpectrum(null);
-      return;
+  const liveTargets = useMemo<IceTarget[]>(() => {
+    const base: IceTarget[] = [
+      {
+        id: 'active_coord',
+        name: activeTargetName || `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`,
+        ra,
+        dec,
+        catalog: 'Active Telemetry Coordinate',
+        environment: isBrownDwarfTarget(activeTargetName, ra, dec)
+          ? 'Brown dwarf - photospheric CH4 guardrail'
+          : 'Point-source line of sight',
+        badge: '[IRSA Live]',
+        isBrownDwarf: isBrownDwarfTarget(activeTargetName, ra, dec),
+      },
+      ...BROWN_DWARF_GUARD_TARGETS,
+    ];
+    return base;
+  }, [activeTargetName, ra, dec]);
+
+  const selectedTarget = useMemo<IceTarget>(() => {
+    if (sourceMode === 'installed') {
+      const activeSec =
+        readyInstalledSections.find((s) => s.section_id === selectedSectionId) ||
+        findMatchingSection(readyInstalledSections, ra, dec) ||
+        readyInstalledSections[0];
+      if (activeSec) {
+        return resolveInitialTarget([activeSec], activeSec.label, activeSec.ra, activeSec.dec);
+      }
     }
+    const picked = liveTargets.find((t) => t.id === selectedLiveId);
+    if (picked) return picked;
+    return resolveInitialTarget(readyInstalledSections, activeTargetName, ra, dec);
+  }, [sourceMode, readyInstalledSections, selectedSectionId, ra, dec, liveTargets, selectedLiveId, activeTargetName]);
+
+  // Installed section or on-demand live HDU 6 spectrum (no synthetic fallback).
+  useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     setLiveStatus('loading');
@@ -705,7 +517,7 @@ export const MolecularIceStudio: React.FC = () => {
         if (sourceMode === 'installed') {
           const activeSec =
             readyInstalledSections.find((s) => s.section_id === selectedSectionId) ||
-            findMatchingSection(readyInstalledSections, selectedTarget.ra, selectedTarget.dec) ||
+            findMatchingSection(readyInstalledSections, ra, dec) ||
             readyInstalledSections[0];
           if (!activeSec) {
             if (!cancelled) setLiveStatus('idle');
@@ -739,8 +551,7 @@ export const MolecularIceStudio: React.FC = () => {
         const isValidBadge =
           typeof sourceBadge === 'string' &&
           (/^\[Installed\]/.test(sourceBadge) ||
-            /^\[IRSA Live \(.+\)\]$/.test(sourceBadge) ||
-            /^\[NASA Benchmark/.test(sourceBadge));
+            /^\[IRSA Live \(.+\)\]$/.test(sourceBadge));
         if (!isValidBadge || !Array.isArray(payload.wavelengths_um) || payload.wavelengths_um.length < 102 || !Array.isArray(payload.flux_jy) || payload.flux_jy.length < 102 || !Array.isArray(payload.channel_coverage)) {
           throw new Error('Malformed spectrum payload');
         }
@@ -760,16 +571,16 @@ export const MolecularIceStudio: React.FC = () => {
       cancelled = true;
       controller.abort();
     };
-  }, [selectedTarget, sourceMode, selectedSectionId, readyInstalledSections]);
+  }, [selectedTarget.ra, selectedTarget.dec, sourceMode, selectedSectionId, readyInstalledSections, ra, dec]);
 
   const activeSpectrum: SpectrumSource = useMemo(() => {
-    if ((sourceMode === 'live' || sourceMode === 'installed') && liveSpectrum) return liveSpectrum;
+    if (liveSpectrum) return liveSpectrum;
     return {
-      wavelengthsUm: syntheticSpectrum.wavelengthsUm,
-      flux: syntheticSpectrum.flux,
-      badge: '[Synthetic Injection Mode]',
+      wavelengthsUm: [],
+      flux: [],
+      badge: liveStatus === 'loading' ? '[Loading Archive Spectrum…]' : liveStatus === 'error' ? '[Spectrum Unavailable]' : '[No Archive Data]',
     };
-  }, [liveSpectrum, sourceMode, syntheticSpectrum]);
+  }, [liveSpectrum, liveStatus]);
 
   const solution = useMemo(() => {
     const wavelengths = activeSpectrum.coverage
@@ -804,19 +615,6 @@ export const MolecularIceStudio: React.FC = () => {
   }, [selectedSource, solution]);
   const skySelected = selectedSource === 'sky';
 
-  // Machine-checkable validation against the analytically injected SPLICES profile.
-  // Acceptance target: recovered N(H2O) and N(CO2) within <2% of the injection.
-  const validation = useMemo(() => {
-    if (selectedTarget.isBrownDwarf) return null;
-    const check = (key: IceKey) => {
-      const recovered = solution.bands.find((band) => band.key === key)?.columnDensity;
-      const injected = selectedTarget.columns[key];
-      if (!recovered || !injected) return null;
-      return (100 * Math.abs(recovered - injected)) / injected;
-    };
-    return { h2o: check('h2o'), co2: check('co2') };
-  }, [selectedTarget, solution]);
-
   const toggleBand = (key: IceKey) => {
     setActiveBands((previous) =>
       previous.includes(key) ? previous.filter((item) => item !== key) : [...previous, key]
@@ -824,20 +622,24 @@ export const MolecularIceStudio: React.FC = () => {
   };
 
   const selectedBands = effectiveSolution.bands.filter((band) => activeBands.includes(band.key));
-  const maxTau = Math.max(0.4, ...solution.tau.map((value) => Math.max(0, value)));
-  const maxFlux = Math.max(1e-6, ...solution.flux.map((value) => Math.max(0, value)));
+  const maxTau = Math.max(0.4, ...solution.tau.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)));
+  const maxFlux = Math.max(1e-6, ...solution.flux.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)));
   const transmission = useMemo(
     () => solution.tau.map((value) => Math.exp(-Math.max(0, value))),
     [solution.tau]
   );
 
   const plotPoints = (values: number[], maximum: number): string => {
+    if (solution.wavelengthsUm.length === 0 || values.length === 0) return '';
     return solution.wavelengthsUm
       .map((wave, index) => {
+        const val = values[index];
+        if (!Number.isFinite(wave) || !Number.isFinite(val)) return null;
         const x = 54 + ((wave - 0.75) / 4.25) * 842;
-        const y = 330 - (Math.max(0, values[index]) / maximum) * 290;
+        const y = 330 - (Math.max(0, val) / maximum) * 290;
         return `${x.toFixed(1)},${Math.max(16, Math.min(330, y)).toFixed(1)}`;
       })
+      .filter((pt): pt is string => pt !== null)
       .join(' ');
   };
 
@@ -863,10 +665,9 @@ export const MolecularIceStudio: React.FC = () => {
       : `SPLICES point-source ice ledger: N(H2O) = ${formatColumnDensity(nH2O?.columnDensity ?? null)} cm^-2, ` +
         `N(CO2) = ${formatColumnDensity(nCO2?.columnDensity ?? null)} cm^-2, ` +
         `CO2/H2O = ${effectiveSolution.ratioPercent?.toFixed(2) ?? '—'}%. ` +
-        `Aperture ${photometry.apertureRadiusPx.toFixed(1)} px; sky annulus ` +
-        `${photometry.annulusInnerPx.toFixed(1)}-${photometry.annulusOuterPx.toFixed(1)} px; ` +
-        `PSF FWHM ${photometry.psfFwhmPx.toFixed(2)} px; extracted source fraction ` +
-        `${(100 * photometry.sourceFraction).toFixed(1)}%.`;
+        `Aperture ${apertureRadius.toFixed(1)} px; sky annulus ` +
+        `${annulusInner.toFixed(1)}-${annulusOuter.toFixed(1)} px; ` +
+        `source ${activeSpectrum.badge}.`;
     try {
       const response = await fetch('/api/forum/threads', {
         method: 'POST',
@@ -895,9 +696,9 @@ export const MolecularIceStudio: React.FC = () => {
       setLedgerNote('Molecular ice ledger entry submitted to /explore/discussions.');
     } catch {
       setLedgerState('offline');
-      setLedgerNote('Ledger entry retained locally (backend forum unavailable in offline demo mode).');
+      setLedgerNote('Forum endpoint unavailable — failed to submit ledger entry.');
     }
-  }, [effectiveSolution, photometry, selectedTarget]);
+  }, [effectiveSolution, apertureRadius, annulusInner, annulusOuter, activeSpectrum.badge, selectedTarget]);
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground">
@@ -912,45 +713,10 @@ export const MolecularIceStudio: React.FC = () => {
               Point-source pencil beam · ice mapping behind molecular clouds
             </p>
           </div>
-          <Badge variant={activeSpectrum.badge.includes('Synthetic') ? 'amber' : 'sky'} className="font-mono text-[10px]">
+          <Badge variant={activeSpectrum.badge.startsWith('[Installed]') || activeSpectrum.badge.startsWith('[IRSA Live') ? 'sky' : 'amber'} className="font-mono text-[10px]">
             {activeSpectrum.badge}
           </Badge>
         </header>
-
-        <div>
-          <label htmlFor="splices-target" className="mb-1 block text-[11px] text-muted-foreground">
-            Quick-select SPLICES catalog sightline
-          </label>
-          <Select
-            id="splices-target"
-            value={selectedId}
-            onChange={(event) => {
-              setSelectedId(event.target.value);
-              setLedgerState('idle');
-              setLedgerNote('');
-            }}
-            className="w-full"
-          >
-            <optgroup label="SPLICES background stars">
-              {SPLICES_BACKGROUND_STARS.map((target) => (
-                <option key={target.id} value={target.id}>
-                  {target.name} · {target.environment}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Brown-dwarf photospheric CH4 guardrail">
-              {BROWN_DWARF_GUARD_TARGETS.map((target) => (
-                <option key={target.id} value={target.id}>
-                  {target.name} · {target.environment}
-                </option>
-              ))}
-            </optgroup>
-          </Select>
-          <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-            Synthetic demo seeds behind molecular clouds. Replace with the official IRSA SPLICES
-            astrometric table for live science operations.
-          </p>
-        </div>
 
         <div className="space-y-2 rounded-sm border border-border bg-card px-3 py-2">
           <div className="flex items-center justify-between gap-2">
@@ -959,41 +725,65 @@ export const MolecularIceStudio: React.FC = () => {
               <div className="text-[10px] text-muted-foreground">
                 {sourceMode === 'installed'
                   ? readyInstalledSections.length === 0
-                    ? 'No installed section yet — synthetic preview active'
+                    ? 'No installed section available — switch to Live /api/spectrum or install a section in Navigator'
                     : liveStatus === 'loading'
                       ? 'Loading installed section spectrum…'
                       : liveStatus === 'ready'
                         ? `${liveSpectrum?.badge || 'Installed'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
-                        : 'Installed fetch unavailable — synthetic fallback active'
-                  : sourceMode === 'live'
-                    ? liveStatus === 'loading'
-                      ? 'Fetching HDU 6 WCS-WAVE spectrum…'
-                      : liveStatus === 'ready'
-                        ? `${liveSpectrum?.badge || 'Spectrum'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
-                        : 'Live fetch unavailable — synthetic fallback active'
-                    : 'Deterministic SPLICES synthetic template'}
+                        : 'Installed spectrum unavailable'
+                  : liveStatus === 'loading'
+                    ? 'Fetching HDU 6 WCS-WAVE spectrum…'
+                    : liveStatus === 'ready'
+                      ? `${liveSpectrum?.badge || 'Spectrum'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
+                      : 'Live spectrum unavailable'}
               </div>
             </div>
             <Select
               value={sourceMode}
-              onChange={(event) => setSourceMode(event.target.value as 'installed' | 'live' | 'synthetic')}
+              onChange={(event) => {
+                setSourceMode(event.target.value as 'installed' | 'live');
+                setLedgerState('idle');
+                setLedgerNote('');
+              }}
               sizeVariant="xs"
             >
               <option value="installed">Installed ({readyInstalledSections.length})</option>
               <option value="live">Live /api/spectrum</option>
-              <option value="synthetic">Synthetic SPLICES</option>
             </Select>
           </div>
           {sourceMode === 'installed' && readyInstalledSections.length > 0 && (
             <Select
               value={selectedSectionId}
-              onChange={(event) => setSelectedSectionId(event.target.value)}
+              onChange={(event) => {
+                setSelectedSectionId(event.target.value);
+                setLedgerState('idle');
+                setLedgerNote('');
+              }}
               sizeVariant="xs"
               aria-label="Choose installed section"
             >
               {readyInstalledSections.map((sec) => (
                 <option key={sec.section_id} value={sec.section_id}>
                   {sec.label} ({sec.ra.toFixed(3)}°, {sec.dec >= 0 ? '+' : ''}{sec.dec.toFixed(3)}°)
+                </option>
+              ))}
+            </Select>
+          )}
+          {sourceMode === 'live' && (
+            <Select
+              id="splices-target"
+              value={selectedLiveId}
+              onChange={(event) => {
+                setSelectedLiveId(event.target.value);
+                setLedgerState('idle');
+                setLedgerNote('');
+              }}
+              sizeVariant="xs"
+              aria-label="Choose live coordinate target"
+            >
+              {liveTargets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.name} ({target.ra.toFixed(3)}°, {target.dec >= 0 ? '+' : ''}{target.dec.toFixed(3)}°)
                 </option>
               ))}
             </Select>
@@ -1010,7 +800,9 @@ export const MolecularIceStudio: React.FC = () => {
               </div>
             </div>
             <Badge variant={selectedTarget.isBrownDwarf ? 'amber' : 'emerald'} className="font-mono">
-              {selectedTarget.isBrownDwarf ? 'CH4 gas guard' : 'SNR ' + selectedTarget.snr.toFixed(1)}
+              {selectedTarget.isBrownDwarf
+                ? 'CH4 gas guard'
+                : `${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 ch`}
             </Badge>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
@@ -1105,18 +897,16 @@ export const MolecularIceStudio: React.FC = () => {
           <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono text-[11px] tabular-nums">
             <dt className="text-muted-foreground">Fitted stellar continuum</dt>
             <dd className="text-right text-foreground">4th-order Chebyshev</dd>
-            <dt className="text-muted-foreground">Stellar temperature</dt>
-            <dd className="text-right text-foreground">{selectedTarget.teffK} K</dd>
-            <dt className="text-muted-foreground">Foreground extinction</dt>
-            <dd className="text-right text-foreground">Av ~ {selectedTarget.avMag.toFixed(1)} mag</dd>
             <dt className="text-muted-foreground">Continuum windows</dt>
             <dd className="text-right text-foreground">2.1–2.4, 3.7–3.9 µm</dd>
-            <dt className="text-muted-foreground">PSF FWHM</dt>
-            <dd className="text-right text-foreground">{photometry.psfFwhmPx.toFixed(2)} px</dd>
+            <dt className="text-muted-foreground">Covered channels</dt>
+            <dd className="text-right text-foreground">
+              {liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102
+            </dd>
             <dt className="text-muted-foreground">Source badge</dt>
             <dd className="flex justify-end">
               <Badge
-                variant={activeSpectrum.badge.includes('Synthetic') ? 'amber' : 'sky'}
+                variant={activeSpectrum.badge.startsWith('[Installed]') || activeSpectrum.badge.startsWith('[IRSA Live') ? 'sky' : 'amber'}
                 className="font-mono text-[9px]"
               >
                 {activeSpectrum.badge}
@@ -1154,10 +944,8 @@ export const MolecularIceStudio: React.FC = () => {
             </Badge>
           </div>
           <p className="mt-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground">
-            Aperture {photometry.apertureRadiusPx.toFixed(1)} px · sky annulus{' '}
-            {photometry.annulusInnerPx.toFixed(1)}–{photometry.annulusOuterPx.toFixed(1)} px · sky{' '}
-            {photometry.skyLevel.toExponential(2)} MJy/sr · extracted source fraction{' '}
-            {(100 * photometry.sourceFraction).toFixed(1)}% · SNR {photometry.snr.toFixed(1)}
+            Aperture {apertureRadius.toFixed(1)} px · sky annulus{' '}
+            {annulusInner.toFixed(1)}–{annulusOuter.toFixed(1)} px · archive 102-channel extraction
           </p>
         </div>
       </section>
@@ -1270,7 +1058,13 @@ export const MolecularIceStudio: React.FC = () => {
                 </g>
               );
             })}
-            {mode === 'tau' ? (
+            {solution.wavelengthsUm.length === 0 ? (
+              <text x="474" y="175" textAnchor="middle" fill="#A3A3A3" fontSize="12" fontFamily="monospace">
+                {liveStatus === 'loading'
+                  ? 'Loading archive 102-channel spectrum…'
+                  : 'No archive spectrum loaded — select an installed section or Live /api/spectrum'}
+              </text>
+            ) : mode === 'tau' ? (
               <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.tau, maxTau)} />
             ) : mode === 'transmission' ? (
               <polyline fill="none" stroke="#34d399" strokeWidth="1.8" points={plotPoints(transmission, 1.0)} />
@@ -1288,35 +1082,20 @@ export const MolecularIceStudio: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="muted" className="font-mono">
-            Aperture {photometry.apertureRadiusPx.toFixed(1)} px
+            Aperture {apertureRadius.toFixed(1)} px
           </Badge>
           <Badge variant="muted" className="font-mono">
-            Sky {photometry.annulusInnerPx.toFixed(1)}–{photometry.annulusOuterPx.toFixed(1)} px
-          </Badge>
-          <Badge variant="muted" className="font-mono">
-            PSF FWHM {photometry.psfFwhmPx.toFixed(2)} px
-          </Badge>
-          <Badge variant="muted" className="font-mono">
-            Source {Math.round(100 * photometry.sourceFraction)}%
+            Sky {annulusInner.toFixed(1)}–{annulusOuter.toFixed(1)} px
           </Badge>
           <Badge variant="sky" className="font-mono">
             τ mode: 4th-order Chebyshev
           </Badge>
           <Badge
-            variant={activeSpectrum.badge.includes('Synthetic') ? 'amber' : 'sky'}
+            variant={activeSpectrum.badge.startsWith('[Installed]') || activeSpectrum.badge.startsWith('[IRSA Live') ? 'sky' : 'amber'}
             className="font-mono"
           >
             {activeSpectrum.badge}
           </Badge>
-          {validation && validation.h2o !== null && (
-            <Badge
-              variant={(validation.h2o ?? 0) < 2 && (validation.co2 ?? 0) < 2 ? 'emerald' : 'amber'}
-              className="font-mono"
-            >
-              self-check ΔN(H2O) = {validation.h2o.toFixed(2)}% · ΔN(CO2) ={' '}
-              {validation.co2 === null ? '—' : `${validation.co2.toFixed(2)}%`}
-            </Badge>
-          )}
         </div>
 
         <div className="rounded-sm border border-border bg-card">
@@ -1416,7 +1195,7 @@ export const MolecularIceStudio: React.FC = () => {
           </div>
           <Button
             onClick={handleSubmitLedger}
-            disabled={ledgerState === 'submitting' || selectedSource === 'sky'}
+            disabled={ledgerState === 'submitting' || selectedSource === 'sky' || solution.wavelengthsUm.length < 5}
             variant={effectiveSolution.brownDwarfNotice ? 'outline' : 'default'}
           >
             {ledgerState === 'submitting' ? 'Submitting…' : ledgerState === 'logged' ? 'Ledger entry logged' : 'Submit ledger entry'}
