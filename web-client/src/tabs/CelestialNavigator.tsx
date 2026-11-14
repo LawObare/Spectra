@@ -94,10 +94,10 @@ function getCutoutTileUrl(
   size = 512
 ): string {
   const normRa = (((raDeg % 360) + 360) % 360).toFixed(5);
-  const clampDec = Math.max(-89.0, Math.min(89.0, decDeg)).toFixed(5);
-  const clampScale = Math.max(0.262, Math.min(30.0, pixscale)).toFixed(3);
+  const clampDec = Math.max(-89.5, Math.min(89.5, decDeg)).toFixed(5);
+  const clampScale = Math.max(0.262, Math.min(300.0, pixscale)).toFixed(3);
   
-  // DR10 only covers Dec -60 deg to +30 deg. If outside or if unwise requested, use unwise-neo7 (100% all-sky)
+  // DR10 only covers Dec -60 deg to +32 deg. If outside or if unwise requested, use unwise-neo7 (100% all-sky)
   let effectiveSurvey = survey;
   if (survey === 'ls-dr10' && (decDeg < -60.0 || decDeg > 32.0)) {
     effectiveSurvey = 'unwise-neo7';
@@ -106,14 +106,14 @@ function getCutoutTileUrl(
   return `https://www.legacysurvey.org/viewer/jpeg-cutout?ra=${normRa}&dec=${clampDec}&layer=${effectiveSurvey}&pixscale=${clampScale}&size=${size}`;
 }
 
-// Fixed Zoom Octaves for stable tile keys during zoom & pan
+// Fixed Zoom Octaves for stable tile keys with exact angular sizing (plateSizeDeg = pixscale * 512 / 3600)
 function getZoomOctave(fovDeg: number): { plateSizeDeg: number; pixscale: number; level: number } {
-  if (fovDeg > 12.0) return { plateSizeDeg: 20.0, pixscale: 25.0, level: 0 };
-  if (fovDeg > 4.5) return { plateSizeDeg: 7.5, pixscale: 14.0, level: 1 };
-  if (fovDeg > 1.4) return { plateSizeDeg: 2.5, pixscale: 5.0, level: 2 };
-  if (fovDeg > 0.45) return { plateSizeDeg: 0.8, pixscale: 1.6, level: 3 };
-  if (fovDeg > 0.14) return { plateSizeDeg: 0.25, pixscale: 0.5, level: 4 };
-  return { plateSizeDeg: 0.08, pixscale: 0.262, level: 5 };
+  if (fovDeg > 14.0) return { plateSizeDeg: 20.0, pixscale: 140.625, level: 0 };
+  if (fovDeg > 5.0) return { plateSizeDeg: 7.5, pixscale: 52.734, level: 1 };
+  if (fovDeg > 1.6) return { plateSizeDeg: 2.5, pixscale: 17.578, level: 2 };
+  if (fovDeg > 0.5) return { plateSizeDeg: 0.8, pixscale: 5.625, level: 3 };
+  if (fovDeg > 0.16) return { plateSizeDeg: 0.25, pixscale: 1.758, level: 4 };
+  return { plateSizeDeg: 0.08, pixscale: 0.562, level: 5 };
 }
 
 // SPHEREx Level-2 Spectral Image Exposure Metadata (Modelled after IRSA spherex_qr2 MEF table)
@@ -507,11 +507,9 @@ export const CelestialNavigator: React.FC = () => {
       // Dynamically tiles photographic survey plates covering the active viewport
       const octave = getZoomOctave(fovDeg);
       const { plateSizeDeg, pixscale, level } = octave;
-      const stepDeg = plateSizeDeg * 0.85;
-      const minDec = Math.max(-88.5, Math.floor((centerDec - halfFovY * 1.05) / stepDeg) * stepDeg);
-      const maxDec = Math.min(88.5, Math.ceil((centerDec + halfFovY * 1.05) / stepDeg) * stepDeg);
-      const minRa = Math.floor((centerRa - raSpan * 1.05) / stepDeg) * stepDeg;
-      const maxRa = Math.ceil((centerRa + raSpan * 1.05) / stepDeg) * stepDeg;
+      const decStepDeg = plateSizeDeg * 0.95;
+      const minDec = Math.max(-88.5, Math.floor((centerDec - halfFovY * 1.05) / decStepDeg) * decStepDeg);
+      const maxDec = Math.min(88.5, Math.ceil((centerDec + halfFovY * 1.05) / decStepDeg) * decStepDeg);
 
       const now = Date.now();
 
@@ -520,8 +518,13 @@ export const CelestialNavigator: React.FC = () => {
         let tilesRequestedThisFrame = 0;
         const maxTilesPerFrame = 6;
 
-        for (let pDec = minDec; pDec <= maxDec; pDec += stepDeg) {
-          for (let pRa = minRa; pRa <= maxRa; pRa += stepDeg) {
+        for (let pDec = minDec; pDec <= maxDec; pDec += decStepDeg) {
+          const cosPDec = Math.max(0.1, Math.cos((pDec * Math.PI) / 180));
+          const raStepDeg = (plateSizeDeg * 0.95) / cosPDec;
+          const minRa = Math.floor((centerRa - raSpan * 1.05) / raStepDeg) * raStepDeg;
+          const maxRa = Math.ceil((centerRa + raSpan * 1.05) / raStepDeg) * raStepDeg;
+
+          for (let pRa = minRa; pRa <= maxRa; pRa += raStepDeg) {
             const normRa = ((pRa % 360) + 360) % 360;
             const plateKey = `${state.activeSurvey}_L${level}_${normRa.toFixed(3)}_${pDec.toFixed(3)}`;
             const plate = plateCacheRef.current.get(plateKey);
@@ -877,11 +880,13 @@ export const CelestialNavigator: React.FC = () => {
     setDisplayFovDeg(clamped);
   }, []);
 
-  // Smooth Wheel Zoom (Cursor-anchored, zero lag)
+  // Smooth Wheel Zoom (Damped exponential zoom with trackpad momentum guard)
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
       e.preventDefault();
-      const factor = e.deltaY > 0 ? 1.16 : 0.86;
+      // Clamp deltaY to prevent trackpad velocity spikes from skipping octave render levels
+      const clampedDelta = Math.max(-45, Math.min(45, e.deltaY));
+      const factor = Math.exp(clampedDelta * 0.0018);
       applyZoom(cameraRef.current.fovDeg * factor);
     },
     [applyZoom]
@@ -916,8 +921,18 @@ export const CelestialNavigator: React.FC = () => {
         dragRef.current.moved = true;
       }
       // East is left: dragging right increases RA, dragging down increases Dec
-      const nextRa = (((cam.centerRa + dx / (scalePxPerDeg * cosCenterDec)) % 360) + 360) % 360;
-      const nextDec = Math.max(-89.5, Math.min(89.5, cam.centerDec + dy / scalePxPerDeg));
+      let nextRa = (((cam.centerRa + dx / (scalePxPerDeg * cosCenterDec)) % 360) + 360) % 360;
+      let rawDec = cam.centerDec + dy / scalePxPerDeg;
+
+      // Immersive continuous spherical pole transit (over North Pole +90° or South Pole -90°)
+      if (rawDec > 90.0) {
+        rawDec = 180.0 - rawDec;
+        nextRa = (nextRa + 180.0) % 360.0;
+      } else if (rawDec < -90.0) {
+        rawDec = -180.0 - rawDec;
+        nextRa = (nextRa + 180.0) % 360.0;
+      }
+      const nextDec = Math.max(-89.95, Math.min(89.95, rawDec));
 
       cam.centerRa = nextRa;
       cam.centerDec = nextDec;
