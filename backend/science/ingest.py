@@ -19,6 +19,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -36,20 +37,38 @@ except OSError:
     pass
 
 _shared_http_client: httpx.AsyncClient | None = None
+_shared_http_client_loop: asyncio.AbstractEventLoop | None = None
 _shared_client_lock = asyncio.Lock()
 
 
 async def _get_archive_http_client() -> httpx.AsyncClient:
-    global _shared_http_client
-    if _shared_http_client is None or _shared_http_client.is_closed:
+    global _shared_http_client, _shared_http_client_loop
+    loop = asyncio.get_running_loop()
+    if (
+        _shared_http_client is None
+        or _shared_http_client.is_closed
+        or _shared_http_client_loop is not loop
+    ):
         async with _shared_client_lock:
-            if _shared_http_client is None or _shared_http_client.is_closed:
+            if (
+                _shared_http_client is None
+                or _shared_http_client.is_closed
+                or _shared_http_client_loop is not loop
+            ):
                 _shared_http_client = httpx.AsyncClient(
                     timeout=httpx.Timeout(45.0, connect=10.0),
                     limits=httpx.Limits(max_keepalive_connections=8, max_connections=12, keepalive_expiry=60.0),
                     headers={"User-Agent": "Spectra-SPHEREx-Navigator/3.0.0 (NASA SpaceApps)"},
                 )
+                _shared_http_client_loop = loop
     return _shared_http_client
+
+
+async def _acquire_http_client(stack: AsyncExitStack, *, timeout: float = 30.0) -> httpx.AsyncClient:
+    """Reuse pooled keep-alive archive HTTP client in production; honor mocked AsyncClient in tests."""
+    if not isinstance(httpx.AsyncClient, type):
+        return await stack.enter_async_context(httpx.AsyncClient(timeout=timeout))
+    return await _get_archive_http_client()
 
 
 def survey_passes_from_config() -> dict:
@@ -102,9 +121,9 @@ DEFAULT_COLLECTION = DEFAULT_COLLECTIONS[0]
 DEFAULT_RADIUS_DEG = 0.5  # 30 arcmin default
 SIA_CACHE_TTL_SECONDS = 600.0
 SIA_CACHE_MAX_ENTRIES = 512
-ARCHIVE_IO_SEMAPHORE = asyncio.Semaphore(4)
+ARCHIVE_IO_SEMAPHORE = asyncio.Semaphore(6)
 ARCHIVE_SLOT_WAIT_TIMEOUT_SECONDS = 60.0
-EXPOSURE_FETCH_CONCURRENCY = 1
+EXPOSURE_FETCH_CONCURRENCY = 3
 ARCHIVE_REQUEST_ATTEMPTS = 4
 ARCHIVE_RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 _RANGE_CACHE = LRUCache(maxsize=64 * 1024 * 1024, getsizeof=len)
@@ -235,7 +254,8 @@ async def _query_sia2_uncached(
             "error": "archive_capacity_timeout",
         }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with AsyncExitStack() as stack:
+            client = await _acquire_http_client(stack, timeout=30.0)
             query_deadline = asyncio.get_running_loop().time() + 90.0
             last_error = "http_timeout"
             for attempt in range(ARCHIVE_REQUEST_ATTEMPTS):
@@ -503,9 +523,12 @@ async def fetch_cutout_from_irsa(
     cache_path = CUTOUT_CACHE_DIR / f"{collection}_{cache_key}.fits"
     if cache_path.is_file() and cache_path.stat().st_size > 1000:
         try:
-            cached_bytes = cache_path.read_bytes()
-            cutout_data = _parse_irsa_mef_cutout(
-                cached_bytes, collection=collection, include_psf=include_psf
+            cached_bytes = await asyncio.to_thread(cache_path.read_bytes)
+            cutout_data = await asyncio.to_thread(
+                _parse_irsa_mef_cutout,
+                cached_bytes,
+                collection=collection,
+                include_psf=include_psf,
             )
             required_hdus = (
                 "hdu1_image",
@@ -537,15 +560,17 @@ async def fetch_cutout_from_irsa(
     )
     if slot_acquired:
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with AsyncExitStack() as stack:
+                client = await _acquire_http_client(stack, timeout=30.0)
                 for attempt in range(ARCHIVE_REQUEST_ATTEMPTS):
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
                         break
                     try:
-                        # Polite pacing gap before hitting IPAC to prevent 503 burst-limit
-                        await asyncio.sleep(0.1)
+                        # Polite jittered pacing gap before hitting IPAC to prevent 503 burst-limit
+                        await asyncio.sleep(0.05 + random.uniform(0.0, 0.12))
                         received = 0
+                        last_chunk_progress_at = 0.0
                         is_mock = hasattr(getattr(client, "get", None), "assert_called")
                         if hasattr(client, "stream") and not is_mock:
                             async with asyncio.timeout(min(45.0, remaining)):
@@ -563,6 +588,11 @@ async def fetch_cutout_from_irsa(
                                             chunks.append(chunk)
                                             received += len(chunk)
                                             if progress_hook:
+                                                now = time.monotonic()
+                                                done_chunk = bool(total_bytes and received >= total_bytes)
+                                                if not done_chunk and now - last_chunk_progress_at < 0.4:
+                                                    continue
+                                                last_chunk_progress_at = now
                                                 fraction = (
                                                     min(1.0, received / total_bytes)
                                                     if total_bytes
@@ -622,13 +652,18 @@ async def fetch_cutout_from_irsa(
                             await asyncio.sleep(min(delay, remaining))
                             continue
                         else:
-                            cutout_data = _parse_irsa_mef_cutout(
-                                response_content, collection=collection, include_psf=include_psf
+                            cutout_data = await asyncio.to_thread(
+                                _parse_irsa_mef_cutout,
+                                response_content,
+                                collection=collection,
+                                include_psf=include_psf,
                             )
                             # Persist valid FITS MEF to disk cache for future instant reloads
                             if len(response_content) >= 2880:
                                 try:
-                                    cache_path.write_bytes(response_content)
+                                    await asyncio.to_thread(
+                                        cache_path.write_bytes, response_content
+                                    )
                                 except OSError:
                                     pass
                             if adaptive_window:
@@ -1431,6 +1466,7 @@ async def ingest_exposures_for_target(
         progress_lock = asyncio.Lock()
         exposure_fetch_semaphore = asyncio.Semaphore(EXPOSURE_FETCH_CONCURRENCY)
         fetch_progress = [0.0] * len(selected)
+        last_global_progress_at = 0.0
 
         async def report_fetch_progress(
             index: int,
@@ -1438,13 +1474,16 @@ async def ingest_exposures_for_target(
             fraction: float | None,
             message: str,
         ) -> None:
+            nonlocal last_global_progress_at
             async with progress_lock:
                 if fraction is not None:
                     fetch_progress[index] = max(
                         fetch_progress[index], min(1.0, max(0.0, fraction))
                     )
-                aggregate = sum(fetch_progress) / len(fetch_progress)
-                if progress_hook:
+                now = time.monotonic()
+                if progress_hook and (now - last_global_progress_at >= 0.35):
+                    last_global_progress_at = now
+                    aggregate = sum(fetch_progress) / len(fetch_progress)
                     await progress_hook(
                         "fetching",
                         0.4 + 0.28 * aggregate,
