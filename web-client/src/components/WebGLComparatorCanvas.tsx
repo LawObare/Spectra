@@ -303,17 +303,15 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     []
   );
 
+  // Upload float32 textures to GPU ONLY when underlying buffer references, dimensions, or filter mode change.
   useEffect(() => {
     const gl = glRef.current;
     const program = programRef.current;
     if (!glReady || !gl || !program || width <= 0 || height <= 0) return;
 
     filterModeRef.current = smooth && floatLinearSupportedRef.current ? gl.LINEAR : gl.NEAREST;
-    gl.useProgram(program);
-    gl.viewport(0, 0, width, height);
 
     const isRgb = !!(rgbBandsData && rgbBandsData.r && rgbBandsData.g && rgbBandsData.b);
-
     if (isRgb && rgbBandsData) {
       uploadTexture(texturesRef.current.bandR, rgbBandsData.r, width, height);
       uploadTexture(texturesRef.current.bandG, rgbBandsData.g, width, height);
@@ -324,6 +322,29 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
       uploadTexture(texturesRef.current.currentVar, varianceData, width, height);
       uploadTexture(texturesRef.current.referenceVar, refVarianceData || varianceData, width, height);
     }
+  }, [
+    glReady,
+    fluxData,
+    refFluxData,
+    varianceData,
+    refVarianceData,
+    rgbBandsData,
+    width,
+    height,
+    smooth,
+    uploadTexture,
+  ]);
+
+  // Update shader uniforms and redraw quad without re-uploading GPU textures on slider/mode/palette changes.
+  useEffect(() => {
+    const gl = glRef.current;
+    const program = programRef.current;
+    if (!glReady || !gl || !program || width <= 0 || height <= 0) return;
+
+    gl.useProgram(program);
+    gl.viewport(0, 0, width, height);
+
+    const isRgb = !!(rgbBandsData && rgbBandsData.r && rgbBandsData.g && rgbBandsData.b);
 
     const texUnits: [WebGLTexture | null, string, number][] = [
       [texturesRef.current.currentFlux, 'u_epoch_current', 0],
@@ -370,7 +391,6 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     effectiveDiffScale,
     colorPalette,
     smooth,
-    uploadTexture,
   ]);
 
   const handleMouseMove = useCallback(
