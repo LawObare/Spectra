@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 try:
+    from backend.admin_ws import router as admin_ws_router
     from backend.api.classify import router as classify_router
     from backend.api.coverage import router as coverage_router
     from backend.api.cutout import router as cutout_router
@@ -23,6 +24,7 @@ try:
     from backend.api.sections import router as sections_router
     from backend.api.spectrum import router as spectrum_router
 except ImportError:
+    from admin_ws import router as admin_ws_router  # type: ignore
     from api.classify import router as classify_router  # type: ignore
     from api.coverage import router as coverage_router  # type: ignore
     from api.cutout import router as cutout_router  # type: ignore
@@ -118,6 +120,7 @@ app.include_router(spectrum_router)
 app.include_router(sections_router)
 app.include_router(forum_router)
 app.include_router(export_router)
+app.include_router(admin_ws_router)
 
 
 @app.get("/api/health/live")
