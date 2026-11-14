@@ -376,8 +376,8 @@ export const HardNegativeTriage: React.FC = () => {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
       {/* HEADER METRICS DECK */}
-      <div className="flex items-center justify-between border-b border-border bg-card/60 px-6 py-3 shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/60 px-3 sm:px-6 py-3 shrink-0 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div>
             <h2 className="text-sm font-semibold tracking-wide text-foreground">
               Tab 4: Disagreement Triage & Hard-Negative Queue
@@ -405,7 +405,7 @@ export const HardNegativeTriage: React.FC = () => {
         </div>
 
         {/* Search & Filter Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Input
             placeholder="Filter subject ID / class..."
             value={searchQuery}
@@ -437,9 +437,9 @@ export const HardNegativeTriage: React.FC = () => {
       )}
 
       {/* MAIN 2-COLUMN WORKSTATION */}
-      <div className="grid grid-cols-12 flex-1 overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-y-auto lg:overflow-hidden">
         {/* LEFT COLUMN: DISAGREEMENT QUEUE TABLE (60% = col-span-7) */}
-        <div className="col-span-7 flex flex-col border-r border-border overflow-hidden">
+        <div className="lg:col-span-7 flex flex-col border-b lg:border-b-0 lg:border-r border-border overflow-hidden">
           <div className="border-b border-border bg-secondary/30 px-4 py-2 flex items-center justify-between shrink-0">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               |P_AI - P_Community| Disagreement Queue ({filteredCandidates.length})
@@ -449,8 +449,8 @@ export const HardNegativeTriage: React.FC = () => {
             </span>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
-            <table className="w-full text-left text-xs">
+          <div className="flex-1 overflow-x-auto overflow-y-auto">
+            <table className="w-full min-w-[620px] text-left text-xs">
               <thead className="sticky top-0 bg-secondary/80 backdrop-blur-sm border-b border-border text-[11px] font-medium text-muted-foreground">
                 <tr>
                   <th className="py-2 px-3">Divergence</th>
@@ -578,7 +578,7 @@ export const HardNegativeTriage: React.FC = () => {
         </div>
 
         {/* RIGHT COLUMN: RAW FITS HDU 1–6 INSPECTOR (40% = col-span-5) */}
-        <div className="col-span-5 flex flex-col bg-card overflow-y-auto p-4 gap-4">
+        <div className="lg:col-span-5 flex flex-col bg-card lg:overflow-y-auto p-3 sm:p-4 gap-4">
           <Card className="border-border">
             <CardHeader className="py-3 px-4 border-b border-border bg-secondary/30">
               <div className="flex items-center justify-between">
