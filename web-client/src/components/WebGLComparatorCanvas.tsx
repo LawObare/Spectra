@@ -55,6 +55,7 @@ export interface WebGLComparatorCanvasProps {
   onPixelHover?: (info: HoverPixelInfo | null) => void;
   onPixelClick?: (info: HoverPixelInfo) => void;
   className?: string;
+  smooth?: boolean;
 }
 
 const FLAG_NAMES: Record<number, string> = {
@@ -117,6 +118,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
   onPixelHover,
   onPixelClick,
   className = '',
+  smooth = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<WebGL2RenderingContext | null>(null);
@@ -139,6 +141,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     bandB: null,
   });
 
+  const floatLinearSupportedRef = useRef<boolean>(false);
   const filterModeRef = useRef<number>(WebGL2RenderingContext.NEAREST);
   const [glReady, setGlReady] = useState(false);
 
@@ -192,7 +195,8 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     glRef.current = gl;
 
     const floatLinearExt = gl.getExtension('OES_texture_float_linear');
-    filterModeRef.current = floatLinearExt ? gl.LINEAR : gl.NEAREST;
+    floatLinearSupportedRef.current = Boolean(floatLinearExt);
+    filterModeRef.current = smooth && floatLinearExt ? gl.LINEAR : gl.NEAREST;
 
     try {
       const vertShader = compileShader(gl, gl.VERTEX_SHADER, vertShaderSource);
@@ -268,6 +272,8 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
       if (!gl || !tex) return;
 
       gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filterModeRef.current);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filterModeRef.current);
       if (data && data.length >= w * h) {
         gl.texImage2D(
           gl.TEXTURE_2D,
@@ -302,6 +308,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     const program = programRef.current;
     if (!glReady || !gl || !program || width <= 0 || height <= 0) return;
 
+    filterModeRef.current = smooth && floatLinearSupportedRef.current ? gl.LINEAR : gl.NEAREST;
     gl.useProgram(program);
     gl.viewport(0, 0, width, height);
 
@@ -362,6 +369,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     effectiveCuts,
     effectiveDiffScale,
     colorPalette,
+    smooth,
     uploadTexture,
   ]);
 
@@ -456,7 +464,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
         onClick={handleClick}
         className="block h-full w-full cursor-crosshair"
         style={{
-          imageRendering: 'pixelated',
+          imageRendering: smooth ? 'auto' : 'pixelated',
         }}
       />
 
