@@ -128,3 +128,55 @@ CREATE TABLE IF NOT EXISTS ml_training_runs (
     status TEXT NOT NULL DEFAULT 'running',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 7. SPHEREx Mission Coverage Footprints Cache (Fast Full-Sky Navigator Coverage)
+CREATE TABLE IF NOT EXISTS coverage_footprints (
+    obs_id TEXT PRIMARY KEY,
+    collection TEXT NOT NULL DEFAULT 'spherex_qr2',
+    detector TEXT NOT NULL,
+    mjd DOUBLE PRECISION,
+    wavelength TEXT,
+    ra_center DOUBLE PRECISION NOT NULL,
+    dec_center DOUBLE PRECISION NOT NULL,
+    s_region TEXT NOT NULL,
+    access_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_coverage_spatial ON coverage_footprints (ra_center, dec_center);
+CREATE INDEX IF NOT EXISTS idx_coverage_collection ON coverage_footprints (collection);
+
+-- 8. Precomputed All-Sky HEALPix MOCs per SPHEREx Data Release (QR2 & QR3)
+CREATE TABLE IF NOT EXISTS coverage_mocs (
+    collection TEXT PRIMARY KEY,
+    moc_order INT NOT NULL,
+    moc_json JSONB NOT NULL,
+    sky_fraction DOUBLE PRECISION NOT NULL,
+    cell_count INT NOT NULL,
+    exposure_count INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 9. User-Installed SPHEREx Sky Sections (Persisted Cutout Tensors & 102-Channel Spectra)
+CREATE TABLE IF NOT EXISTS installed_sections (
+    section_id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    ra DOUBLE PRECISION NOT NULL,
+    dec DOUBLE PRECISION NOT NULL,
+    fov_arcsec DOUBLE PRECISION NOT NULL,
+    status TEXT NOT NULL DEFAULT 'installing',
+    epochs INT NOT NULL DEFAULT 0,
+    bands INT NOT NULL DEFAULT 6,
+    height INT NOT NULL DEFAULT 0,
+    width INT NOT NULL DEFAULT 0,
+    source_badge TEXT NOT NULL DEFAULT '[IRSA Live]',
+    tensor_path TEXT,
+    spectrum_json JSONB,
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_installed_sections_spatial ON installed_sections (ra, dec);
+CREATE INDEX IF NOT EXISTS idx_installed_sections_status ON installed_sections (status, created_at DESC);
