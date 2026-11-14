@@ -128,9 +128,18 @@ export const MajorDiscoveriesShowcase: React.FC<MajorDiscoveriesShowcaseProps> =
     return () => viewport.removeEventListener('wheel', onWheel);
   }, [activeIndex, goTo]);
 
-  /* Mouse-only drag-to-scroll (touch/trackpad use the native scroller). */
+  /* Mouse-only drag-to-scroll (touch/trackpad use the native scroller).
+   * Ignore clicks on buttons/anchors so the carousel does not steal
+   * the pointer from an actual card CTA or link target.
+   */
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'mouse' || event.button !== 0) return;
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+      return;
+    }
+
     const viewport = viewportRef.current;
     if (!viewport) return;
     dragStateRef.current = {
