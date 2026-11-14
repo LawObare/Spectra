@@ -5,6 +5,7 @@ import {
   MANDATORY_BENCHMARKS,
   SEARCHABLE_SKY_CATALOG,
 } from '../components/GlobalCommandHeader';
+import { Button, Badge, Input, Select } from '../components/ui';
 
 /**
  * Spectra Tab 5: Observation Discussions & External Archive Cross-Match (<ObservationDiscussions />)
@@ -332,30 +333,30 @@ export const ObservationDiscussions: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-[#080A0F] font-sans text-xs text-[#E6ECF2]">
+    <div className="flex h-full w-full overflow-hidden bg-background font-sans text-xs text-foreground select-none">
       {/* LEFT 32%: External Archive Cross-Match & Zero-Auth Telemetry Session Panel */}
-      <aside className="flex w-[360px] xl:w-[400px] shrink-0 flex-col border-r border-[#1E2530] bg-[#0F131A] overflow-y-auto p-4 gap-4">
+      <aside className="flex w-[360px] xl:w-[400px] shrink-0 flex-col border-r border-border bg-card overflow-y-auto p-4 gap-4">
         {/* Active Coordinate Cross-Match Header */}
-        <div className="rounded-sm border border-[#1E2530] bg-[#080A0F] p-3">
+        <div className="rounded-sm border border-border bg-background p-3">
           <div className="flex items-center justify-between">
-            <span className="font-semibold text-[#E6ECF2]">
+            <span className="font-semibold text-foreground">
               Active Sky Field Cross-Match
             </span>
-            <span className="rounded-sm border border-[#1E2530] bg-[#151B24] px-1.5 py-0.5 font-mono text-[10px] text-[#38BDF8]">
+            <Badge variant="sky" className="font-mono text-[10px]">
               Community Product
-            </span>
+            </Badge>
           </div>
-          <div className="mt-1.5 font-medium text-[#E6ECF2]">
+          <div className="mt-1.5 font-medium text-foreground">
             {activeTargetName || 'Selected Field'}
           </div>
-          <div className="mt-0.5 font-mono text-[11px] tabular-nums text-[#38BDF8]">
+          <div className="mt-0.5 font-mono text-[11px] tabular-nums text-primary">
             J2000 RA {ra.toFixed(5)}° · Dec {dec >= 0 ? `+${dec.toFixed(5)}` : dec.toFixed(5)}° · FoV {fovArcsec}&quot;
           </div>
         </div>
 
         {/* External Astronomical Archive Links */}
         <div>
-          <h3 className="mb-2 text-xs font-semibold text-[#E6ECF2]">
+          <h3 className="mb-2 text-xs font-semibold text-foreground">
             External Archive Cross-Match Verification
           </h3>
           <div className="flex flex-col gap-1.5">
@@ -365,30 +366,30 @@ export const ObservationDiscussions: React.FC = () => {
                 href={arch.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group flex flex-col rounded-sm border border-[#1E2530] bg-[#080A0F] p-2.5 transition-colors duration-150 hover:border-[#38BDF8]"
+                className="group flex flex-col rounded-sm border border-border bg-background p-2.5 transition-colors duration-150 hover:border-primary"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-[#E6ECF2] group-hover:text-[#38BDF8]">
+                  <span className="font-medium text-foreground group-hover:text-primary">
                     {arch.name}
                   </span>
-                  <span className="font-mono text-[10px] text-[#94A3B8]">↗</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">↗</span>
                 </div>
-                <span className="mt-0.5 text-[11px] text-[#94A3B8]">{arch.desc}</span>
+                <span className="mt-0.5 text-[11px] text-muted-foreground">{arch.desc}</span>
               </a>
             ))}
           </div>
         </div>
 
         {/* Zero-Auth Telemetry Session Info */}
-        <div className="mt-auto rounded-sm border border-[#1E2530] bg-[#080A0F] p-3">
+        <div className="mt-auto rounded-sm border border-border bg-background p-3">
           <div className="flex items-center justify-between">
-            <span className="font-medium text-[#E6ECF2]">Observer Telemetry Session</span>
-            <span className="font-mono text-[10px] text-[#22C55E]">
+            <span className="font-medium text-foreground">Observer Telemetry Session</span>
+            <span className="font-mono text-[10px] text-emerald-400">
               {sseConnected ? 'SSE Live' : 'Local Sync'}
             </span>
           </div>
-          <div className="mt-1 text-[11px] text-[#94A3B8]">
-            Handle: <strong className="font-mono text-[#E6ECF2]">{identity.handle}</strong> (Zero-Auth UUIDv4 + SHA-256 key)
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            Handle: <strong className="font-mono text-foreground">{identity.handle}</strong> (Zero-Auth UUIDv4 + SHA-256 key)
           </div>
         </div>
       </aside>
@@ -396,41 +397,36 @@ export const ObservationDiscussions: React.FC = () => {
       {/* RIGHT 68%: Observation Note Composer & Threaded Candidate Feed */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top Filter Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E2530] bg-[#0F131A] px-4 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
+            <Button
+              variant={scopeFilter === 'ALL' ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setScopeFilter('ALL')}
-              className={`rounded-sm border px-2.5 py-1 text-xs ${
-                scopeFilter === 'ALL'
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
+              className={scopeFilter === 'ALL' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
             >
               All Sky Observations ({threads.length})
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={scopeFilter === 'TARGET' ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setScopeFilter('TARGET')}
-              className={`rounded-sm border px-2.5 py-1 text-xs ${
-                scopeFilter === 'TARGET'
-                  ? 'border-[#38BDF8] bg-[#151B24] font-medium text-[#E6ECF2]'
-                  : 'border-[#1E2530] bg-[#080A0F] text-[#94A3B8] hover:text-[#E6ECF2]'
-              }`}
+              className={scopeFilter === 'TARGET' ? 'border-primary/50 text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
             >
               Near {ra.toFixed(2)}°, {dec.toFixed(2)}° (r ≤ 1.5°)
-            </button>
+            </Button>
           </div>
 
           <div className="flex items-center gap-2">
-            <label htmlFor="forum-class-filter" className="text-[11px] text-[#94A3B8]">
+            <label htmlFor="forum-class-filter" className="text-[11px] text-muted-foreground">
               Classification:
             </label>
-            <select
+            <Select
               id="forum-class-filter"
+              sizeVariant="xs"
               value={classFilter}
               onChange={(e) => setClassFilter(e.target.value)}
-              className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1 text-xs text-[#E6ECF2] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+              className="bg-background text-foreground"
             >
               <option value="ALL">All Classifications</option>
               {CLASSIFICATION_CATEGORIES.map((c) => (
@@ -438,7 +434,7 @@ export const ObservationDiscussions: React.FC = () => {
                   {c.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
 
@@ -446,50 +442,51 @@ export const ObservationDiscussions: React.FC = () => {
           {/* New Observation Note Composer */}
           <form
             onSubmit={handleCreateThread}
-            className="rounded-sm border border-[#1E2530] bg-[#0F131A] p-3.5"
+            className="rounded-sm border border-border bg-card p-3.5"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#1E2530]">
-              <span className="font-semibold text-[#E6ECF2]">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border">
+              <span className="font-semibold text-foreground">
                 Log Observation Note & Pin Current Sky State
               </span>
-              <span className="font-mono text-[11px] tabular-nums text-[#38BDF8]">
+              <span className="font-mono text-[11px] tabular-nums text-primary">
                 Pinned: {activeTargetName || 'Field'} ({ra.toFixed(4)}°, {dec.toFixed(4)}° · {fovArcsec}&quot; · {renderMode})
               </span>
             </div>
 
             <div className="mt-2.5 grid grid-cols-12 gap-2">
               <div className="col-span-12 md:col-span-6">
-                <label htmlFor="obs-title" className="block text-[11px] text-[#94A3B8]">
+                <label htmlFor="obs-title" className="block text-[11px] text-muted-foreground">
                   Observation Summary
                 </label>
-                <input
+                <Input
                   id="obs-title"
                   type="text"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="e.g. Dipole shift in D5 at MJD 61360 or H2O 3.05 µm absorption..."
-                  className="mt-1 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-2.5 py-1.5 text-xs text-[#E6ECF2] placeholder-[#94A3B8] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                  className="mt-1 bg-background text-xs"
                 />
               </div>
               <div className="col-span-8 md:col-span-4">
-                <label htmlFor="obs-class" className="block text-[11px] text-[#94A3B8]">
+                <label htmlFor="obs-class" className="block text-[11px] text-muted-foreground">
                   Candidate Classification
                 </label>
-                <select
+                <Select
                   id="obs-class"
+                  sizeVariant="sm"
                   value={newClass}
                   onChange={(e) => setNewClass(e.target.value)}
-                  className="mt-1 w-full rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1.5 text-xs text-[#E6ECF2] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                  className="mt-1 w-full bg-background"
                 >
                   {CLASSIFICATION_CATEGORIES.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div className="col-span-4 md:col-span-2">
-                <label htmlFor="obs-conf" className="block text-[11px] text-[#94A3B8]">
+                <label htmlFor="obs-conf" className="block text-[11px] text-muted-foreground">
                   Confidence ({newConfidence}%)
                 </label>
                 <input
@@ -500,7 +497,7 @@ export const ObservationDiscussions: React.FC = () => {
                   step={5}
                   value={newConfidence}
                   onChange={(e) => setNewConfidence(Number(e.target.value))}
-                  className="mt-2.5 w-full accent-[#38BDF8]"
+                  className="mt-2.5 w-full accent-primary"
                 />
               </div>
             </div>
@@ -515,20 +512,21 @@ export const ObservationDiscussions: React.FC = () => {
                 value={newBody}
                 onChange={(e) => setNewBody(e.target.value)}
                 placeholder="Record MJD passes, detector bands (D1–D6), proper motion vectors, or optical depth metrics..."
-                className="w-full rounded-sm border border-[#1E2530] bg-[#080A0F] p-2.5 text-xs text-[#E6ECF2] placeholder-[#94A3B8] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                className="w-full rounded-sm border border-border bg-background p-2.5 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               />
             </div>
 
             <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-[#94A3B8]">
-                Posting as <strong className="font-mono text-[#E6ECF2]">{identity.handle}</strong> · Community Product
+              <span className="text-[11px] text-muted-foreground">
+                Posting as <strong className="font-mono text-foreground">{identity.handle}</strong> · Community Product
               </span>
-              <button
+              <Button
                 type="submit"
-                className="rounded-sm border border-[#38BDF8] bg-[#151B24] px-3 py-1.5 text-xs font-medium text-[#E6ECF2] hover:bg-[#38BDF8]/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                variant="default"
+                size="sm"
               >
                 Publish Observation Note
-              </button>
+              </Button>
             </div>
           </form>
 
@@ -541,22 +539,20 @@ export const ObservationDiscussions: React.FC = () => {
               return (
                 <article
                   key={t.id}
-                  className="rounded-sm border border-[#1E2530] bg-[#0F131A] p-3.5"
+                  className="rounded-sm border border-border bg-card p-3.5"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <h4 className="text-xs font-semibold text-[#E6ECF2]">{t.title}</h4>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[#94A3B8]">
-                        <span className="font-mono text-[#E6ECF2]">{t.authorHandle}</span>
+                      <h4 className="text-xs font-semibold text-foreground">{t.title}</h4>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="font-mono text-foreground">{t.authorHandle}</span>
                         {t.isModerator && (
-                          <span className="rounded-sm border border-[#F59E0B] bg-[#151B24] px-1.5 py-0.2 font-mono text-[10px] text-[#F59E0B]">
-                            [Moderator]
-                          </span>
+                          <Badge variant="amber">[Moderator]</Badge>
                         )}
                         <span>·</span>
-                        <span className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-1.5 py-0.2 text-[10px] text-[#38BDF8]">
+                        <Badge variant="sky">
                           {catLabel} ({t.confidencePct}%)
-                        </span>
+                        </Badge>
                         <span>·</span>
                         <span className="font-mono text-[10px]">
                           {t.timestampIso.slice(0, 16).replace('T', ' ')} UTC
@@ -566,52 +562,51 @@ export const ObservationDiscussions: React.FC = () => {
 
                     {/* Pinned State Jump Controls */}
                     <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
+                      <Button
+                        variant="outline"
+                        size="xs"
                         onClick={() => handleRestorePinnedState(t, 'navigator')}
-                        className="rounded-sm border border-[#1E2530] bg-[#080A0F] px-2 py-1 font-mono text-[10px] tabular-nums text-[#E6ECF2] hover:border-[#38BDF8]"
+                        className="font-mono text-[10px] tabular-nums"
                         title="Center sky mosaic on this observation's coordinates"
                       >
                         Sky Map ({t.ra.toFixed(2)}°, {t.dec.toFixed(2)}°)
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="xs"
                         onClick={() => handleRestorePinnedState(t, 'comparator')}
-                        className="rounded-sm border border-[#38BDF8] bg-[#151B24] px-2 py-1 text-[10px] font-medium text-[#E6ECF2] hover:bg-[#38BDF8]/20"
                         title="Open this target and render mode in Tab 2 Comparator"
                       >
                         Inspect in Comparator →
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
-                  <p className="mt-2.5 text-xs leading-relaxed text-[#E6ECF2]/90">
+                  <p className="mt-2.5 text-xs leading-relaxed text-foreground/90">
                     {t.body}
                   </p>
 
                   {/* Replies */}
                   {t.replies.length > 0 && (
-                    <div className="mt-3 space-y-2 border-t border-[#1E2530] pt-2.5 pl-3">
+                    <div className="mt-3 space-y-2 border-t border-border pt-2.5 pl-3">
                       {t.replies.map((r) => (
                         <div
                           key={r.id}
-                          className="rounded-sm border border-[#1E2530] bg-[#080A0F] p-2 text-xs"
+                          className="rounded-sm border border-border bg-background p-2 text-xs"
                         >
-                          <div className="flex items-center gap-2 text-[10px] text-[#94A3B8]">
-                            <span className="font-mono font-medium text-[#E6ECF2]">
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                            <span className="font-mono font-medium text-foreground">
                               {r.authorHandle}
                             </span>
                             {r.isModerator && (
-                              <span className="rounded-sm border border-[#F59E0B] bg-[#151B24] px-1 py-0.2 font-mono text-[9px] text-[#F59E0B]">
-                                [Moderator]
-                              </span>
+                              <Badge variant="amber" className="text-[9px] px-1 py-0">[Moderator]</Badge>
                             )}
                             <span>·</span>
                             <span className="font-mono">
                               {r.timestampIso.slice(0, 16).replace('T', ' ')} UTC
                             </span>
                           </div>
-                          <p className="mt-1 text-xs text-[#E6ECF2]">{r.body}</p>
+                          <p className="mt-1 text-xs text-foreground">{r.body}</p>
                         </div>
                       ))}
                     </div>
@@ -619,22 +614,22 @@ export const ObservationDiscussions: React.FC = () => {
 
                   {/* Quick Reply Input */}
                   <div className="mt-2.5 flex items-center gap-2">
-                    <input
+                    <Input
                       type="text"
                       value={replyDrafts[t.id] || ''}
                       onChange={(e) =>
                         setReplyDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))
                       }
                       placeholder="Add verification reply or ephemeris cross-match note..."
-                      className="flex-1 rounded-sm border border-[#1E2530] bg-[#080A0F] px-2.5 py-1 text-xs text-[#E6ECF2] placeholder-[#94A3B8] focus-visible:border-[#38BDF8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]"
+                      className="flex-1 h-7 text-xs bg-background"
                     />
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="xs"
                       onClick={() => handleAddReply(t.id)}
-                      className="rounded-sm border border-[#1E2530] bg-[#151B24] px-2.5 py-1 text-xs text-[#E6ECF2] hover:border-[#38BDF8]"
                     >
                       Reply
-                    </button>
+                    </Button>
                   </div>
                 </article>
               );
