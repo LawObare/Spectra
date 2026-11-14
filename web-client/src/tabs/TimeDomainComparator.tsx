@@ -9,7 +9,9 @@ import {
   findMatchingSection,
   formatSectionBytes,
   startSectionInstall,
-  useSectionManager,
+  useDownloadingSections,
+  useDownloadingSummary,
+  useInstalledSectionState,
   type InstalledSection,
 } from '../lib/installedSections';
 
@@ -132,6 +134,49 @@ export interface TimeDomainComparatorProps {
   onOpenCatalog?: () => void;
 }
 
+const ComparatorDownloadProgress: React.FC<{
+  ra: number;
+  dec: number;
+  fovArcsec: number;
+  fallbackProgress: number;
+  fallbackMessage: string;
+}> = React.memo(({ ra, dec, fovArcsec, fallbackProgress, fallbackMessage }) => {
+  const downloadingSections = useDownloadingSections();
+  const activeDownload = downloadingSections.find(
+    (d) =>
+      Math.abs(d.ra - ra) < 0.002 &&
+      Math.abs(d.dec - dec) < 0.002 &&
+      Math.abs(d.fov_arcsec - Math.round(fovArcsec || 300)) <= 1
+  );
+  const displayProgress = activeDownload ? activeDownload.progress : fallbackProgress;
+  const displayMessage = activeDownload ? activeDownload.message : fallbackMessage;
+  const isOrange = Boolean(activeDownload);
+
+  return (
+    <>
+      <p className="mt-4 text-sm leading-6 text-slate-300" role="status">
+        {displayMessage}
+      </p>
+      <div
+        className="mt-6 h-1 overflow-hidden rounded bg-slate-800"
+        role="progressbar"
+        aria-label="SPHEREx data loading progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(displayProgress * 100)}
+      >
+        <div
+          className={`h-full rounded transition-[width] duration-300 ease-out ${isOrange ? 'bg-orange-500' : 'bg-cyan-400'}`}
+          style={{ width: `${Math.max(1, displayProgress * 100)}%` }}
+        />
+      </div>
+      <p className={`mt-1 text-right font-mono text-[10px] ${isOrange ? 'text-orange-300' : 'text-slate-500'}`}>
+        {Math.round(displayProgress * 100)}%
+      </p>
+    </>
+  );
+});
+
 export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOpenCatalog }) => {
   const {
     ra: urlRa,
@@ -209,7 +254,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   const [dataProgress, setDataProgress] = useState(0);
   const [loadedCutoutCount, setLoadedCutoutCount] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const { installedSections, downloadingSections } = useSectionManager();
+  const { installedSections } = useInstalledSectionState();
+  const { downloadingMeta } = useDownloadingSummary();
   const [activeInstalledSection, setActiveInstalledSection] = useState<InstalledSection | null>(null);
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
   const prevMatchingDownloadRef = useRef<boolean>(false);
@@ -224,13 +270,13 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
   const matchingDownloadingSection = useMemo(
     () =>
-      downloadingSections.find(
+      downloadingMeta.find(
         (d) =>
           Math.abs(d.ra - urlRa) < 0.002 &&
           Math.abs(d.dec - urlDec) < 0.002 &&
           Math.abs(d.fov_arcsec - Math.round(urlFov || 300)) <= 1
       ) || null,
-    [downloadingSections, urlRa, urlDec, urlFov]
+    [downloadingMeta, urlRa, urlDec, urlFov]
   );
 
   const isInstallingHere = Boolean(matchingDownloadingSection);
@@ -1046,8 +1092,6 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   if (!loadedTensor) {
     const activeDownload = matchingDownloadingSection;
     const isShowingProgress = dataStatus === 'loading' || Boolean(activeDownload);
-    const displayProgress = activeDownload ? activeDownload.progress : dataProgress;
-    const displayMessage = activeDownload ? activeDownload.message : dataMessage;
     return (
       <main className="min-h-[70vh] bg-slate-950 px-6 py-12 text-slate-100">
         <section className="mx-auto max-w-3xl rounded-2xl border border-cyan-900/60 bg-slate-900/80 p-8">
@@ -1064,29 +1108,20 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
           <p className="mt-2 font-mono text-xs text-slate-400">
             Active target: RA {urlRa.toFixed(5)}°, Dec {urlDec >= 0 ? '+' : ''}{urlDec.toFixed(5)}° · FOV {Math.round(urlFov || 300)}″
           </p>
-          <p className="mt-4 text-sm leading-6 text-slate-300" role={isShowingProgress ? 'status' : 'alert'}>
-            {displayMessage}
-          </p>
           {isShowingProgress ? (
-            <>
-              <div
-                className="mt-6 h-1 overflow-hidden rounded bg-slate-800"
-                role="progressbar"
-                aria-label="SPHEREx data loading progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(displayProgress * 100)}
-              >
-                <div
-                  className={`h-full rounded transition-[width] duration-300 ease-out ${activeDownload ? 'bg-orange-500' : 'bg-cyan-400'}`}
-                  style={{ width: `${Math.max(1, displayProgress * 100)}%` }}
-                />
-              </div>
-              <p className={`mt-1 text-right font-mono text-[10px] ${activeDownload ? 'text-orange-300' : 'text-slate-500'}`}>
-                {Math.round(displayProgress * 100)}%
-              </p>
-            </>
+            <ComparatorDownloadProgress
+              ra={urlRa}
+              dec={urlDec}
+              fovArcsec={urlFov || 300}
+              fallbackProgress={dataProgress}
+              fallbackMessage={dataMessage}
+            />
           ) : (
+            <p className="mt-4 text-sm leading-6 text-slate-300" role="alert">
+              {dataMessage}
+            </p>
+          )}
+          {!isShowingProgress && (
             <div className="mt-6 space-y-6">
               <div className="flex flex-wrap gap-3">
                 <button
