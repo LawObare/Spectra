@@ -2677,3 +2677,23 @@ To ensure that **any** agent working in the repository—whether running via Ant
 ### Status
 - Passed all integrity checks across `SPECIFICATION.md` and `SYSTEM_ARCHITECTURE.md`.
 - Committed and pushed to `main`.
+
+---
+
+## Exchange #41: Full Machine Learning & Mission Control Subsystem Granularity
+
+### Context & Goals
+- Provide full, granular architecture and directory representation for the Machine Learning and Mission Control (`/admin`) subsystems in `SYSTEM_ARCHITECTURE.md`.
+
+### Changes Integrated into SYSTEM_ARCHITECTURE.md
+1. **Granular Development Tree (§3.4):**
+   - Expanded `backend/ml/`: `models.py` (3 PyTorch architectures), `trainer.py` (150ms epoch cadence loop), `telemetry.py` (forward/backward hooks, 40-bin histograms), `meshgrid.py` (25x25x25 3D decision boundary grid), `dataset.py`, `export.py`, and `weights/` (`dipole_convnet_3d.pt`, `spectral_resnet_102.pt`, `feature_svm.pkl`).
+   - Expanded `web-client/src/admin/`: `AdminLayout.tsx`, `TrainingDynamics.tsx` (Tab 1), `ActivationInspector.tsx` (Tab 2), `DecisionBoundaries.tsx` (Tab 3), `HardNegativeTriage.tsx` (Tab 4), `DataProductExports.tsx` (Tab 5), and `hooks/useAdminTelemetry.ts`.
+2. **Dedicated Machine Learning & Observability Section (§4.3):**
+   - Documented the three PyTorch architectures: `DipoleConvNet3D` (5D multi-epoch spatio-temporal CNN), `SpectralResNet102` (102-channel 1D residual network with skip connections), and `AstroFeatureSVM` (3D calibrated RBF decision model).
+   - Documented live telemetry packet compression (<20 KB frames) and 100-frame ring-buffer replay over WebSocket.
+   - Documented pre-computed weights for instant 60 FPS demo playback without requiring live GPU retraining.
+
+### Status
+- Passed all integrity checks (894 lines, 60,794 chars).
+- Committed and pushed to `main`.
