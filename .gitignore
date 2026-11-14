@@ -11,3 +11,6 @@ dist/
 concept/
 supabase/.temp/
 supabase/.branches/
+backend/cache/cutouts/
+backend/data/installed_sections/
+*.fits
