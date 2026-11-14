@@ -13,7 +13,9 @@ import {
   DownloadingSectionMeta,
   InstalledSection,
   findMatchingSection,
+  findOverlappingSection,
   formatSectionBytes,
+  sectionsOverlap,
   useDownloadingSections,
   useDownloadingSummary,
   useInstalledSectionState,
@@ -376,14 +378,16 @@ const MatchingDownloadStatusButton: React.FC<{
   queueState?: 'queued' | 'installing';
 }> = React.memo(({ ra, dec, fovArcsec, queueState }) => {
   const liveDownloads = useDownloadingSections();
-  const match = liveDownloads.find(
-    (d) =>
-      Math.abs(d.ra - ra) < 0.002 &&
-      Math.abs(d.dec - dec) < 0.002 &&
-      Math.abs(d.fov_arcsec - fovArcsec) <= 1
+  const match = liveDownloads.find((d) =>
+    sectionsOverlap(ra, dec, fovArcsec, d.ra, d.dec, d.fov_arcsec)
   );
   const resolvedQueueState = match?.queueState ?? queueState;
   const pct = Math.round((match?.progress ?? 0.15) * 100);
+  const exactCenter =
+    match &&
+    Math.abs(match.ra - ra) < 0.002 &&
+    Math.abs(match.dec - dec) < 0.002 &&
+    Math.abs(match.fov_arcsec - fovArcsec) <= 1;
   return (
     <Button
       type="button"
@@ -391,10 +395,19 @@ const MatchingDownloadStatusButton: React.FC<{
       size="xs"
       disabled
       className="flex-1 h-7 text-[11px] border-orange-500/50 bg-orange-500/15 text-orange-300"
+      title={
+        match && !exactCenter
+          ? `Overlaps active download "${match.label}"`
+          : undefined
+      }
     >
       {resolvedQueueState === 'queued'
-        ? 'Queued for Download'
-        : `Downloading (${pct}%)`}
+        ? exactCenter
+          ? 'Queued for Download'
+          : 'Overlaps Queued Region'
+        : exactCenter
+          ? `Downloading (${pct}%)`
+          : `Overlaps Active Download (${pct}%)`}
     </Button>
   );
 });
@@ -734,13 +747,15 @@ export const CelestialNavigator: React.FC = () => {
     [installedSections, ra, dec, fovArcsec]
   );
 
+  const overlappingInstalledSection = useMemo(
+    () => findOverlappingSection(installedSections, ra, dec, fovArcsec),
+    [installedSections, ra, dec, fovArcsec]
+  );
+
   const matchingDownloadingSection = useMemo(
     () =>
-      activeDownloadingSections.find(
-        (d) =>
-          Math.abs(d.ra - ra) < 0.002 &&
-          Math.abs(d.dec - dec) < 0.002 &&
-          Math.abs(d.fov_arcsec - fovArcsec) <= 1
+      activeDownloadingSections.find((d) =>
+        sectionsOverlap(ra, dec, fovArcsec, d.ra, d.dec, d.fov_arcsec)
       ) || null,
     [activeDownloadingSections, ra, dec, fovArcsec]
   );
@@ -2157,6 +2172,42 @@ export const CelestialNavigator: React.FC = () => {
                   fovArcsec={fovArcsec}
                   queueState={matchingDownloadingSection.queueState}
                 />
+              ) : overlappingInstalledSection ? (
+                <div className="flex flex-1 min-w-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => {
+                      setCoordinates(
+                        overlappingInstalledSection.ra,
+                        overlappingInstalledSection.dec,
+                        overlappingInstalledSection.label,
+                        overlappingInstalledSection.source_badge
+                      );
+                      setRa(overlappingInstalledSection.ra);
+                      setDec(overlappingInstalledSection.dec);
+                      setFov(overlappingInstalledSection.fov_arcsec);
+                      setUrlFov(overlappingInstalledSection.fov_arcsec);
+                    }}
+                    className="flex-1 min-w-0 h-7 px-2 text-[11px] border-amber-500/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                    title={`Selection overlaps "${overlappingInstalledSection.label}" (${overlappingInstalledSection.fov_arcsec}"). Click to jump to it instead of duplicating coverage.`}
+                  >
+                    <span className="truncate">
+                      Overlaps &ldquo;{overlappingInstalledSection.label}&rdquo; · Select
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => handleUninstallSection(overlappingInstalledSection.section_id)}
+                    className="h-7 px-2 text-[11px] border-red-500/30 text-red-300 hover:border-red-500/60"
+                    title="Remove the overlapping installed section"
+                  >
+                    Remove
+                  </Button>
+                </div>
               ) : (
                 <Button
                   type="button"
