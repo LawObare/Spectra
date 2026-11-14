@@ -234,7 +234,7 @@ export const ActivationInspector: React.FC = () => {
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
       ctx.fillStyle = line.color;
-      ctx.font = '9px ui-monospace, monospace';
+      ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
       ctx.textAlign = 'center';
       ctx.fillText(line.label, x, padT + 9);
     });
@@ -253,7 +253,7 @@ export const ActivationInspector: React.FC = () => {
 
     // Axis labels
     ctx.fillStyle = '#64748b';
-    ctx.font = '9px ui-monospace, monospace';
+    ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
     ctx.textAlign = 'right';
     ctx.fillText(`${maxF.toExponential(1)} Jy`, padL - 5, padT + 8);
     ctx.fillText(`${minF.toFixed(2)}`, padL - 5, padT + ch);
