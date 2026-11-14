@@ -37,7 +37,7 @@ Agents must strictly obey the phase sequence preceded by Day-0 Spikes. Never wor
 - All exported data products carry `Community Product` label (no false NASA endorsement).
 
 ## 4. Token & Workflow Efficiency
-- **Terse communication:** Strip conversational filler. Use dense, factual caveman-style responses.
+- **Terse communication:** Strip conversational filler. Use dense, factual concise responses.
 - **Lazy skill activation:** Do not read skill files unless actively performing that exact task.
 - **Surgical edits:** Use `edit_file` with exact match strings for small diffs; avoid re-writing large files.
 - **Targeted reads:** Read specific line ranges (`StartLine`/`EndLine`).
