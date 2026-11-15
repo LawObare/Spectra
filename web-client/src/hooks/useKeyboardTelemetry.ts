@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useTelemetryStore } from '../store/useTelemetryStore';
+import { useWalkthroughStore } from '../store/useWalkthroughStore';
 
 interface KeyboardTelemetryOptions {
   onToggleCommandPalette?: () => void;
@@ -40,7 +41,8 @@ export function useKeyboardTelemetry(options: KeyboardTelemetryOptions = {}) {
       }
 
       // Do not capture other navigation shortcuts when the user is typing into text fields
-      if (isInput) return;
+      // or navigating the interactive walkthrough overlay
+      if (isInput || useWalkthroughStore.getState().isOpen) return;
 
       const store = useTelemetryStore.getState();
 
