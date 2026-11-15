@@ -352,15 +352,19 @@ def generate_votable_xml(records: list[dict[str, Any]], product: str) -> str:
     if not records:
         return ET.tostring(votable, encoding="utf-8", xml_declaration=True).decode("utf-8")
 
-    # Define FIELD definitions
+    # Define FIELD definitions (scan for first non-None value per column)
     first_record = records[0]
-    for key, val in first_record.items():
+    for key in first_record:
+        sample_val = next((r.get(key) for r in records if r.get(key) is not None), None)
         datatype = "char"
         arraysize = "*"
-        if isinstance(val, (int, bool)):
+        if isinstance(sample_val, bool):
+            datatype = "boolean"
+            arraysize = None
+        elif isinstance(sample_val, int):
             datatype = "long"
             arraysize = None
-        elif isinstance(val, float):
+        elif isinstance(sample_val, float):
             datatype = "double"
             arraysize = None
 
@@ -402,14 +406,23 @@ def generate_fits_bintable(records: list[dict[str, Any]], product: str) -> bytes
 
     columns = []
     first_rec = records[0]
-    for key, sample_val in first_rec.items():
+    for key in first_rec:
         col_data = [r.get(key) for r in records]
-        if isinstance(sample_val, int):
+        sample_val = next((v for v in col_data if v is not None), None)
+        if isinstance(sample_val, bool):
+            col = fits.Column(
+                name=key[:68],
+                format="L",
+                array=np.array([bool(v) if v is not None else False for v in col_data], dtype=bool),
+            )
+        elif isinstance(sample_val, int) and all(v is not None for v in col_data):
             col = fits.Column(name=key[:68], format="K", array=np.array(col_data, dtype=np.int64))
-        elif isinstance(sample_val, float):
-            col = fits.Column(name=key[:68], format="D", array=np.array(col_data, dtype=np.float64))
-        elif isinstance(sample_val, bool):
-            col = fits.Column(name=key[:68], format="L", array=np.array(col_data, dtype=bool))
+        elif isinstance(sample_val, (int, float)):
+            col = fits.Column(
+                name=key[:68],
+                format="D",
+                array=np.array([float(v) if v is not None else np.nan for v in col_data], dtype=np.float64),
+            )
         else:
             str_data = [str(x) if x is not None else "" for x in col_data]
             max_len = max(len(s) for s in str_data) if str_data else 16

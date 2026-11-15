@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS discussion_replies (
 
 CREATE INDEX IF NOT EXISTS idx_replies_thread ON discussion_replies(thread_id);
 
--- 6. Admin Model Training Runs (Persists Training History for /admin Tabs 1, 2, 3)
+-- 6. Admin Model Training Runs (Persists Training History & Weights for /admin Studio)
 CREATE TABLE IF NOT EXISTS ml_training_runs (
     run_id TEXT PRIMARY KEY,
     model_architecture TEXT NOT NULL,
@@ -125,9 +125,32 @@ CREATE TABLE IF NOT EXISTS ml_training_runs (
     final_val_loss DOUBLE PRECISION,
     final_val_f1 DOUBLE PRECISION,
     telemetry_frames JSONB NOT NULL DEFAULT '[]'::jsonb,
+    weights_zst BYTEA,
+    is_promoted BOOLEAN NOT NULL DEFAULT FALSE,
+    confusion_matrix JSONB,
+    class_counts JSONB,
     status TEXT NOT NULL DEFAULT 'running',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 6b. Labeled Sky Spectra Examples (Real Benchmarks, User Labels & Optional Demo Seed)
+CREATE TABLE IF NOT EXISTS ml_labeled_examples (
+    example_id TEXT PRIMARY KEY,
+    section_id TEXT,
+    target_name TEXT NOT NULL,
+    ra DOUBLE PRECISION,
+    dec DOUBLE PRECISION,
+    px INT,
+    py INT,
+    class_id INT NOT NULL,
+    class_label TEXT NOT NULL,
+    spectrum_json JSONB,
+    source TEXT NOT NULL DEFAULT 'user',
+    note TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ml_labeled_examples_class ON ml_labeled_examples (class_id);
+CREATE INDEX IF NOT EXISTS idx_ml_labeled_examples_source ON ml_labeled_examples (source);
 
 -- 7. SPHEREx Mission Coverage Footprints Cache (Fast Full-Sky Navigator Coverage)
 CREATE TABLE IF NOT EXISTS coverage_footprints (
@@ -171,6 +194,7 @@ CREATE TABLE IF NOT EXISTS installed_sections (
     width INT NOT NULL DEFAULT 0,
     source_badge TEXT NOT NULL DEFAULT '[IRSA Live]',
     tensor_path TEXT,
+    tensor_zst BYTEA,
     spectrum_json JSONB,
     size_bytes BIGINT NOT NULL DEFAULT 0,
     error_message TEXT,

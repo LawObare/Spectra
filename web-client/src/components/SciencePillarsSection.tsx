@@ -8,7 +8,7 @@ export const SciencePillarsSection: React.FC<SciencePillarsSectionProps> = ({
   onLaunchPillarWorkstation,
 }) => {
   return (
-    <section className="w-full bg-neutral-950 py-16 px-6 lg:px-12 text-white border-b border-neutral-900">
+    <section className="w-full py-16 px-6 lg:px-12 text-white">
       <div className="max-w-7xl mx-auto">
         <div className="max-w-3xl mb-12">
           <div className="flex items-center gap-2 mb-2">

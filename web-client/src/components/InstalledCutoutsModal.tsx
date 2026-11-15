@@ -516,6 +516,10 @@ export const InstalledCutoutsModal: React.FC<{
               <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
                 No cutout sections are installed yet. Use Sky Navigator or &ldquo;Install &amp; Load Section Here&rdquo; to install a region.
               </div>
+            ) : filteredSections.length === 0 && !searchQuery.trim() ? (
+              <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
+                No cutouts in this filter yet — switch to &ldquo;All sources&rdquo; or install a sky region.
+              </div>
             ) : filteredSections.length === 0 ? (
               <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
                 No installed cutouts matched &ldquo;{searchQuery}&rdquo;.

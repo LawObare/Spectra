@@ -465,66 +465,66 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
       };
       dragCircleRef.current = nextDrag;
       setDragCircle(nextDrag);
-    },
-    [clientToImageCoords, width, height, onPixelClick]
-  );
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!onPixelHover && !onPixelClick) return;
-      const coords = clientToImageCoords(e);
-      if (!coords) return;
-      const { fracX, fracY, pxX, pxY } = coords;
-
-      const activeDrag = dragCircleRef.current;
-      if (activeDrag) {
-        const clampedFracX = Math.max(0, Math.min(width, fracX));
-        const clampedFracY = Math.max(0, Math.min(height, fracY));
+      const onWinMove = (ev: MouseEvent) => {
+        const activeDrag = dragCircleRef.current;
+        const canvas = canvasRef.current;
+        if (!activeDrag || !canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const fx = Math.max(0, Math.min(width, ((ev.clientX - rect.left) / rect.width) * width));
+        const fy = Math.max(0, Math.min(height, ((ev.clientY - rect.top) / rect.height) * height));
         const radiusPx = Math.min(
           Math.max(width, height) * 0.45,
-          Math.hypot(clampedFracX - activeDrag.startX, clampedFracY - activeDrag.startY)
+          Math.hypot(fx - activeDrag.startX, fy - activeDrag.startY)
         );
         const updatedDrag = {
           ...activeDrag,
-          currentX: clampedFracX,
-          currentY: clampedFracY,
+          currentX: fx,
+          currentY: fy,
           radiusPx,
         };
         dragCircleRef.current = updatedDrag;
         setDragCircle(updatedDrag);
-      }
+      };
 
-      if (pxX < 0 || pxX >= width || pxY < 0 || pxY >= height) {
-        onPixelHover?.(null);
-        return;
-      }
+      const onWinUp = () => {
+        window.removeEventListener('mousemove', onWinMove);
+        window.removeEventListener('mouseup', onWinUp);
+        const activeDrag = dragCircleRef.current;
+        dragCircleRef.current = null;
+        setDragCircle(null);
+        if (!activeDrag || !onPixelClick) return;
+        if (activeDrag.radiusPx >= 0.75) {
+          suppressNextClickRef.current = true;
+          const centerPxX = Math.max(0, Math.min(width - 1, Math.floor(activeDrag.startX)));
+          const centerPxY = Math.max(0, Math.min(height - 1, Math.floor(activeDrag.startY)));
+          onPixelClick(buildPixelInfo(centerPxX, centerPxY, Number(activeDrag.radiusPx.toFixed(2))));
+        }
+      };
 
-      onPixelHover?.(buildPixelInfo(pxX, pxY));
+      window.addEventListener('mousemove', onWinMove);
+      window.addEventListener('mouseup', onWinUp);
     },
-    [clientToImageCoords, buildPixelInfo, width, height, onPixelHover, onPixelClick]
+    [clientToImageCoords, buildPixelInfo, width, height, onPixelClick]
   );
 
-  const handleMouseUp = useCallback(
+  const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (e.button !== 0) return;
-      const activeDrag = dragCircleRef.current;
-      dragCircleRef.current = null;
-      setDragCircle(null);
-
-      if (!activeDrag || !onPixelClick) return;
-      if (activeDrag.radiusPx >= 0.75) {
-        suppressNextClickRef.current = true;
-        const centerPxX = Math.max(0, Math.min(width - 1, Math.floor(activeDrag.startX)));
-        const centerPxY = Math.max(0, Math.min(height - 1, Math.floor(activeDrag.startY)));
-        onPixelClick(buildPixelInfo(centerPxX, centerPxY, Number(activeDrag.radiusPx.toFixed(2))));
+      if (!onPixelHover) return;
+      const coords = clientToImageCoords(e);
+      if (!coords) return;
+      const { pxX, pxY } = coords;
+      if (pxX < 0 || pxX >= width || pxY < 0 || pxY >= height) {
+        onPixelHover(null);
+        return;
       }
+      onPixelHover(buildPixelInfo(pxX, pxY));
     },
-    [buildPixelInfo, width, height, onPixelClick]
+    [clientToImageCoords, buildPixelInfo, width, height, onPixelHover]
   );
 
   const handleMouseLeave = useCallback(() => {
-    dragCircleRef.current = null;
-    setDragCircle(null);
     onPixelHover?.(null);
   }, [onPixelHover]);
 
@@ -558,7 +558,6 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
         height={height}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
         className="block h-full w-full cursor-crosshair"
@@ -569,7 +568,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
 
       {dragCircle && dragCircle.radiusPx >= 0.5 && width > 0 && height > 0 && (
         <div
-          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-cyan-400 bg-cyan-400/10 shadow-[0_0_12px_rgba(34,211,238,0.45)]"
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-white/95 bg-sky-400/10"
           style={{
             left: `${(dragCircle.startX / width) * 100}%`,
             top: `${(dragCircle.startY / height) * 100}%`,
@@ -577,8 +576,9 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
             height: `${((dragCircle.radiusPx * 2) / height) * 100}%`,
           }}
         >
-          <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded border border-cyan-500/50 bg-[#080A0F]/90 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300">
-            r = {dragCircle.radiusPx.toFixed(1)} px · {(dragCircle.radiusPx * 6.2).toFixed(1)}&quot;
+          <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/90" />
+          <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-black/85 px-1.5 py-0.5 font-mono text-[9px] text-neutral-200 border border-white/15">
+            r = {dragCircle.radiusPx.toFixed(1)} px
           </span>
         </div>
       )}

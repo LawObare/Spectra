@@ -509,7 +509,11 @@ export function useAdminTelemetry() {
   // Connect WebSocket for selected architecture
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsBase = (import.meta.env.VITE_WS_BASE_URL || `${protocol}//${window.location.host}`).replace(/\/+$/, '');
+    const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+    const defaultWsHost = isVercel
+      ? 'wss://spectra-mission-engine.onrender.com'
+      : `${protocol}//${window.location.host}`;
+    const wsBase = (import.meta.env.VITE_WS_BASE_URL || defaultWsHost).replace(/\/+$/, '');
     const wsUrl = `${wsBase}/api/admin/ws/training?model=${encodeURIComponent(hyperparams.model)}`;
     let closed = false;
 

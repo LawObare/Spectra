@@ -345,16 +345,6 @@ const MessageSquareIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5
   </svg>
 );
 
-const SparklesIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
-  <svg {...lucideSvgProps} className={className} data-lucide="sparkles">
-    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-    <path d="M20 3v4" />
-    <path d="M22 5h-4" />
-    <path d="M4 17v2" />
-    <path d="M5 18H3" />
-  </svg>
-);
-
 const BookOpenIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
   <svg {...lucideSvgProps} className={className} data-lucide="book-open">
     <path d="M12 7v14" />
@@ -666,7 +656,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           parsedCoords.ra,
           parsedCoords.dec,
           matched ? matched.name : `J2000 ${parsedCoords.ra.toFixed(4)}°, ${parsedCoords.dec >= 0 ? '+' : ''}${parsedCoords.dec.toFixed(4)}°`,
-          matched ? '[NASA Benchmark (Pre-cached)]' : '[Synthetic Injection Mode]',
+          matched ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Sky Coordinate]',
           matched?.preset
         );
         return;
@@ -685,7 +675,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           catalogHit.ra,
           catalogHit.dec,
           catalogHit.name,
-          isBench ? '[NASA Benchmark (Pre-cached)]' : '[Synthetic Injection Mode]',
+          isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Sky Coordinate]',
           catalogHit.preset
         );
         return;
@@ -818,24 +808,6 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         </Link>
 
         <span className="hidden sm:inline-block h-4 w-px bg-white/10 mx-0.5" aria-hidden="true" />
-
-        {/* Mission Briefing / Sky Workstation Toggle */}
-        {onToggleMissionBriefing && (
-          <button
-            type="button"
-            onClick={onToggleMissionBriefing}
-            className={cn(
-              'h-8 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap',
-              isMissionBriefingActive
-                ? 'bg-primary text-white shadow-sm ring-1 ring-white/15'
-                : 'border border-white/10 bg-white/[0.04] text-neutral-200 hover:bg-white/[0.08] hover:border-white/20 hover:text-white'
-            )}
-            title="Toggle between NASA SPHEREx Mission Launchpad and Workstation"
-          >
-            <SparklesIcon className={cn('h-3.5 w-3.5 shrink-0', isMissionBriefingActive ? 'text-white' : 'text-sky-400')} />
-            <span>{isMissionBriefingActive ? 'Sky Workstation' : 'Mission Briefing'}</span>
-          </button>
-        )}
 
         {/* Authoritative Source Catalog Button */}
         {onOpenCatalog && (
@@ -1103,7 +1075,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
               </div>
               <button
                 type="button"
-                title="Launch the complete 25-card beginner tour from Explore through /admin"
+                title="Launch the complete step-by-step beginner tour from Explore through AI Studio"
                 onClick={() => {
                   setIsGuideOpen(false);
                   startFullTour();

@@ -22,6 +22,26 @@ function isElementVisible(el: HTMLElement | null): el is HTMLElement {
   return rect.width > 2 && rect.height > 2;
 }
 
+function findVisibleTarget(selector: string): HTMLElement | null {
+  const matches = document.querySelectorAll(selector);
+  for (let i = 0; i < matches.length; i += 1) {
+    const el = matches[i] as HTMLElement;
+    if (isElementVisible(el)) return el;
+  }
+  return null;
+}
+
+function sameRect(a: RectBox | null, b: RectBox | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    Math.abs(a.top - b.top) < 1 &&
+    Math.abs(a.left - b.left) < 1 &&
+    Math.abs(a.width - b.width) < 1 &&
+    Math.abs(a.height - b.height) < 1
+  );
+}
+
 function clamp(val: number, min: number, max: number): number {
   if (max < min) return min;
   return Math.min(Math.max(val, min), max);
@@ -105,7 +125,7 @@ export const WalkthroughOverlay: React.FC = () => {
     }
 
     if (currentStep.routePrefix === '/admin') {
-      const targetRoute = currentStep.routePath || '/admin/dynamics';
+      const targetRoute = currentStep.routePath || '/admin/studio';
       if (location.pathname !== targetRoute) {
         navigate(targetRoute);
       }
@@ -114,37 +134,44 @@ export const WalkthroughOverlay: React.FC = () => {
 
   // Locate and continuously track [data-tour="..."] element across lazy renders, scroll, and resize
   const measureAnchor = useCallback(() => {
-    setViewport({ vw: window.innerWidth, vh: window.innerHeight });
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    setViewport((prev) => (prev.vw === vw && prev.vh === vh ? prev : { vw, vh }));
 
     if (!currentStep?.targetSelector) {
-      setTargetRect(null);
+      setTargetRect((prev) => (prev === null ? prev : null));
       setIsWaitingForAnchor(false);
       return true;
     }
 
-    const el = document.querySelector(currentStep.targetSelector) as HTMLElement | null;
-    if (!isElementVisible(el)) {
+    const el = findVisibleTarget(currentStep.targetSelector);
+    if (!el) {
       return false;
     }
 
     if (scrolledStepRef.current !== currentStep.id) {
       scrolledStepRef.current = currentStep.id;
-      try {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-      } catch {
-        // Ignore older browsers without scrollIntoView options
+      const pre = el.getBoundingClientRect();
+      const outOfView = pre.top < 12 || pre.bottom > vh - 12 || pre.left < 0 || pre.right > vw;
+      if (outOfView) {
+        try {
+          el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+        } catch {
+          // Ignore older browsers without scrollIntoView options
+        }
       }
     }
 
     const r = el.getBoundingClientRect();
-    setTargetRect({
+    const nextRect: RectBox = {
       top: r.top,
       left: r.left,
       right: r.right,
       bottom: r.bottom,
       width: r.width,
       height: r.height,
-    });
+    };
+    setTargetRect((prev) => (sameRect(prev, nextRect) ? prev : nextRect));
     setIsWaitingForAnchor(false);
     return true;
   }, [currentStep]);
@@ -166,7 +193,7 @@ export const WalkthroughOverlay: React.FC = () => {
     let resizeObserver: ResizeObserver | null = null;
     const attachResizeObserver = () => {
       if (typeof ResizeObserver === 'undefined' || !currentStep.targetSelector) return;
-      const el = document.querySelector(currentStep.targetSelector) as HTMLElement | null;
+      const el = findVisibleTarget(currentStep.targetSelector);
       if (el) {
         resizeObserver?.disconnect();
         resizeObserver = new ResizeObserver(() => {
@@ -177,25 +204,33 @@ export const WalkthroughOverlay: React.FC = () => {
     };
     if (settled) attachResizeObserver();
 
-    const mutationObserver = new MutationObserver(() => {
-      if (measureAnchor()) {
-        settled = true;
-        attachResizeObserver();
-      }
-    });
-    mutationObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-    });
+    let mutationObserver: MutationObserver | null = null;
+    if (!settled) {
+      mutationObserver = new MutationObserver(() => {
+        if (measureAnchor()) {
+          settled = true;
+          attachResizeObserver();
+          mutationObserver?.disconnect();
+        }
+      });
+      // Only watch childList (never attributes) while waiting for a lazy tab/drawer to mount
+      mutationObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    }
 
-    // Smoothly track animations / post-scroll coordinates while waiting
+    // Track brief layout settles (e.g. sidebar drawer slide-in) without spinning forever
     let rafId = 0;
     let frameCount = 0;
     const tick = () => {
-      measureAnchor();
+      if (measureAnchor() && !settled) {
+        settled = true;
+        attachResizeObserver();
+        mutationObserver?.disconnect();
+      }
       frameCount += 1;
-      if (frameCount < 25) {
+      if (frameCount < 20) {
         rafId = window.requestAnimationFrame(tick);
       }
     };
@@ -205,19 +240,26 @@ export const WalkthroughOverlay: React.FC = () => {
       if (!settled && !measureAnchor()) {
         setIsWaitingForAnchor(false);
         setTargetRect(null);
+        mutationObserver?.disconnect();
       }
     }, 1800);
 
+    let scrollRaf = 0;
     const handleScrollOrResize = () => {
-      measureAnchor();
+      if (scrollRaf) return;
+      scrollRaf = window.requestAnimationFrame(() => {
+        scrollRaf = 0;
+        measureAnchor();
+      });
     };
     window.addEventListener('resize', handleScrollOrResize);
     window.addEventListener('scroll', handleScrollOrResize, { capture: true, passive: true });
 
     return () => {
-      mutationObserver.disconnect();
+      mutationObserver?.disconnect();
       resizeObserver?.disconnect();
       window.cancelAnimationFrame(rafId);
+      if (scrollRaf) window.cancelAnimationFrame(scrollRaf);
       window.clearTimeout(fallbackTimer);
       window.removeEventListener('resize', handleScrollOrResize);
       window.removeEventListener('scroll', handleScrollOrResize, true);
@@ -407,23 +449,23 @@ export const WalkthroughOverlay: React.FC = () => {
       {targetRect && cutW > 0 && cutH > 0 ? (
         <>
           <div
-            className="pointer-events-auto fixed left-0 right-0 top-0 bg-black/65 transition-all duration-150"
+            className="pointer-events-auto fixed left-0 right-0 top-0 bg-black/65"
             style={{ height: cutTop }}
           />
           <div
-            className="pointer-events-auto fixed left-0 bg-black/65 transition-all duration-150"
+            className="pointer-events-auto fixed left-0 bg-black/65"
             style={{ top: cutTop, width: cutLeft, height: cutH }}
           />
           <div
-            className="pointer-events-auto fixed right-0 bg-black/65 transition-all duration-150"
+            className="pointer-events-auto fixed right-0 bg-black/65"
             style={{ top: cutTop, left: cutRight, height: cutH }}
           />
           <div
-            className="pointer-events-auto fixed bottom-0 left-0 right-0 bg-black/65 transition-all duration-150"
+            className="pointer-events-auto fixed bottom-0 left-0 right-0 bg-black/65"
             style={{ top: cutBottom }}
           />
           <div
-            className="pointer-events-none fixed rounded-xl border-2 border-sky-400/90 shadow-[0_0_24px_rgba(56,189,248,0.45)] transition-all duration-150"
+            className="pointer-events-none fixed rounded-xl border-2 border-sky-400/90 shadow-[0_0_24px_rgba(56,189,248,0.45)]"
             style={{
               top: cutTop,
               left: cutLeft,
@@ -439,8 +481,8 @@ export const WalkthroughOverlay: React.FC = () => {
       {/* Walkthrough Floating Feature Card */}
       <div
         ref={cardRef}
-        style={cardStyle}
-        className="pointer-events-auto fixed z-[71] rounded-2xl border border-sky-400/40 bg-neutral-950/95 p-4 sm:p-5 text-white shadow-[0_24px_64px_rgba(0,0,0,0.88)] backdrop-blur-xl transition-all duration-150"
+        style={{ ...cardStyle, maxHeight: `${Math.max(240, vh - 24)}px` }}
+        className="pointer-events-auto fixed z-[71] overflow-y-auto rounded-2xl border border-sky-400/40 bg-neutral-950/95 p-4 sm:p-5 text-white shadow-[0_24px_64px_rgba(0,0,0,0.88)] backdrop-blur-xl transition-[top,left] duration-150"
       >
         {/* Top Row: Chapter Badge & Dismiss */}
         <div className="flex items-center justify-between gap-2">

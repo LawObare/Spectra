@@ -56,17 +56,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'nav-admin-mission-control',
       category: 'Workspaces',
-      label: 'Open Mission Control (/admin — AI Fine-Tuning & Triage)',
-      shortcut: 'Ctrl+Shift+A',
+      label: 'Open Spectra AI Studio (/admin — Train, Test & Export)',
+      shortcut: 'Alt+A',
       perform: () => {
         onClose();
-        navigate('/admin/dynamics');
+        navigate('/admin/studio');
       },
     },
     {
       id: 'help-walkthrough',
       category: 'Viewer Controls',
-      label: 'Start Interactive Walkthrough (25-Card Beginner Guide)',
+      label: 'Start Interactive Walkthrough (Step-by-Step Beginner Guide)',
       shortcut: 'Guide',
       perform: () => {
         onClose();

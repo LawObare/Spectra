@@ -14,7 +14,7 @@
       "destination": "https://spectra-mission-engine.onrender.com/api/:path*"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|assets/).*)",
       "destination": "/index.html"
     }
   ],

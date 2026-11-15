@@ -94,7 +94,27 @@ async def _apply_consensus_updates(
         subject_id,
     )
     if subject is None:
-        raise HTTPException(status_code=404, detail="Subject not found")
+        sec = await conn.fetchrow(
+            "SELECT section_id, label FROM installed_sections WHERE section_id = $1",
+            subject_id,
+        )
+        if sec or subject_id.startswith("triage_"):
+            title = str(sec["label"]) if sec else f"Triage Subject {subject_id}"
+            await conn.execute(
+                """
+                INSERT INTO subjects (subject_id, title, category, ra, dec, is_calibration, verification_status, data_release)
+                VALUES ($1, $2, 'triage_queue', 0.0, 0.0, FALSE, 'pending', 'spherex_dr1')
+                ON CONFLICT (subject_id) DO NOTHING
+                """,
+                subject_id,
+                title,
+            )
+            subject = await conn.fetchrow(
+                "SELECT subject_id, is_calibration, expert_ground_truth FROM subjects WHERE subject_id = $1",
+                subject_id,
+            )
+        if subject is None:
+            raise HTTPException(status_code=404, detail="Subject not found")
 
     calibration_increment = 0
     if subject["is_calibration"] and subject["expert_ground_truth"]:

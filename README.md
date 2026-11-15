@@ -25,7 +25,7 @@ Spectra is a web workbench built for the NASA Space Apps Challenge prompt:
 It has two portals:
 
 - **`/explore` — public explorer suite.** Five tabs for browsing the sky, blinking between observation dates, reading spectra, mapping ices, and discussing findings.
-- **`/admin` — mission control.** Five read-only-by-default tabs for inspecting model training, activations, decision boundaries, triage queues, and data exports.
+- **`/admin` — Spectra AI Studio.** Three interactive tabs for teaching a real 102-channel PyTorch sky classifier on CPU, reviewing uncertain stars, and exporting trained `.pt` weights and community data products (accessible via `Alt+A` or `/admin`).
 
 There is no sign-up or password wall. Each browser creates a local observer identity the first time it loads the app, so visitors can take part without friction.
 
@@ -60,7 +60,7 @@ Spectra queries the **NASA/IPAC Infrared Science Archive (IRSA)** through SIA2 a
 
 ---
 
-## 2. Architecture: 5 Public Tabs + 5 Admin Tabs
+## 2. Architecture: 5 Public Tabs + 3 Admin AI Studio Tabs
 
 ```
                            +-------------------------------------------------------+
@@ -68,14 +68,14 @@ Spectra queries the **NASA/IPAC Infrared Science Archive (IRSA)** through SIA2 a
                            +-------------------------------------------------------+
                                     |                                       |
                 +---------------------------------------+   +---------------------------------------+
-                |    PORTAL A: PUBLIC EXPLORER SUITE    |   |     PORTAL B: ADMIN MISSION CONTROL   |
+                |    PORTAL A: PUBLIC EXPLORER SUITE    |   |      PORTAL B: SPECTRA AI STUDIO      |
                 |               (/explore)              |   |               (/admin)                |
                 +---------------------------------------+   +---------------------------------------+
-                | Tab 1: Celestial Navigator (3D Dome)  |   | Tab 1: Training Dynamics & Loss Studio|
-                | Tab 2: Time-Domain Comparator (Blink) |   | Tab 2: Parameter & Activation Inspector|
-                | Tab 3: Spectrophotometric Lab (102-ch)|   | Tab 3: Decision Boundary Animator (3D)|
-                | Tab 4: Molecular & Ice Mapping Studio |   | Tab 4: Disagreement & Escalation Queue|
-                | Tab 5: Observation Discussions (Feed) |   | Tab 5: Calibration & Data Product Hub |
+                | Tab 1: Celestial Navigator (3D Dome)  |   | Tab 1: Train & Test Studio            |
+                | Tab 2: Time-Domain Comparator (Blink) |   |   (Draggable Class → Train → Preview) |
+                | Tab 3: Spectrophotometric Lab (102-ch)|   | Tab 2: Review & Label Queue           |
+                | Tab 4: Molecular & Ice Mapping Studio |   | Tab 3: Export Data & Models (.pt)     |
+                | Tab 5: Observation Discussions (Feed) |   |                                       |
                 +---------------------------------------+   +---------------------------------------+
 ```
 
@@ -87,13 +87,16 @@ Spectra queries the **NASA/IPAC Infrared Science Archive (IRSA)** through SIA2 a
 - **Tab 4 — Molecular & Ice Mapping Studio** (`/explore?tab=ice_studio`): Continuum-normalized optical depth (`τ_λ`), point-source aperture photometry on background stars (seeded from the IRSA SPLICES catalog), and quantitative ice column-density integration (`N_ice` in cm⁻²). Uses verified laboratory A-values for H₂O (3.05 µm), CO₂ (4.27 µm), ¹³CO₂ (4.38 µm), CO (4.67 µm), and CH₃OH (3.54 µm).
 - **Tab 5 — Observation Discussions** (`/explore?tab=discussions`): A Zooniverse Talk-style science forum with channel tags (`#movers`, `#spectra`, `#ices`, `#artifacts`, `#confirmed`), shareable deep-link state snapshots, live updates over FastAPI SSE (`/api/forum/stream`), and Bayesian consensus ranking.
 
-### Admin mission control (`/admin`)
+### Spectra AI Studio (`/admin`)
 
-- **Tab 1 — Training Dynamics & Loss Studio** (`/admin/dynamics`): Live learning curves, gradient L2 norms, learning-rate annealing, and early-stopping monitors via `uPlot`.
-- **Tab 2 — Parameter & Activation Inspector** (`/admin/internals`): Sequential 3D ridgeline histograms of weights and biases across epochs, layer activations, and Grad-CAM saliency heatmaps.
-- **Tab 3 — Decision Boundary Animator** (`/admin/boundaries`): 3D decision-boundary surfaces that morph across epochs in physical and UMAP latent space, rendered with `react-plotly.js` WebGL surfaces.
-- **Tab 4 — Hard-Negative & Escalation Queue** (`/admin/triage`): AI-versus-human disagreement mining (`|P_AI − P_Human|`), raw Multi-Extension FITS inspection (MEF HDUs 1–6), and one-click candidate promotion.
-- **Tab 5 — Calibration & Data Product Hub** (`/admin/exports`): Volunteer Bayesian reliability audits (`w_u`), gold-standard controls, and one-click export of the four official SPHEREx community data products (CSV, VOTable, JSON, and PyTorch HDF5 training tensors).
+Accessible via `Alt+A` or `/admin` with a collapsible sidebar and an interactive 5-card studio tour:
+
+- **Tab 1 — Train & Test Studio** (`/admin/studio`): A Teachable-Machine-style draggable linked-card canvas with live SVG connector wires flowing **Sky Class Cards → Training → Preview (Test Live)**.
+  - **Sky Class Cards:** Separate draggable cards for each sky class with inline renaming, `+ Add Sky Sample` from real installed SPHEREx cutouts, class removal (`×`), `+ Add a Class` (up to 25 dynamic classes), and one-click `Seed Demo (60)` / `Clear` demo data controls.
+  - **Training Card:** Trains a real PyTorch 102-channel classifier (`SpectralResNet102` or `AstroFeatureSVM`, with optional LoRA fine-tuning, epochs, and learning rate inside a collapsed Advanced drawer) in seconds on CPU, streaming live epoch accuracy/loss curves and persisting compressed `.pt` checkpoints to Postgres with `Use`, `.pt` download, `Delete`, and `Reset Model` controls.
+  - **Preview (Test Live) Card:** Stays locked until a model is trained and stays blank until you select a real sky field from the dropdown. Clicking or dragging any star pixel runs live PyTorch inference, displays per-class confidence bars and a 1D Grad-CAM wavelength highlight, and lets you save wrong guesses straight back into training.
+- **Tab 2 — Review & Label** (`/admin/review`): Ranks installed sky cutouts with human-vs-AI disagreements and lowest-confidence predictions first, paired with an interactive sky cutout minimap, 102-channel spectrum plot, compact validation confusion summary, and one-click relabeling to Postgres.
+- **Tab 3 — Export Data & Models** (`/admin/exports`): Live database counts (real vs. demo spectra, saved PyTorch runs), one-click download of trained PyTorch `.pt` model checkpoints, and Community Data Product exports in standard astronomy formats (**CSV, JSON, VOTable XML, and FITS**) with `Community Product` provenance headers.
 
 ---
 
@@ -126,7 +129,7 @@ To keep the hackathon experience frictionless while still supporting attribution
   X-Observer-Key: <secret_32_byte_string>
   ```
 - **Hashed storage.** The backend stores only `sha256(observer_key)` in the `observers` table (`key_hash`). Raw keys and internal observer IDs never appear in read endpoints or public discussions.
-- **Admin safety.** `/admin` is read-only by default (`ADMIN_MUTATIONS_ENABLED=false`). Mutations require a server-held `ADMIN_TOKEN`. Verified admin replies get the gold `[Moderator]` badge.
+- **Admin access.** `/admin` is kept separated from the public `/explore` UI (reachable via `Alt+A` or direct URL). In demo mode interactive AI Studio training, labeling, and checkpoint management are unlocked; production deployments can gate mutations behind `ADMIN_MUTATIONS_ENABLED` and `ADMIN_TOKEN`. Verified admin forum replies receive the gold `[Moderator]` badge.
 - **Data honesty.** Every catalog, candidate, and artifact is labelled `Community Product`; nothing implies NASA endorsement.
 
 ---
@@ -202,11 +205,11 @@ Each phase ends with a self-contained, demonstrable milestone before the next on
    - Tab 5 (Observation Discussions with embedded deep-link snapshots and a live FastAPI SSE feed).
    - **Gate 2:** Hyperspectral analysis and live community peer review are operational.
 
-3. **Phase 3 (P2 — Institutional Polish and Mission Control)**
+3. **Phase 3 (P2 — Institutional Polish and Spectra AI Studio)**
    - Tab 4 (Molecular & Ice Studio with the quantitative column-density integrator `N_ice` for SPLICES background stars).
-   - Admin mission control (`/admin`): five isolated tabs (Dynamics, Internals, Boundaries 3D, Triage, Exports).
-   - PyTorch live-training WebSocket feed (`/api/admin/ws/training`) with pre-trained diagnostic weights.
-   - **Gate 3:** The 10-tab flagship suite works with live machine-learning observability.
+   - Spectra AI Studio (`/admin`): three interactive tabs (**Train & Test Studio** with draggable linked class/training/preview cards, **Review & Label**, and **Export Data & Models**).
+   - Real CPU PyTorch training (`SpectralResNet102` / `AstroFeatureSVM` with optional LoRA), Postgres checkpoint persistence (`.pt` weights), and live 1D Grad-CAM inference on installed cutouts.
+   - **Gate 3:** The 8-tab suite (5 public explorer tabs + 3 AI Studio tabs) works end-to-end with real PyTorch training and exports.
 
 4. **Phase 4 (Deployment, Hardening, and Compliance)**
    - Hugging Face Spaces single-container deployment (FastAPI on port 7860 via `uv`, 16 GB RAM Docker).

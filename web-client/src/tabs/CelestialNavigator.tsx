@@ -52,7 +52,7 @@ const MAX_SKY_FOV_DEG = 60;
 const DETAIL_FITS_FOV_DEG = 0.14;
 const DETAIL_FITS_MAX_DIMENSION = 500;
 const DETAIL_FITS_LAYER_PREFIX = '2MASS Ks FITS detail';
-const SIMULATED_PREVIEW_BADGE = '[Synthetic Injection Mode]';
+const SIMULATED_PREVIEW_BADGE = '[IRSA Sky Coordinate]';
 
 // Verified Astrometric Proper Motions (mas/yr) for Catalog Objects
 const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: number; totalArcsecYr: number }> = {
@@ -580,7 +580,7 @@ export const CelestialNavigator: React.FC = () => {
   const [archiveStatus, setArchiveStatus] = useState<'idle' | 'loading' | 'ready' | 'partial' | 'empty' | 'error'>('idle');
   const [gaiaStatus, setGaiaStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
   const [skybotStatus, setSkybotStatus] = useState<'loading' | 'live' | 'cached_only' | 'unavailable'>('loading');
-  const [showSyntheticPreview, setShowSyntheticPreview] = useState<boolean>(false);
+  const showSyntheticPreview = false;
   const surveyLoadIdRef = useRef<number>(0);
   const surveyLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedSurveyIdRef = useRef<PhotographicSurveyId | null>(null);
@@ -2579,18 +2579,8 @@ export const CelestialNavigator: React.FC = () => {
             )}
           </div>
 
+          {filteredExposures.length > 0 && (
           <div className="flex-1 overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-border px-3 py-1 text-[10px] text-muted-foreground">
-              <span>Synthetic geometry preview · off by default</span>
-              <Button
-                variant="link"
-                size="xs"
-                className="text-primary text-[10px]"
-                onClick={() => setShowSyntheticPreview((visible) => !visible)}
-              >
-                {showSyntheticPreview ? 'Hide synthetic preview' : 'Show synthetic preview'}
-              </Button>
-            </div>
             <table className="w-full border-collapse text-left font-mono text-[11px] tabular-nums">
               <thead className="sticky top-0 z-10 border-b border-border bg-card font-sans text-[10px] text-muted-foreground">
                 <tr>
@@ -2642,6 +2632,7 @@ export const CelestialNavigator: React.FC = () => {
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Active Exposure HDU Summary */}
           {activeExposure && (

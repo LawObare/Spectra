@@ -406,6 +406,64 @@ def _extract_spectrum_from_tensor_payload(
 _MAX_DECOMPRESSED_TENSOR_CACHE = 16
 _DECOMPRESSED_TENSOR_CACHE: OrderedDict[tuple[str, int, int], bytes] = OrderedDict()
 _DECOMPRESSED_TENSOR_LOCK = threading.Lock()
+_TENSOR_ZST_COLUMN_ENSURED = False
+
+
+async def _ensure_tensor_zst_column(pool: asyncpg.Pool) -> None:
+    """Idempotently add tensor_zst BYTEA column on existing databases."""
+    global _TENSOR_ZST_COLUMN_ENSURED
+    if _TENSOR_ZST_COLUMN_ENSURED or "pytest" in sys.modules:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "ALTER TABLE installed_sections ADD COLUMN IF NOT EXISTS tensor_zst BYTEA"
+            )
+        _TENSOR_ZST_COLUMN_ENSURED = True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not ensure tensor_zst column on installed_sections: %s", exc)
+
+
+async def _load_section_tensor_payload(
+    pool: asyncpg.Pool | None,
+    section_id: str,
+    tensor_path: str | None,
+) -> bytes | None:
+    """Load decompressed tensor bytes from local disk, Postgres BYTEA backup, or benchmark bundle."""
+    resolved = _resolve_existing_tensor_path(section_id, tensor_path)
+    if resolved:
+        try:
+            return await asyncio.to_thread(_read_installed_tensor_bytes, resolved)
+        except FileNotFoundError:
+            pass
+
+    if pool is not None:
+        await _ensure_tensor_zst_column(pool)
+        try:
+            async with pool.acquire() as conn:
+                zst_row = await conn.fetchrow(
+                    "SELECT tensor_zst FROM installed_sections WHERE section_id = $1",
+                    section_id,
+                )
+            raw_zst = zst_row.get("tensor_zst") if zst_row and hasattr(zst_row, "get") else (
+                zst_row["tensor_zst"] if zst_row and "tensor_zst" in zst_row else None
+            )
+            if raw_zst:
+                compressed = bytes(raw_zst)
+                def _hydrate_and_decompress() -> bytes:
+                    SECTIONS_DIR.mkdir(parents=True, exist_ok=True)
+                    target = SECTIONS_DIR / f"{section_id}.spx.zst"
+                    target.write_bytes(compressed)
+                    return _read_installed_tensor_bytes(str(target))
+                return await asyncio.to_thread(_hydrate_and_decompress)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not load tensor_zst from Postgres for %s: %s", section_id, exc)
+
+    disk_entry = _find_disk_benchmark_entry(section_id)
+    if disk_entry is not None:
+        return await asyncio.to_thread(_read_installed_tensor_bytes, str(disk_entry[1]))
+
+    return None
 
 
 def _read_installed_tensor_bytes(tensor_path: str) -> bytes:
@@ -489,9 +547,11 @@ async def _finalize_section_install(
         tensor_path, size_bytes = await asyncio.to_thread(
             _write_installed_tensor_bytes, section_id, payload
         )
+        compressed_bytes = await asyncio.to_thread(Path(tensor_path).read_bytes)
         spectrum_dict = await _extract_and_cache_spectrum(ra, dec, label, payload)
         source_badge = str((metadata or {}).get("source_badge") or header.get("source_badge") or "[IRSA Live]")
 
+        await _ensure_tensor_zst_column(pool)
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -519,6 +579,14 @@ async def _finalize_section_install(
                 json.dumps(spectrum_dict),
                 size_bytes,
             )
+            try:
+                await conn.execute(
+                    "UPDATE installed_sections SET tensor_zst = $2 WHERE section_id = $1",
+                    section_id,
+                    compressed_bytes,
+                )
+            except Exception as zst_exc:  # noqa: BLE001
+                logger.warning("Could not persist tensor_zst BYTEA for %s: %s", section_id, zst_exc)
         logger.info("Installed section %s (%s, %d bytes)", section_id, label, size_bytes)
     except Exception as exc:
         logger.exception("Failed finalizing section %s", section_id)
@@ -941,6 +1009,32 @@ def _filter_disk_sections(
     return sliced, total
 
 
+def _filter_rows_with_missing_tensors(
+    rows: list[Any], requested_status: str | None
+) -> tuple[list[dict[str, Any]], int]:
+    """Downgrade ready rows lacking disk/DB tensors to 'missing' (or drop when status='ready')."""
+    normalized: list[dict[str, Any]] = []
+    dropped = 0
+    for raw in rows:
+        r = dict(raw)
+        sid = str(r["section_id"])
+        if str(r["status"]) == "ready":
+            has_tensor_zst = bool(r.get("has_tensor_zst", False))
+            row_tensor_path = r.get("tensor_path")
+            has_tensor = (
+                has_tensor_zst
+                or _resolve_existing_tensor_path(sid, row_tensor_path) is not None
+                or _find_disk_benchmark_entry(sid) is not None
+            )
+            if not has_tensor:
+                if requested_status == "ready":
+                    dropped += 1
+                    continue
+                r["status"] = "missing"
+        normalized.append(r)
+    return normalized, dropped
+
+
 @router.get("/sections")
 async def list_installed_sections(
     request: Request,
@@ -965,6 +1059,7 @@ async def list_installed_sections(
     try:
         if "pytest" not in sys.modules and not _BENCHMARKS_SEEDED_MARKER.exists():
             await ensure_benchmarks_preinstalled(pool)
+        await _ensure_tensor_zst_column(pool)
         clauses: list[str] = []
         params: list[Any] = []
         if status:
@@ -979,7 +1074,8 @@ async def list_installed_sections(
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         base_select = (
             "SELECT section_id, label, ra, dec, fov_arcsec, status, epochs, bands, "
-            "height, width, source_badge, size_bytes, error_message, created_at, updated_at "
+            "height, width, source_badge, tensor_path, (tensor_zst IS NOT NULL) AS has_tensor_zst, "
+            "size_bytes, error_message, created_at, updated_at "
             f"FROM installed_sections {where_sql} ORDER BY updated_at DESC"
         )
         async with pool.acquire() as conn:
@@ -1015,6 +1111,9 @@ async def list_installed_sections(
             "has_more": (offset + len(paged)) < total,
             "status": "ready" if disk_sections else "offline",
         }
+    rows, dropped_missing = _filter_rows_with_missing_tensors(rows, status)
+    if dropped_missing:
+        total = max(len(rows), total - dropped_missing)
     sections = [
         {
             "section_id": str(r["section_id"]),
@@ -1172,7 +1271,7 @@ async def install_section(
 async def get_installed_section_tensor(section_id: str, request: Request) -> Response:
     """Serve the persisted 14 B/px binary tensor for an installed section."""
     pool = await _get_pool(request)
-    tensor_path: str | None = None
+    row_tensor_path: str | None = None
     if pool is not None:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -1182,22 +1281,13 @@ async def get_installed_section_tensor(section_id: str, request: Request) -> Res
         if row:
             if row["status"] != "ready":
                 raise HTTPException(status_code=202, detail=f"Section {section_id} is {row['status']}")
-            tensor_path = _resolve_existing_tensor_path(section_id, row["tensor_path"])
+            row_tensor_path = row["tensor_path"]
 
-    if tensor_path is None:
-        disk_entry = _find_disk_benchmark_entry(section_id)
-        if disk_entry is not None:
-            tensor_path = str(disk_entry[1])
-
-    if not tensor_path:
+    payload = await _load_section_tensor_payload(pool, section_id, row_tensor_path)
+    if payload is None:
         if pool is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
         raise HTTPException(status_code=404, detail=f"Installed section {section_id} not found")
-
-    try:
-        payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     cache_control = "public, max-age=3600" if request.query_params.get("v") else "no-cache"
     return Response(
@@ -1256,7 +1346,6 @@ async def get_installed_section_spectrum(
             raise HTTPException(status_code=503, detail="Database unavailable")
         raise HTTPException(status_code=404, detail=f"Installed section {section_id} not found")
 
-    tensor_path = _resolve_existing_tensor_path(section_id, row["tensor_path"])
     has_spatial_override = (
         px is not None
         or py is not None
@@ -1268,28 +1357,33 @@ async def get_installed_section_spectrum(
     )
 
     # If caller probes a specific pixel/epoch/aperture, compute directly from persisted tensor
-    if has_spatial_override and tensor_path:
-        payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
-        return _extract_spectrum_from_tensor_payload(
-            payload,
-            ra=float(row["ra"]),
-            dec=float(row["dec"]),
-            label=str(row["label"]),
-            px=px,
-            py=py,
-            epoch=epoch,
-            normalize=normalize,
-            aperture_radius=aperture_radius,
-            annulus_inner=annulus_inner,
-            annulus_outer=annulus_outer,
-            sample_mode=sample_mode,
-        )
+    if has_spatial_override:
+        payload = await _load_section_tensor_payload(pool, section_id, row["tensor_path"])
+        if payload is not None:
+            return await asyncio.to_thread(
+                _extract_spectrum_from_tensor_payload,
+                payload,
+                ra=float(row["ra"]),
+                dec=float(row["dec"]),
+                label=str(row["label"]),
+                px=px,
+                py=py,
+                epoch=epoch,
+                normalize=normalize,
+                aperture_radius=aperture_radius,
+                annulus_inner=annulus_inner,
+                annulus_outer=annulus_outer,
+                sample_mode=sample_mode,
+            )
 
+    tensor_path = _resolve_existing_tensor_path(section_id, row["tensor_path"])
     raw_spec = row["spectrum_json"]
     if raw_spec:
         spec = json.loads(raw_spec) if isinstance(raw_spec, str) else dict(raw_spec)
         prov = dict(spec.get("provenance") or {})
         prov.setdefault("spectral_fidelity", "broadband_6_interpolated")
+        if has_spatial_override:
+            prov["spatial_probe_unavailable"] = True
         spec["provenance"] = prov
         covered = int(prov.get("covered_channels") or 0)
         needs_refresh = covered == 0 or (covered < TOTAL_SPHEREX_CHANNELS and "aperture_fallback_bands" not in prov)
@@ -1304,9 +1398,9 @@ async def get_installed_section_spectrum(
                     spec["optical_depth_tau"] = [float(v) for v in np.round(tau_arr, 4)]
             return spec
 
-    if not tensor_path:
+    payload = await _load_section_tensor_payload(pool, section_id, row["tensor_path"])
+    if payload is None:
         raise HTTPException(status_code=404, detail="Section spectrum unavailable")
-    payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
     spec = await asyncio.to_thread(
         _extract_spectrum_from_tensor_payload,
         payload,

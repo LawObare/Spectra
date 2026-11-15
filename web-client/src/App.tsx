@@ -76,6 +76,11 @@ export const PublicExplorerPortal: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const isWalkthroughOpen = useWalkthroughStore((s) => s.isOpen);
+  const walkthroughTargetTab = useWalkthroughStore((s) => {
+    if (!s.isOpen) return undefined;
+    const step = s.steps[s.stepIndex];
+    return step?.routePrefix === '/explore' ? step.tab : undefined;
+  });
 
   useEffect(() => {
     if (isWalkthroughOpen) {
@@ -83,6 +88,13 @@ export const PublicExplorerPortal: React.FC = () => {
       setIsCatalogOpen(false);
     }
   }, [isWalkthroughOpen]);
+
+  // Keep nuqs tab state synchronously aligned with the active walkthrough step
+  useEffect(() => {
+    if (walkthroughTargetTab && walkthroughTargetTab !== tab) {
+      void setTab(walkthroughTargetTab);
+    }
+  }, [walkthroughTargetTab, tab, setTab]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -283,7 +295,7 @@ const LandingMissionPage: React.FC = () => {
 };
 
 // Lazy-loaded administrative route chunk (SPECIFICATION.md §6.1.1: Physical chunk isolation)
-const AdminMissionControl = lazy(() => import('./admin/AdminLayout'));
+const AdminMissionControl = lazy(() => import('./admin/AdminStudioLayout'));
 
 /**
  * Direct keyboard shortcut anywhere in the app to jump straight into /admin:
@@ -309,7 +321,7 @@ const RootAdminShortcut: React.FC = () => {
 
       if (isCtrlShiftA || isAltA) {
         event.preventDefault();
-        navigate('/admin/dynamics');
+        navigate('/admin/studio');
       }
     };
 

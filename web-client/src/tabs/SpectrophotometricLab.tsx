@@ -4,7 +4,12 @@ import 'uplot/dist/uPlot.min.css';
 import { useTelemetryStore, type SpectralChannel } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { ActiveCaseBanner } from '../components/ActiveCaseBanner';
-import { CutoutProbeMinimap } from '../components/CutoutProbeMinimap';
+import {
+  CutoutProbeMinimap,
+  type CutoutPassInfo,
+  type CutoutTimelineMode,
+  type CutoutTimelineState,
+} from '../components/CutoutProbeMinimap';
 import {
   InstalledCutoutsModal,
   UseCurrentSelectedButton,
@@ -260,7 +265,7 @@ export const SpectrophotometricLab: React.FC = () => {
     setProbeY: setUrlProbeY,
   } = useSpectraUrlState();
 
-  const { installedSections } = useInstalledSectionState();
+  const { installedSections, startSectionInstall } = useInstalledSectionState();
   const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Loading Archive Spectrum…]');
   const [spectrumStatus, setSpectrumStatus] = useState('');
   const [spectralFidelity, setSpectralFidelity] = useState<SpectralFidelity>('broadband_6_interpolated');
@@ -269,8 +274,27 @@ export const SpectrophotometricLab: React.FC = () => {
 
   const [overlayEpoch, setOverlayEpoch] = useState(false);
   const [epochCompareChannels, setEpochCompareChannels] = useState<SpectralChannel[]>([]);
+  const [timelineMode, setTimelineMode] = useState<CutoutTimelineMode>('coadd');
+  const [baselineEpoch, setBaselineEpoch] = useState<number>(0);
+  const [compareEpoch, setCompareEpoch] = useState<number>(1);
+  const [cutoutPasses, setCutoutPasses] = useState<CutoutPassInfo[]>([]);
+  const [mjdDeltaDays, setMjdDeltaDays] = useState<number | null>(null);
+  const [showDiffSpectrum, setShowDiffSpectrum] = useState<boolean>(false);
   const [activeToolTab, setActiveToolTab] = useState<ToolTab>('match');
+  const [showCheatSheet, setShowCheatSheet] = useState(false);
+  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [selectedMatchIdx, setSelectedMatchIdx] = useState<number | null>(0);
+
+  const handleTimelineChange = useCallback((state: CutoutTimelineState) => {
+    setTimelineMode(state.mode);
+    setBaselineEpoch(state.baselineEpoch);
+    setCompareEpoch(state.compareEpoch);
+    setCutoutPasses(state.passes);
+    setMjdDeltaDays(state.mjdDeltaDays);
+    if (state.mode !== 'diff') {
+      setShowDiffSpectrum(false);
+    }
+  }, []);
 
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
@@ -314,6 +338,18 @@ export const SpectrophotometricLab: React.FC = () => {
     [setProbedPixel, setProbeSkyPosition, setUrlProbeX, setUrlProbeY]
   );
 
+  const handleReinstallSection = useCallback(
+    (sec: InstalledSection) => {
+      void startSectionInstall({
+        ra: sec.ra,
+        dec: sec.dec,
+        fovArcsec: sec.fov_arcsec || 300,
+        label: sec.label,
+      });
+    },
+    [startSectionInstall]
+  );
+
   const handleCloseCutoutBrowser = useCallback(() => setIsCutoutBrowserOpen(false), []);
 
   useEffect(() => {
@@ -334,8 +370,14 @@ export const SpectrophotometricLab: React.FC = () => {
         ? findMatchingSection(readyInstalledSections, position.ra, position.dec) ||
           findMatchingSection(readyInstalledSections, ra, dec)
         : null;
+      const primaryEpoch =
+        timelineMode === 'single' || timelineMode === 'diff'
+          ? baselineEpoch
+          : isSpectralBlinkSynced
+            ? activeEpochIndex
+            : null;
       const buildCacheKey = (id: string, rev: string | number) =>
-        `${id}:${rev}:${probedPixel?.x ?? ''}:${probedPixel?.y ?? ''}:${isSpectralBlinkSynced ? activeEpochIndex : ''}:${isForcedFullRes ? 'full' : 'std'}`;
+        `${id}:${rev}:${probedPixel?.x ?? ''}:${probedPixel?.y ?? ''}:${primaryEpoch ?? ''}:${isForcedFullRes ? 'full' : 'std'}`;
 
       if (quickMatch) {
         const cached = getCachedSpectrum(buildCacheKey(quickMatch.section_id, quickMatch.updated_at || quickMatch.size_bytes || ''));
@@ -386,8 +428,8 @@ export const SpectrophotometricLab: React.FC = () => {
             qs.set('px', String(probedPixel.x));
             qs.set('py', String(probedPixel.y));
           }
-          if (isSpectralBlinkSynced) {
-            qs.set('epoch', String(activeEpochIndex));
+          if (primaryEpoch !== null) {
+            qs.set('epoch', String(primaryEpoch));
           }
           try {
             const secRes = await fetch(`/api/sections/${matched.section_id}/spectrum?${qs.toString()}`, {
@@ -462,6 +504,9 @@ export const SpectrophotometricLab: React.FC = () => {
           setSpectrumSourceBadge(sourceBadge as string);
           setSpectrumStatus(statusText);
           setSpectralFidelity(fidelity);
+          if (data.provenance?.spatial_probe_unavailable) {
+            setSpectrumStatus('Cutout tensor missing on server — showing center spectrum (re-download cutout to probe pixels)');
+          }
         }
       } catch (err) {
         if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
@@ -486,15 +531,22 @@ export const SpectrophotometricLab: React.FC = () => {
     probedPixel?.y,
     isSpectralBlinkSynced,
     activeEpochIndex,
+    timelineMode,
+    baselineEpoch,
     forceLiveCoordKey,
     readySectionsKey,
     setActiveSpectrum,
     setSpectrumLoading,
   ]);
 
-  // Fetch single-epoch comparison curve when overlayEpoch is toggled on
+  // Fetch comparison pass spectrum when Diff (Pass A vs Pass B) or Overlay Epoch is active
+  const isComparingPasses = timelineMode === 'diff';
+  const compareTargetEpoch = isComparingPasses ? compareEpoch : activeEpochIndex;
+  const shouldFetchCompareCurve =
+    Boolean(activeInstalledSection) && (isComparingPasses || (overlayEpoch && !isSpectralBlinkSynced));
+
   useEffect(() => {
-    if (!overlayEpoch || isSpectralBlinkSynced || !activeInstalledSection) {
+    if (!shouldFetchCompareCurve || !activeInstalledSection) {
       setEpochCompareChannels([]);
       return;
     }
@@ -502,7 +554,7 @@ export const SpectrophotometricLab: React.FC = () => {
     let cancelled = false;
     const qs = new URLSearchParams({
       normalize: 'false',
-      epoch: String(activeEpochIndex),
+      epoch: String(compareTargetEpoch),
     });
     if (probedPixel) {
       qs.set('px', String(probedPixel.x));
@@ -523,15 +575,21 @@ export const SpectrophotometricLab: React.FC = () => {
       cancelled = true;
       controller.abort();
     };
-  }, [overlayEpoch, isSpectralBlinkSynced, activeInstalledSection, activeEpochIndex, probedPixel?.x, probedPixel?.y]);
+  }, [shouldFetchCompareCurve, activeInstalledSection, compareTargetEpoch, probedPixel?.x, probedPixel?.y]);
 
   const [colorByMjd, setColorByMjd] = useState(false);
   const [hoverInsight, setHoverInsight] = useState<{
     waveUm: number;
     detector: string;
     flux: number;
+    compareFlux: number | null;
+    templateFlux: number | null;
     meaning: string;
     flagText: string;
+    cursorX: number;
+    cursorY: number;
+    containerW: number;
+    containerH: number;
   } | null>(null);
   const [confirmedIdentity, setConfirmedIdentity] = useState<string | null>(null);
   const [similarMatches, setSimilarMatches] = useState<
@@ -680,17 +738,25 @@ export const SpectrophotometricLab: React.FC = () => {
 
   const data = useMemo((): uPlot.AlignedData => {
     const x = spectrum.map((c) => c.wavelengthUm);
+    const hasCompare = shouldFetchCompareCurve && epochCompareChannels.length >= 102;
+    if (showDiffSpectrum && hasCompare && spectrum.length >= 102) {
+      const yDiff = spectrum.map((c, i) => {
+        const a = c.fluxMjySr;
+        const b = epochCompareChannels[i]?.fluxMjySr;
+        return Number.isFinite(a) && Number.isFinite(b) ? b - a : null;
+      });
+      return [x, yDiff, x.map(() => null), x.map(() => null)];
+    }
     const y = spectrum.map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null));
-    const yEpoch =
-      overlayEpoch && !isSpectralBlinkSynced && epochCompareChannels.length >= 102
-        ? epochCompareChannels.slice(0, 102).map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null))
-        : x.map(() => null);
+    const yEpoch = hasCompare
+      ? epochCompareChannels.slice(0, 102).map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null))
+      : x.map(() => null);
     const yTemplate = scaledTemplateOverlay || x.map(() => null);
     return [x, y, yEpoch, yTemplate];
-  }, [spectrum, overlayEpoch, isSpectralBlinkSynced, epochCompareChannels, scaledTemplateOverlay]);
+  }, [spectrum, shouldFetchCompareCurve, showDiffSpectrum, epochCompareChannels, scaledTemplateOverlay]);
 
   const epochDeltaPct = useMemo(() => {
-    if (!overlayEpoch || isSpectralBlinkSynced || epochCompareChannels.length < 102 || spectrum.length < 102) {
+    if (!shouldFetchCompareCurve || epochCompareChannels.length < 102 || spectrum.length < 102) {
       return null;
     }
     const pairs: Array<{ base: number; ep: number }> = [];
@@ -705,7 +771,14 @@ export const SpectrophotometricLab: React.FC = () => {
     const meanBase = pairs.reduce((s, p) => s + p.base, 0) / pairs.length;
     const meanEp = pairs.reduce((s, p) => s + p.ep, 0) / pairs.length;
     return Math.abs(meanBase) > 1e-9 ? ((meanEp - meanBase) / Math.abs(meanBase)) * 100 : null;
-  }, [overlayEpoch, isSpectralBlinkSynced, epochCompareChannels, spectrum]);
+  }, [shouldFetchCompareCurve, epochCompareChannels, spectrum]);
+
+  const passALabel = cutoutPasses[baselineEpoch]
+    ? `Pass ${baselineEpoch + 1} (${cutoutPasses[baselineEpoch].dateLabel})`
+    : `Pass ${baselineEpoch + 1}`;
+  const passBLabel = cutoutPasses[compareTargetEpoch]
+    ? `Pass ${compareTargetEpoch + 1} (${cutoutPasses[compareTargetEpoch].dateLabel})`
+    : `Pass ${compareTargetEpoch + 1}`;
 
   // Summary facts & live human-readable chart narration
   const spectrumSummary = useMemo(() => {
@@ -1023,8 +1096,9 @@ export const SpectrophotometricLab: React.FC = () => {
 
     const opts: uPlot.Options = {
       width: chartRef.current.clientWidth || 720,
-      height: 360,
+      height: chartRef.current.clientHeight || (chartRef.current.clientWidth < 640 ? 260 : 340),
       padding: [16, 12, 0, 0],
+      legend: { show: false },
       cursor: { drag: { x: false, y: false } },
       scales: {
         x: { time: false, min: 0.75, max: 5.0 },
@@ -1076,16 +1150,25 @@ export const SpectrophotometricLab: React.FC = () => {
     plotRef.current = plot;
 
     const onMove = (e: MouseEvent) => {
-      const rect = plot.over.getBoundingClientRect();
-      const idx = plot.posToIdx(e.clientX - rect.left);
+      const overRect = plot.over.getBoundingClientRect();
+      const boxRect = chartRef.current?.getBoundingClientRect() || overRect;
+      const idx = plot.posToIdx(e.clientX - overRect.left);
       const c = spectrumRef.current[idx];
       if (c && Number.isFinite(c.fluxMjySr)) {
+        const s2 = plot.data[2]?.[idx];
+        const s3 = plot.data[3]?.[idx];
         setHoverInsight({
           waveUm: c.wavelengthUm,
           detector: c.detector,
           flux: c.fluxMjySr,
+          compareFlux: typeof s2 === 'number' && Number.isFinite(s2) ? s2 : null,
+          templateFlux: typeof s3 === 'number' && Number.isFinite(s3) ? s3 : null,
           meaning: describeWavelengthZone(c.wavelengthUm),
           flagText: c.flag ? flagTooltip(c.flag) : '',
+          cursorX: e.clientX - boxRect.left,
+          cursorY: e.clientY - boxRect.top,
+          containerW: boxRect.width,
+          containerH: boxRect.height,
         });
       } else {
         setHoverInsight(null);
@@ -1175,14 +1258,18 @@ export const SpectrophotometricLab: React.FC = () => {
 
           <CutoutProbeMinimap
             section={activeInstalledSection}
-            epochIndex={isSpectralBlinkSynced || overlayEpoch ? activeEpochIndex : null}
+            timelineMode={timelineMode}
+            baselineEpoch={baselineEpoch}
+            compareEpoch={compareEpoch}
+            onTimelineChange={handleTimelineChange}
             colorPalette={colorPalette}
             probePixel={probedPixel ?? { x: 24, y: 24 }}
             fallbackRa={focusPos.ra}
             fallbackDec={focusPos.dec}
             fallbackFovArcsec={fovArcsec}
             onSelectPixel={handleMinimapPixelSelect}
-            caption="Click any dot on the cutout to fingerprint that pixel"
+            onReinstall={handleReinstallSection}
+            caption="Click or drag on the cutout to fingerprint that pixel"
           />
 
           <div className="rounded-xl border border-white/10 bg-neutral-900/50 p-3 space-y-2">
@@ -1191,40 +1278,74 @@ export const SpectrophotometricLab: React.FC = () => {
                 Compare Across Time
               </span>
               <span className="font-mono text-[10px] text-sky-300">
-                Epoch {activeEpochIndex}
+                {isComparingPasses
+                  ? `P${baselineEpoch + 1} vs P${compareEpoch + 1}`
+                  : timelineMode === 'single'
+                    ? `Pass ${baselineEpoch + 1}`
+                    : `All Dates (${cutoutPasses.length || 1})`}
               </span>
             </div>
-            <label className="flex items-center justify-between gap-2 text-xs text-neutral-300 cursor-pointer">
-              <span>Overlay Epoch {activeEpochIndex} on chart</span>
-              <input
-                type="checkbox"
-                checked={overlayEpoch}
-                disabled={isSpectralBlinkSynced || !activeInstalledSection}
-                onChange={(e) => setOverlayEpoch(e.target.checked)}
-                className="accent-sky-400"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => setSpectralBlinkSynced(!isSpectralBlinkSynced)}
-              title="Toggle between showing the stacked average of all dates vs. just the single pass active in Time-Domain"
-              className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all cursor-pointer ${
-                isSpectralBlinkSynced
-                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
-                  : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08]'
-              }`}
-            >
-              {isSpectralBlinkSynced
-                ? `Showing Epoch ${activeEpochIndex} Only`
-                : 'Showing All Epochs (Coadded)'}
-            </button>
+            {isComparingPasses ? (
+              <label className="flex items-center justify-between gap-2 text-xs text-neutral-300 cursor-pointer">
+                <span>Show Difference Curve (B − A)</span>
+                <input
+                  type="checkbox"
+                  checked={showDiffSpectrum}
+                  onChange={(e) => setShowDiffSpectrum(e.target.checked)}
+                  className="accent-amber-400"
+                />
+              </label>
+            ) : (
+              <label className="flex items-center justify-between gap-2 text-xs text-neutral-300 cursor-pointer">
+                <span>Overlay Pass {activeEpochIndex + 1} on chart</span>
+                <input
+                  type="checkbox"
+                  checked={overlayEpoch}
+                  disabled={isSpectralBlinkSynced || timelineMode === 'single' || !activeInstalledSection}
+                  onChange={(e) => setOverlayEpoch(e.target.checked)}
+                  className="accent-sky-400"
+                />
+              </label>
+            )}
+            {cutoutPasses.length >= 2 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isComparingPasses) {
+                    setTimelineMode('coadd');
+                    setShowDiffSpectrum(false);
+                  } else {
+                    setTimelineMode('diff');
+                    setBaselineEpoch(0);
+                    setCompareEpoch(cutoutPasses.length - 1);
+                  }
+                }}
+                className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all cursor-pointer ${
+                  isComparingPasses
+                    ? 'border-amber-500/40 bg-amber-500/15 text-amber-200'
+                    : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08]'
+                }`}
+              >
+                {isComparingPasses
+                  ? `Comparing ${passALabel} vs ${passBLabel}`
+                  : `Compare First vs Latest Date (P1 vs P${cutoutPasses.length})`}
+              </button>
+            )}
             {epochDeltaPct !== null && (
-              <div className="rounded-lg border border-sky-500/25 bg-sky-950/30 px-2.5 py-1.5 font-mono text-[11px] text-sky-200">
-                Epoch {activeEpochIndex} vs Coadd:{' '}
-                <strong>
-                  {epochDeltaPct >= 0 ? '+' : ''}
-                  {epochDeltaPct.toFixed(1)}%
-                </strong>
+              <div className="rounded-lg border border-sky-500/25 bg-sky-950/30 px-2.5 py-1.5 font-mono text-[11px] text-sky-200 space-y-0.5">
+                <div>
+                  {isComparingPasses ? `P${compareEpoch + 1} vs P${baselineEpoch + 1}` : `Pass ${activeEpochIndex + 1} vs All Dates`}:{' '}
+                  <strong>
+                    {epochDeltaPct >= 0 ? '+' : ''}
+                    {epochDeltaPct.toFixed(1)}%
+                  </strong>
+                </div>
+                {isComparingPasses && mjdDeltaDays !== null && (
+                  <div className="text-[10px] text-sky-300/80">
+                    Time gap: {mjdDeltaDays >= 0 ? '+' : ''}
+                    {Math.round(mjdDeltaDays)} days
+                  </div>
+                )}
               </div>
             )}
             <button
@@ -1267,24 +1388,15 @@ export const SpectrophotometricLab: React.FC = () => {
                     What Is This Dot?
                   </span>
                   <span
-                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
                       spectralFidelity === 'true_102_ch'
                         ? 'border-sky-400/50 bg-sky-500/15 text-sky-200'
                         : 'border-amber-400/40 bg-amber-500/10 text-amber-200'
                     }`}
                   >
                     {spectralFidelity === 'true_102_ch'
-                      ? 'True 102-Channel HDU 6'
-                      : '6-Band Cutout Preview (D1–D6)'}
-                  </span>
-                  <span
-                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
-                      spectrumSourceBadge.startsWith('[Installed]')
-                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                        : 'border-sky-500/40 bg-sky-500/10 text-sky-300'
-                    }`}
-                  >
-                    {spectrumSourceBadge}
+                      ? 'Full 102 Colors'
+                      : '6-Band Quick Preview'}
                   </span>
                 </div>
                 <div className="mt-1 text-base font-semibold text-white">
@@ -1358,89 +1470,174 @@ export const SpectrophotometricLab: React.FC = () => {
             )}
           </div>
 
-          {/* 3-Shape Visual Cheat Sheet */}
-          <div
-            data-tour="spectral-cheat-sheet"
-            className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]"
-          >
-            <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
-              <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
-                <path d="M3 5 L18 11 L41 20" fill="none" stroke="#38bdf8" strokeWidth="2" />
-              </svg>
-              <div className="min-w-0 leading-tight">
-                <div className="font-semibold text-sky-200">Warm Star (↘)</div>
-                <div className="text-[10px] text-neutral-400">Bright left, fades out by 4 µm</div>
+          {/* Collapsible 3-Shape Visual Cheat Sheet (compact by default so the chart stays hero) */}
+          <div data-tour="spectral-cheat-sheet" className="rounded-lg border border-white/10 bg-neutral-900/40">
+            <button
+              type="button"
+              onClick={() => setShowCheatSheet((v) => !v)}
+              className="flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-medium text-neutral-300 hover:text-white cursor-pointer"
+            >
+              <span>How to read infrared curve shapes (Warm Star vs. Cold Dwarf vs. Galaxy)</span>
+              <span className="font-mono text-[10px] text-neutral-400">
+                {showCheatSheet ? 'Hide −' : 'Show +'}
+              </span>
+            </button>
+            {showCheatSheet && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 border-t border-white/10 p-2 text-[11px]">
+                <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
+                  <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
+                    <path d="M3 5 L18 11 L41 20" fill="none" stroke="#38bdf8" strokeWidth="2" />
+                  </svg>
+                  <div className="min-w-0 leading-tight">
+                    <div className="font-semibold text-sky-200">Warm Star (↘)</div>
+                    <div className="text-[10px] text-neutral-400">Bright left, fades out by 4 µm</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
+                  <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
+                    <path d="M3 12 L18 16 L27 21 L33 13 L41 4" fill="none" stroke="#34d399" strokeWidth="2" />
+                  </svg>
+                  <div className="min-w-0 leading-tight">
+                    <div className="font-semibold text-emerald-200">Cold Brown Dwarf (↗)</div>
+                    <div className="text-[10px] text-neutral-400">3.3 µm methane dip + rises at 4–5 µm</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
+                  <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
+                    <path d="M3 16 L13 9 L19 13 L29 10 L41 12" fill="none" stroke="#f59e0b" strokeWidth="2" />
+                  </svg>
+                  <div className="min-w-0 leading-tight">
+                    <div className="font-semibold text-amber-200">Galaxy / Dusty Star</div>
+                    <div className="text-[10px] text-neutral-400">Bumpy peaks shifted across 1–5 µm</div>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
-              <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
-                <path d="M3 12 L18 16 L27 21 L33 13 L41 4" fill="none" stroke="#34d399" strokeWidth="2" />
-              </svg>
-              <div className="min-w-0 leading-tight">
-                <div className="font-semibold text-emerald-200">Cold Brown Dwarf (↗)</div>
-                <div className="text-[10px] text-neutral-400">3.3 µm CH₄ dip + rises at 4–5 µm</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
-              <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
-                <path d="M3 16 L13 9 L19 13 L29 10 L41 12" fill="none" stroke="#f59e0b" strokeWidth="2" />
-              </svg>
-              <div className="min-w-0 leading-tight">
-                <div className="font-semibold text-amber-200">Galaxy / Dusty Star</div>
-                <div className="text-[10px] text-neutral-400">Bumpy peaks shifted across 1–5 µm</div>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Chart Legend & uPlot */}
           <div
             data-tour="spectral-lab-chart"
-            className="rounded-xl border border-neutral-800 bg-black/50 p-3"
+            className="rounded-xl border border-neutral-800 bg-black/50 p-3 space-y-2"
           >
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400">
-              <div className="flex flex-wrap items-center gap-3.5">
-                <span className="inline-flex items-center gap-1.5 text-neutral-200">
-                  <span className="inline-block h-0.5 w-4 bg-white" />
-                  Observed {isSpectralBlinkSynced ? `Epoch ${activeEpochIndex}` : 'Coadd'}
+            {/* Clean Custom Graph Legend (Curves, Markers & Detector Bands) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-300">
+              <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5">
+                <span className="inline-flex items-center gap-1.5 text-white font-medium">
+                  <span className="inline-block h-0.5 w-4 bg-white rounded-full" />
+                  {showDiffSpectrum && shouldFetchCompareCurve
+                    ? `Difference (${passBLabel} − ${passALabel})`
+                    : isComparingPasses || timelineMode === 'single'
+                      ? passALabel
+                      : isSpectralBlinkSynced
+                        ? `Pass ${activeEpochIndex + 1}`
+                        : 'Observed Spectrum'}
                 </span>
                 {spectralFidelity === 'broadband_6_interpolated' && (
                   <span className="inline-flex items-center gap-1.5 text-amber-300">
                     <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amber-400 bg-amber-400/20" />
-                    6 measured cutout bands
+                    6 Cutout Bands (D1–D6)
                   </span>
                 )}
-                {overlayEpoch && !isSpectralBlinkSynced && (
+                {shouldFetchCompareCurve && !showDiffSpectrum && (
                   <span className="inline-flex items-center gap-1.5 text-sky-300">
                     <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-sky-400" />
-                    Epoch {activeEpochIndex}
+                    {passBLabel}
                   </span>
                 )}
                 {scaledTemplateOverlay && selectedMatchIdx !== null && similarMatches[selectedMatchIdx] && (
                   <span className="inline-flex items-center gap-1.5 text-emerald-300">
                     <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-emerald-400" />
-                    {formatTemplateDisplayName(similarMatches[selectedMatchIdx].name)}
+                    Match: {formatTemplateDisplayName(similarMatches[selectedMatchIdx].name)}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1.5 text-sky-300/90">
+                  <span className="inline-block h-3 border-l border-dashed border-sky-400" />
+                  Gas &amp; Ice Rulers
+                </span>
+                {spectrumSummary.flaggedCount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-300/90">
+                    <span>△</span>
+                    Quality Flag
                   </span>
                 )}
               </div>
               <span className="font-mono text-[10px] text-neutral-400">
                 {spectralFidelity === 'broadband_6_interpolated'
-                  ? '6 broadband anchor points (D1–D6 sketch)'
-                  : spectrumStatus || '102/102 native HDU 6 channels'}
+                  ? '6 measured anchors'
+                  : spectrumStatus || '102/102 channels'}
               </span>
             </div>
 
-            <div className="mb-1.5 flex items-center justify-between text-[10px] text-neutral-400 px-1">
+            <div className="flex items-center justify-between text-[10px] text-neutral-400 px-1">
               <span>← Hot Starlight (0.75–1.5 µm)</span>
               <span className="hidden sm:inline">Gas &amp; Ice Fingerprints (1.6–3.6 µm)</span>
               <span>Cold Heat Glow (3.8–5.0 µm) →</span>
             </div>
 
-            <div className="relative">
+            <div className="relative overflow-hidden rounded border border-neutral-800 bg-neutral-950">
               <div
                 ref={chartRef}
-                className="h-[260px] sm:h-[340px] w-full rounded border border-neutral-800 bg-neutral-950"
+                className="h-[260px] sm:h-[340px] w-full"
                 aria-label="102-channel hyperspectral plot"
               />
+
+              {/* Floating Cursor-Following Wavelength Translator Tooltip */}
+              {hoverInsight && (
+                <div
+                  className="pointer-events-none absolute z-20 w-[240px] sm:w-[270px] rounded-xl border border-sky-400/40 bg-neutral-950/95 px-3 py-2.5 text-[11px] shadow-[0_12px_32px_rgba(0,0,0,0.85)] backdrop-blur-md transition-[left,top] duration-75"
+                  style={{
+                    left: `${
+                      hoverInsight.cursorX > hoverInsight.containerW * 0.56
+                        ? Math.max(8, hoverInsight.cursorX - 278)
+                        : Math.min(Math.max(8, hoverInsight.containerW - 278), hoverInsight.cursorX + 16)
+                    }px`,
+                    top: `${
+                      hoverInsight.cursorY > hoverInsight.containerH * 0.58
+                        ? Math.max(8, hoverInsight.cursorY - 122)
+                        : Math.min(Math.max(8, hoverInsight.containerH - 122), hoverInsight.cursorY + 14)
+                    }px`,
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-bold text-white">
+                      {hoverInsight.waveUm.toFixed(2)} µm
+                    </span>
+                    <span className="rounded-full border border-sky-400/35 bg-sky-500/15 px-1.5 py-0.5 font-mono text-[10px] text-sky-200">
+                      {hoverInsight.detector} ·{' '}
+                      {hoverInsight.waveUm < 1.55
+                        ? 'Hot Starlight'
+                        : hoverInsight.waveUm < 3.65
+                          ? 'Gas & Ice'
+                          : 'Cold Heat'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-snug text-neutral-200">
+                    {hoverInsight.meaning}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-white/10 pt-1.5 font-mono text-[10px]">
+                    <span className="text-white">
+                      Obs: <strong>{hoverInsight.flux.toFixed(4)}</strong>
+                    </span>
+                    {hoverInsight.compareFlux !== null && (
+                      <span className="text-sky-300">
+                        Pass B: <strong>{hoverInsight.compareFlux.toFixed(4)}</strong>
+                      </span>
+                    )}
+                    {hoverInsight.templateFlux !== null && (
+                      <span className="text-emerald-300">
+                        Match: <strong>{hoverInsight.templateFlux.toFixed(4)}</strong>
+                      </span>
+                    )}
+                  </div>
+                  {hoverInsight.flagText && (
+                    <div className="mt-1 text-[10px] text-amber-300">
+                      ⚠ {hoverInsight.flagText}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {spectrum.length === 0 && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="rounded-lg border border-neutral-700 bg-neutral-900/95 px-4 py-2 text-center text-xs text-neutral-300">
@@ -1450,39 +1647,14 @@ export const SpectrophotometricLab: React.FC = () => {
               )}
             </div>
 
-            {/* Live Hover Zone Translator */}
-            <div className="mt-2 min-h-[28px] rounded-lg border border-white/10 bg-neutral-900/70 px-2.5 py-1.5 text-[11px] flex flex-wrap items-center justify-between gap-2">
-              {hoverInsight ? (
-                <>
-                  <span className="text-neutral-200">
-                    <strong className="font-mono text-white">
-                      {hoverInsight.waveUm.toFixed(2)} µm ({hoverInsight.detector})
-                    </strong>{' '}
-                    · {hoverInsight.meaning}
-                  </span>
-                  <span className="font-mono text-[10px] text-sky-300">
-                    {hoverInsight.flux.toFixed(4)} MJy/sr
-                    {hoverInsight.flagText ? ` · ⚠ ${hoverInsight.flagText}` : ''}
-                  </span>
-                </>
-              ) : (
-                <span className="text-neutral-400">
-                  Hover anywhere over the curve to translate what that infrared wavelength detects.
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-neutral-400 px-1">
+              <span>Hover anywhere over the curve to inspect what each infrared wavelength detects.</span>
+              {pointColors && (
+                <span className="font-mono text-amber-300">
+                  Multi-Date Composite (MJD {Math.min(...pointColors).toFixed(1)}–{Math.max(...pointColors).toFixed(1)})
                 </span>
               )}
             </div>
-
-            {pointColors && (
-              <div className="mt-2 flex items-center gap-2 text-[10px] text-neutral-400">
-                <span>Observation MJD:</span>
-                <span className="font-mono text-amber-300">
-                  {Math.min(...pointColors).toFixed(1)}–{Math.max(...pointColors).toFixed(1)}
-                </span>
-                <span className="rounded border border-amber-500/40 px-1 text-amber-300">
-                  [Non-Simultaneous Spectrum]
-                </span>
-              </div>
-            )}
           </div>
 
           {/* Live Plain-English Graph Reader */}
@@ -1533,47 +1705,8 @@ export const SpectrophotometricLab: React.FC = () => {
           </div>
         </section>
 
-        {/* RIGHT RAIL: Progressive 3-Mode Analyzers */}
+        {/* RIGHT RAIL: Clean Identification + Collapsible Advanced Tools */}
         <aside className="w-full lg:w-[330px] xl:w-[360px] shrink-0 lg:overflow-y-auto bg-neutral-900/20 p-3 sm:p-4 space-y-3">
-          <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/10 bg-neutral-950 p-1">
-            <button
-              type="button"
-              onClick={() => setActiveToolTab('match')}
-              title="Compare this curve against verified NASA objects to identify what kind of object it is"
-              className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
-                activeToolTab === 'match'
-                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              1. Identify
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveToolTab('redshift')}
-              title="Estimate cosmic distance & lookback time if inspecting a distant galaxy (stars stay near z = 0)"
-              className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
-                activeToolTab === 'redshift'
-                  ? 'bg-sky-500/20 text-sky-200 border border-sky-500/40'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              2. Redshift {looksExtragalactic ? '★' : ''}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveToolTab('binary')}
-              title="Test whether one pixel actually blends two orbiting stars (e.g. cold brown dwarf binary pairs)"
-              className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
-                activeToolTab === 'binary'
-                  ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              3. Binary {isEpsInd ? '★' : ''}
-            </button>
-          </div>
-
           {activeToolTab === 'match' && (
             <div data-tour="spectral-verdict-matches" className="space-y-3">
               {/* Confirm User Decision */}
@@ -1656,22 +1789,48 @@ export const SpectrophotometricLab: React.FC = () => {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-cyan-500/25 bg-cyan-950/15 p-3 text-[11px] space-y-2">
-                <div className="font-semibold text-cyan-200">
-                  Optional Tie-Breaker: Dust Ice vs. Cold Star?
-                </div>
-                <p className="text-neutral-300 leading-relaxed">
-                  Only needed if your object stays bright in mid-IR: open Ice Studio to test whether foreground cloud ice (3.05 µm H₂O / 4.27 µm CO₂) is reddening a background star.
-                </p>
+              {/* Collapsed Advanced Science Tools (Redshift & Binary Unmixing) */}
+              <div className="rounded-xl border border-white/10 bg-neutral-900/35">
                 <button
                   type="button"
-                  onClick={() => setTab('ice')}
-                  className="w-full rounded-lg border border-cyan-400/50 bg-cyan-500/15 hover:bg-cyan-500/25 py-1.5 text-xs font-semibold text-cyan-200 cursor-pointer"
+                  onClick={() => setShowAdvancedTools((v) => !v)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-[11px] font-medium text-neutral-300 hover:text-white cursor-pointer"
                 >
-                  Open Ice Studio Tie-Breaker →
+                  <span>Advanced Tools (Galaxy Distance &amp; Binary Split)</span>
+                  <span className="font-mono text-[10px] text-neutral-400">
+                    {showAdvancedTools ? 'Hide −' : 'Show +'}
+                  </span>
                 </button>
+                {showAdvancedTools && (
+                  <div className="grid grid-cols-2 gap-1.5 border-t border-white/10 p-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveToolTab('redshift')}
+                      className="rounded-lg border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 px-2.5 py-1.5 text-[11px] font-medium text-sky-200 cursor-pointer"
+                    >
+                      Galaxy Redshift {looksExtragalactic ? '★' : ''}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveToolTab('binary')}
+                      className="rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 px-2.5 py-1.5 text-[11px] font-medium text-amber-200 cursor-pointer"
+                    >
+                      Binary Unmix {isEpsInd ? '★' : ''}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
+          )}
+
+          {activeToolTab !== 'match' && (
+            <button
+              type="button"
+              onClick={() => setActiveToolTab('match')}
+              className="w-full rounded-lg border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] py-1.5 text-[11px] font-medium text-neutral-200 cursor-pointer"
+            >
+              ← Back to Reference Matches
+            </button>
           )}
 
           {activeToolTab === 'redshift' && (

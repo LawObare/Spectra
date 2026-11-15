@@ -979,6 +979,74 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
 
   const benchmarkReticle = gaiaReticle;
 
+  const canvasBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const startAdjustMark = useCallback(
+    (mark: MarkedObject, mode: 'move' | 'resize', e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const box = canvasBoxRef.current;
+      if (!box) return;
+      const rect = box.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      setSelectedMarkId(mark.id);
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      const origX = mark.x;
+      const origY = mark.y;
+      let latestX = origX;
+      let latestY = origY;
+      let latestR = mark.radiusPx;
+
+      const onMove = (ev: PointerEvent) => {
+        if (mode === 'move') {
+          const dxPx = ((ev.clientX - startClientX) / rect.width) * currentWidth;
+          const dyPx = ((ev.clientY - startClientY) / rect.height) * currentHeight;
+          latestX = Math.max(0, Math.min(currentWidth - 1, Math.round(origX + dxPx)));
+          latestY = Math.max(0, Math.min(currentHeight - 1, Math.round(origY + dyPx)));
+        } else {
+          const curImgX = ((ev.clientX - rect.left) / rect.width) * currentWidth;
+          const curImgY = ((ev.clientY - rect.top) / rect.height) * currentHeight;
+          const dist = Math.hypot(curImgX - (origX + 0.5), curImgY - (origY + 0.5));
+          latestR = Number(
+            Math.max(1.0, Math.min(Math.max(currentWidth, currentHeight) * 0.45, dist)).toFixed(2)
+          );
+        }
+
+        const skyPos =
+          loadedTensor && !loadedTensor.isSimulated && loadedTensor.wcs
+            ? pixelToSky(latestX, latestY, loadedTensor.wcs)
+            : fallbackPixelToSky(latestX, latestY, currentWidth, currentHeight, urlRa, urlDec);
+
+        setMarkedObjects((prev) =>
+          prev.map((m) =>
+            m.id === mark.id
+              ? { ...m, x: latestX, y: latestY, ra: skyPos.ra, dec: skyPos.dec, radiusPx: latestR }
+              : m
+          )
+        );
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        const skyPos =
+          loadedTensor && !loadedTensor.isSimulated && loadedTensor.wcs
+            ? pixelToSky(latestX, latestY, loadedTensor.wcs)
+            : fallbackPixelToSky(latestX, latestY, currentWidth, currentHeight, urlRa, urlDec);
+        setProbedPixel({ x: latestX, y: latestY });
+        setProbeSkyPosition(skyPos);
+        setUrlProbeX(latestX);
+        setUrlProbeY(latestY);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    },
+    [currentWidth, currentHeight, loadedTensor, urlRa, urlDec, setProbedPixel, setProbeSkyPosition, setUrlProbeX, setUrlProbeY]
+  );
+
   // Handle pixel clicks & dragged circle marks (SPECIFICATION.md §4.2, docs/audits/QA_AUDIT.md §9.4)
   const handlePixelClick = useCallback(
     (info: HoverPixelInfo) => {
@@ -1483,6 +1551,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         {/* Central WebGL2 Canvas Viewport (Expansive & Fluid) */}
         <div className="relative flex flex-1 min-h-[300px] sm:min-h-[380px] lg:min-h-0 items-center justify-center overflow-auto bg-black p-3 sm:p-4">
           <div
+            ref={canvasBoxRef}
             data-tour="comparator-canvas-player"
             className={`relative rounded-xl border border-neutral-800 bg-black shadow-2xl overflow-hidden flex items-center justify-center transition-all ${
               canvasZoom === 'fit'
@@ -1530,7 +1599,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               </div>
             )}
 
-            {/* Circled Object Identifications Overlay */}
+            {/* Adjustable Circled Object Identifications Overlay */}
             {markedObjects.map((mark) => {
               const isSelected = mark.id === selectedMarkId;
               return (
@@ -1546,35 +1615,59 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                     minHeight: '22px',
                   }}
                 >
+                  {/* Draggable Circle Body (drag to move) */}
                   <div
-                    className={`relative h-full w-full rounded-full transition-all ${
+                    onPointerDown={(e) => startAdjustMark(mark, 'move', e)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectMark(mark);
+                    }}
+                    title="Drag to move circle · drag edge handles to resize"
+                    className={`pointer-events-auto relative h-full w-full rounded-full cursor-move ${
                       isSelected
-                        ? 'border-2 border-emerald-400 bg-emerald-400/10 shadow-[0_0_14px_rgba(52,211,153,0.55)]'
-                        : 'border border-amber-400/85 bg-amber-400/5 hover:border-amber-300'
+                        ? 'border-2 border-emerald-400 bg-emerald-400/10'
+                        : 'border-[1.5px] border-amber-400/90 bg-amber-400/5 hover:border-amber-300'
                     }`}
                   >
-                    <span
-                      className={`absolute left-1/2 top-0 h-1.5 w-[1px] -translate-x-1/2 -translate-y-1/2 ${
-                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
-                      }`}
-                    />
-                    <span
-                      className={`absolute left-1/2 bottom-0 h-1.5 w-[1px] -translate-x-1/2 translate-y-1/2 ${
-                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
-                      }`}
-                    />
-                    <span
-                      className={`absolute top-1/2 left-0 h-[1px] w-1.5 -translate-x-1/2 -translate-y-1/2 ${
-                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
-                      }`}
-                    />
-                    <span
-                      className={`absolute top-1/2 right-0 h-[1px] w-1.5 translate-x-1/2 -translate-y-1/2 ${
-                        isSelected ? 'bg-emerald-300' : 'bg-amber-300'
-                      }`}
-                    />
+                    {isSelected && (
+                      <>
+                        {/* 4 Clean Resize Handles on the Circle Rim */}
+                        <button
+                          type="button"
+                          onPointerDown={(e) => startAdjustMark(mark, 'resize', e)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Resize circle #${mark.id} top`}
+                          title="Drag to resize circle"
+                          className="absolute left-1/2 top-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-500 bg-white cursor-ns-resize shadow"
+                        />
+                        <button
+                          type="button"
+                          onPointerDown={(e) => startAdjustMark(mark, 'resize', e)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Resize circle #${mark.id} bottom`}
+                          title="Drag to resize circle"
+                          className="absolute left-1/2 bottom-0 h-2.5 w-2.5 -translate-x-1/2 translate-y-1/2 rounded-full border border-emerald-500 bg-white cursor-ns-resize shadow"
+                        />
+                        <button
+                          type="button"
+                          onPointerDown={(e) => startAdjustMark(mark, 'resize', e)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Resize circle #${mark.id} left`}
+                          title="Drag to resize circle"
+                          className="absolute top-1/2 left-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-500 bg-white cursor-ew-resize shadow"
+                        />
+                        <button
+                          type="button"
+                          onPointerDown={(e) => startAdjustMark(mark, 'resize', e)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Resize circle #${mark.id} right`}
+                          title="Drag to resize circle"
+                          className="absolute top-1/2 right-0 h-2.5 w-2.5 translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-500 bg-white cursor-ew-resize shadow"
+                        />
+                      </>
+                    )}
                   </div>
-                  <div className="pointer-events-auto absolute bottom-full left-1/2 mb-1 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded border bg-black/90 px-1.5 py-0.5 font-mono text-[9px] shadow-md backdrop-blur-sm border-neutral-700">
+                  <div className="pointer-events-auto absolute bottom-full left-1/2 mb-1.5 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded border bg-black/90 px-1.5 py-0.5 font-mono text-[9px] shadow-md backdrop-blur-sm border-neutral-700">
                     <button
                       type="button"
                       onClick={(e) => {
@@ -1586,7 +1679,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                       }`}
                       title={`Select circled object #${mark.id} (${mark.ra.toFixed(4)}°, ${mark.dec.toFixed(4)}°)`}
                     >
-                      #{mark.id} · {mark.passLabel}
+                      #{mark.id} · r={mark.radiusPx.toFixed(1)}px
                     </button>
                     <button
                       type="button"
@@ -1595,7 +1688,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                         handleRemoveMark(mark.id);
                       }}
                       aria-label={`Remove circled object #${mark.id}`}
-                      className="ml-0.5 text-neutral-400 hover:text-red-400"
+                      className="ml-0.5 text-neutral-400 hover:text-red-400 cursor-pointer"
                     >
                       ×
                     </button>

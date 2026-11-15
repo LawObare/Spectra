@@ -105,6 +105,7 @@ app.add_middleware(
         "Content-Type",
         "Accept",
         "Authorization",
+        "X-Admin-Token",
         "X-Observer-ID",
         "X-Observer-Key",
     ],

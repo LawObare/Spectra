@@ -514,6 +514,7 @@ export const MolecularIceStudio: React.FC = () => {
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [showLabDetails, setShowLabDetails] = useState(false);
+  const [showRingSizes, setShowRingSizes] = useState(false);
   const [ledgerState, setLedgerState] = useState<'idle' | 'submitting' | 'logged' | 'offline'>('idle');
   const [ledgerNote, setLedgerNote] = useState('');
 
@@ -1313,62 +1314,70 @@ export const MolecularIceStudio: React.FC = () => {
               </label>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <label className="text-[10px] text-muted-foreground">
-                Star r [px]
-                <Input
-                  type="number"
-                  min={0.5}
-                  max={4}
-                  step={0.1}
-                  value={apertureRadiusPx}
-                  onChange={(event) =>
-                    setIceAperture(
-                      Math.max(0.5, Math.min(4, Number(event.target.value) || 1.5)),
-                      skyAnnulusInnerPx,
-                      skyAnnulusOuterPx
-                    )
-                  }
-                  className="mt-1"
-                />
-              </label>
-              <label className="text-[10px] text-muted-foreground">
-                Sky in [px]
-                <Input
-                  type="number"
-                  min={1}
-                  max={8}
-                  step={0.1}
-                  value={skyAnnulusInnerPx}
-                  onChange={(event) => {
-                    const nextIn = Math.max(1, Math.min(8, Number(event.target.value) || 3));
-                    setIceAperture(apertureRadiusPx, nextIn, Math.max(nextIn + 0.5, skyAnnulusOuterPx));
-                  }}
-                  className="mt-1"
-                />
-              </label>
-              <label className="text-[10px] text-muted-foreground">
-                Sky out [px]
-                <Input
-                  type="number"
-                  min={2}
-                  max={12}
-                  step={0.1}
-                  value={skyAnnulusOuterPx}
-                  onChange={(event) =>
-                    setIceAperture(
-                      apertureRadiusPx,
-                      skyAnnulusInnerPx,
-                      Math.max(skyAnnulusInnerPx + 0.5, Math.min(12, Number(event.target.value) || 5))
-                    )
-                  }
-                  className="mt-1"
-                />
-              </label>
-            </div>
-            <p className="text-[10px] text-muted-foreground leading-relaxed">
-              Sanity test: ice valleys should appear in the Star Beam (through the cloud), NOT in the empty amber Sky Ring around it.
-            </p>
+            <button
+              type="button"
+              onClick={() => setShowRingSizes((v) => !v)}
+              className="flex w-full items-center justify-between pt-1 border-t border-border/60 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <span>Adjust measurement ring sizes</span>
+              <span className="font-mono">{showRingSizes ? 'Hide −' : 'Customize +'}</span>
+            </button>
+
+            {showRingSizes && (
+              <div className="grid grid-cols-3 gap-2">
+                <label className="text-[10px] text-muted-foreground">
+                  Star r [px]
+                  <Input
+                    type="number"
+                    min={0.5}
+                    max={4}
+                    step={0.1}
+                    value={apertureRadiusPx}
+                    onChange={(event) =>
+                      setIceAperture(
+                        Math.max(0.5, Math.min(4, Number(event.target.value) || 1.5)),
+                        skyAnnulusInnerPx,
+                        skyAnnulusOuterPx
+                      )
+                    }
+                    className="mt-1"
+                  />
+                </label>
+                <label className="text-[10px] text-muted-foreground">
+                  Sky in [px]
+                  <Input
+                    type="number"
+                    min={1}
+                    max={8}
+                    step={0.1}
+                    value={skyAnnulusInnerPx}
+                    onChange={(event) => {
+                      const nextIn = Math.max(1, Math.min(8, Number(event.target.value) || 3));
+                      setIceAperture(apertureRadiusPx, nextIn, Math.max(nextIn + 0.5, skyAnnulusOuterPx));
+                    }}
+                    className="mt-1"
+                  />
+                </label>
+                <label className="text-[10px] text-muted-foreground">
+                  Sky out [px]
+                  <Input
+                    type="number"
+                    min={2}
+                    max={12}
+                    step={0.1}
+                    value={skyAnnulusOuterPx}
+                    onChange={(event) =>
+                      setIceAperture(
+                        apertureRadiusPx,
+                        skyAnnulusInnerPx,
+                        Math.max(skyAnnulusInnerPx + 0.5, Math.min(12, Number(event.target.value) || 5))
+                      )
+                    }
+                    className="mt-1"
+                  />
+                </label>
+              </div>
+            )}
           </div>
         </section>
 
@@ -1388,18 +1397,15 @@ export const MolecularIceStudio: React.FC = () => {
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-[10px] uppercase tracking-wider text-cyan-300">
-                    3. Cosmic Ice Verdict
+                    Cosmic Ice Verdict
                   </span>
                   <Badge
                     variant={activeSpectrum.fidelity === 'true_102_ch' ? 'sky' : 'amber'}
-                    className="font-mono text-[10px]"
+                    className="text-[10px]"
                   >
                     {activeSpectrum.fidelity === 'true_102_ch'
-                      ? 'True 102-Ch HDU 6'
-                      : '6-Band Cutout Preview'}
-                  </Badge>
-                  <Badge variant="muted" className="font-mono text-[10px]">
-                    {activeSpectrum.badge}
+                      ? 'Full 102 Colors'
+                      : '6-Band Quick Preview'}
                   </Badge>
                 </div>
 
@@ -1512,17 +1518,7 @@ export const MolecularIceStudio: React.FC = () => {
             </div>
           </div>
 
-          {/* 1-Line Flashlight Mental Model */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-500/20 bg-cyan-950/15 px-3 py-2 text-[11px]">
-            <div className="font-mono text-[10px] text-cyan-200">
-              ☀️ Background Star &nbsp;──▶&nbsp; ❄️ Cold Ice Cloud &nbsp;──▶&nbsp; 🛰️ SPHEREx Telescope
-            </div>
-            <div className="text-neutral-300">
-              Valleys hanging below <strong className="text-emerald-300">100%</strong> show colors swallowed by frozen molecules along the beam.
-            </div>
-          </div>
-
-          {/* Interactive 3-Step Visual Story Chart */}
+          {/* Interactive Visual Story Chart */}
           <div data-tour="ice-studio-transmission" className="rounded-lg border border-border bg-black/60 p-3 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -1790,93 +1786,100 @@ export const MolecularIceStudio: React.FC = () => {
               )}
             </div>
 
-            {/* Live Plain-English Ice Chart Reader */}
-            {solution.wavelengthsUm.length >= 5 && (
-              <div className="rounded-md border border-white/10 bg-neutral-900/50 p-2.5 text-[11px] space-y-1">
-                <div className="font-mono text-[10px] uppercase tracking-wider text-cyan-300">
-                  What This Graph Is Telling You
-                </div>
-                <p className="text-neutral-200 leading-relaxed">
-                  {effectiveSolution.brownDwarfNotice ? (
-                    <>
-                      • <strong className="text-white">False-positive alert:</strong> Any dip near 3.3 µm here comes from hot methane gas inside a brown dwarf — not frozen ice between stars.
-                    </>
-                  ) : skySelected ? (
-                    <>
-                      • <strong className="text-white">Sky Ring sanity check:</strong> Compare this curve against Star Beam — if empty space shows no deep 3.05 / 4.27 µm valley, any ice dip in Star Beam is truly absorbing starlight.
-                    </>
-                  ) : (
-                    <>
-                      • <strong className="text-white">Missing starlight valleys:</strong> Water ice (3.05 µm) blocks up to{' '}
-                      <strong className="text-sky-300">
-                        {h2oBlockedPct !== null ? `${h2oBlockedPct.toFixed(0)}%` : '—'}
-                      </strong>{' '}
-                      of light, and dry ice CO₂ (4.27 µm) blocks up to{' '}
-                      <strong className="text-amber-300">
-                        {co2BlockedPct !== null ? `${co2BlockedPct.toFixed(0)}%` : '—'}
-                      </strong>
-                      .
-                    </>
-                  )}
-                </p>
-                {activeSpectrum.fidelity !== 'true_102_ch' && (
-                  <p className="text-amber-200/90 leading-relaxed">
-                    • <strong className="text-amber-200">Preview fidelity:</strong> Cutout pixels average across 6 wide bands, so sharp valleys look shallower until you run 102-channel IRSA extraction.
-                  </p>
-                )}
-              </div>
-            )}
           </div>
 
-          {/* Human-Readable Column Density Summary */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="rounded-lg border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Water Ice — H₂O (3.05 µm)</div>
-              <div className="mt-1 font-mono text-base font-semibold text-sky-300">
+          {/* Visual Ice Meter Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span>Water Ice (H₂O)</span>
+                <span className="font-mono">3.05 µm</span>
+              </div>
+              <div className="font-mono text-base font-semibold text-sky-300">
                 {effectiveSolution.brownDwarfNotice || skySelected
-                  ? 'suppressed'
+                  ? '—'
                   : h2oBlockedPct !== null
-                    ? `${h2oBlockedPct.toFixed(0)}% light blocked`
+                    ? `${h2oBlockedPct.toFixed(0)}% blocked`
                     : '—'}
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">
+              <div className="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-sky-400 transition-all duration-300"
+                  style={{
+                    width: `${
+                      effectiveSolution.brownDwarfNotice || skySelected || h2oBlockedPct === null
+                        ? 0
+                        : Math.max(4, Math.min(100, h2oBlockedPct))
+                    }%`,
+                  }}
+                />
+              </div>
+              <div className="text-[10px] text-muted-foreground">
                 {effectiveSolution.brownDwarfNotice || skySelected
                   ? 'Not solid cloud ice'
                   : activeSpectrum.fidelity === 'true_102_ch'
-                    ? `N(H₂O) = ${formatColumnDensity(h2oDensity)} cm⁻²`
-                    : '6-band preview · extract 102-ch for N(H₂O)'}
+                    ? `Column: ${formatColumnDensity(h2oDensity)} cm⁻²`
+                    : 'Extract 102 colors for exact depth'}
               </div>
             </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Dry Ice — CO₂ (4.27 µm)</div>
-              <div className="mt-1 font-mono text-base font-semibold text-amber-300">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span>Dry Ice (CO₂)</span>
+                <span className="font-mono">4.27 µm</span>
+              </div>
+              <div className="font-mono text-base font-semibold text-amber-300">
                 {effectiveSolution.brownDwarfNotice || skySelected
-                  ? 'suppressed'
+                  ? '—'
                   : co2BlockedPct !== null
-                    ? `${co2BlockedPct.toFixed(0)}% light blocked`
+                    ? `${co2BlockedPct.toFixed(0)}% blocked`
                     : '—'}
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">
+              <div className="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-amber-400 transition-all duration-300"
+                  style={{
+                    width: `${
+                      effectiveSolution.brownDwarfNotice || skySelected || co2BlockedPct === null
+                        ? 0
+                        : Math.max(4, Math.min(100, co2BlockedPct))
+                    }%`,
+                  }}
+                />
+              </div>
+              <div className="text-[10px] text-muted-foreground">
                 {effectiveSolution.brownDwarfNotice || skySelected
                   ? 'Not solid cloud ice'
                   : activeSpectrum.fidelity === 'true_102_ch'
-                    ? `N(CO₂) = ${formatColumnDensity(co2Density)} cm⁻²`
-                    : '6-band preview · extract 102-ch for N(CO₂)'}
+                    ? `Column: ${formatColumnDensity(co2Density)} cm⁻²`
+                    : 'Extract 102 colors for exact depth'}
               </div>
             </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">CO₂ / H₂O Ice Mix</div>
-              <div className="mt-1 font-mono text-base font-semibold text-emerald-300">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span>CO₂ / H₂O Mix</span>
+                <span className="font-mono">Ratio</span>
+              </div>
+              <div className="font-mono text-base font-semibold text-emerald-300">
                 {effectiveSolution.ratioPercent === null || activeSpectrum.fidelity !== 'true_102_ch'
-                  ? effectiveSolution.brownDwarfNotice || skySelected
-                    ? 'suppressed'
-                    : '102-ch only'
+                  ? '—'
                   : `${effectiveSolution.ratioPercent.toFixed(1)}%`}
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">
+              <div className="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-emerald-400 transition-all duration-300"
+                  style={{
+                    width: `${
+                      effectiveSolution.ratioPercent === null || activeSpectrum.fidelity !== 'true_102_ch'
+                        ? 0
+                        : Math.max(4, Math.min(100, effectiveSolution.ratioPercent * 2.5))
+                    }%`,
+                  }}
+                />
+              </div>
+              <div className="text-[10px] text-muted-foreground">
                 {effectiveSolution.brownDwarfNotice
-                  ? 'Brown dwarf CH₄ gas guard active'
-                  : 'Typical icy star-forming cloud: 15–25%'}
+                  ? 'Methane gas guard active'
+                  : 'Typical icy cloud: 15–25%'}
               </div>
             </div>
           </div>
