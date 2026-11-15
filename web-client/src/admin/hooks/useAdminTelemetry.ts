@@ -509,7 +509,8 @@ export function useAdminTelemetry() {
   // Connect WebSocket for selected architecture
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/admin/ws/training?model=${encodeURIComponent(hyperparams.model)}`;
+    const wsBase = (import.meta.env.VITE_WS_BASE_URL || `${protocol}//${window.location.host}`).replace(/\/+$/, '');
+    const wsUrl = `${wsBase}/api/admin/ws/training?model=${encodeURIComponent(hyperparams.model)}`;
     let closed = false;
 
     try {
