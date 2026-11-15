@@ -1,8 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
+import { Button } from '../components/ui';
 import { ModelArchitecture } from './hooks/useAdminTelemetry';
 import { cn } from '../lib/utils';
+import {
+  AdminKpiCard,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminStatusPill,
+  IconActivity,
+  IconCpu,
+  IconLayers,
+  IconNetwork,
+} from './components/AdminPrimitives';
 
 type NodeKind = 'target' | 'class' | 'feature' | 'template';
 
@@ -385,319 +395,377 @@ export const DecisionBoundaries: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
-      {/* TOP TOOLBAR */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/70 px-5 py-2.5 shrink-0">
-        <div className="flex items-center gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">
-              AI Knowledge & Relationship Graph
-            </h2>
-            <p className="text-[11px] text-muted-foreground">
-              PyTorch latent representations linking Sky Targets, Spectral Features, Archive Templates & AI Class Hubs
-            </p>
-          </div>
-          {graph?.checkpoint_meta && (
-            <Badge variant="sky" className="font-mono text-[10px]">
-              {graph.embedding_space === 'trained'
-                ? `Trained LoRA r=${graph.checkpoint_meta.lora_r} (${Math.round((graph.checkpoint_meta.val_acc || 0) * 100)}% acc)`
-                : 'Untrained Base Model'}
-            </Badge>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value as ModelArchitecture)}
-            className="bg-background border border-border rounded px-2 py-1 text-xs font-mono"
-          >
-            <option value="SpectralResNet102">SpectralResNet102</option>
-            <option value="DipoleConvNet3D">DipoleConvNet3D</option>
-            <option value="AstroFeatureSVM">AstroFeatureSVM</option>
-          </select>
-
-          <div className="flex rounded border border-border bg-secondary/40 p-0.5 font-mono text-[11px]">
-            <button
-              onClick={() => setSpace('base')}
-              className={cn(
-                'px-2.5 py-1 rounded transition-colors',
-                space === 'base' ? 'bg-amber-500/20 text-amber-300 font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              Base (Untrained)
-            </button>
-            <button
-              onClick={() => setSpace('trained')}
-              className={cn(
-                'px-2.5 py-1 rounded transition-colors',
-                space === 'trained' ? 'bg-emerald-500/20 text-emerald-300 font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              Trained (SFT/LoRA)
-            </button>
-          </div>
-
-          <div className="flex rounded border border-border bg-secondary/40 p-0.5 font-mono text-[11px]">
-            <button
-              onClick={() => setViewMode('3d')}
-              className={cn(
-                'px-2.5 py-1 rounded transition-colors',
-                viewMode === '3d' ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              3D Galaxy Orbit
-            </button>
-            <button
-              onClick={() => setViewMode('2d')}
-              className={cn(
-                'px-2.5 py-1 rounded transition-colors',
-                viewMode === '2d' ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              2D Map
-            </button>
-          </div>
-
-          {viewMode === '3d' && (
-            <Button
-              size="sm"
-              variant={autoOrbit ? 'default' : 'outline'}
-              className="h-7 text-xs font-mono"
-              onClick={() => setAutoOrbit((v) => !v)}
-            >
-              {autoOrbit ? 'Auto-Orbit: ON' : 'Auto-Orbit: OFF'}
-            </Button>
-          )}
-
-          <div className="flex items-center gap-1.5 border border-border rounded px-2 py-1 bg-background">
-            <span className="text-[10px] font-mono text-muted-foreground">min sim {minSimilarity.toFixed(2)}</span>
-            <input
-              type="range"
-              min={0.1}
-              max={0.85}
-              step={0.05}
-              value={minSimilarity}
-              onChange={(e) => setMinSimilarity(Number(e.target.value))}
-              className="w-20 accent-primary"
-            />
-          </div>
-
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs"
-            onClick={() => {
-              setZoom(1);
-              setPan({ x: 0, y: 0 });
-              setRotation({ yaw: -0.52, pitch: 0.32 });
-            }}
-          >
-            Reset View
-          </Button>
-        </div>
-      </div>
-
-      {/* FILTER BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-secondary/20 px-5 py-1.5 shrink-0 text-xs">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {(['all', 'target', 'class', 'feature', 'template'] as const).map((k) => (
-            <button
-              key={k}
-              onClick={() => setKindFilter(k)}
-              className={cn(
-                'px-2.5 py-0.5 rounded-full text-[11px] border transition-colors',
-                kindFilter === k
-                  ? 'bg-primary text-primary-foreground border-primary font-medium'
-                  : 'border-border text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {k === 'all' ? 'All Nodes' : NODE_COLORS[k].label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] font-mono text-muted-foreground">
-            {visibleNodes.length} nodes · {visibleEdges.length} relationships
-          </span>
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter node name..."
-            className="bg-background border border-border rounded px-2.5 py-0.5 text-xs w-44"
-          />
-        </div>
-      </div>
-
-      {/* GRAPH CANVAS + INSPECTOR */}
-      <div className="flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-        <div className="relative min-h-[340px] lg:min-h-0 flex-1 overflow-hidden">
-          {loading && !graph && (
-            <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground z-10">
-              Computing PyTorch embedding graph...
-            </div>
-          )}
-          {error && (
-            <div className="absolute top-3 left-3 z-10 rounded border border-rose-500/40 bg-rose-950/70 px-3 py-1.5 text-xs text-rose-200">
-              {error}
-            </div>
-          )}
-          <canvas
-            ref={canvasRef}
-            className="w-full h-full cursor-grab active:cursor-grabbing"
-            onWheel={(e) => {
-              e.preventDefault();
-              setZoom((z) => Math.max(0.55, Math.min(2.4, z * (e.deltaY < 0 ? 1.08 : 0.92))));
-            }}
-            onMouseDown={(e) => {
-              dragRef.current = { active: true, x: e.clientX, y: e.clientY, moved: false };
-            }}
-            onMouseMove={(e) => {
-              if (dragRef.current.active) {
-                const dx = e.clientX - dragRef.current.x;
-                const dy = e.clientY - dragRef.current.y;
-                if (Math.abs(dx) + Math.abs(dy) > 3) dragRef.current.moved = true;
-                dragRef.current.x = e.clientX;
-                dragRef.current.y = e.clientY;
-                setAutoOrbit(false);
-                if (viewMode === '3d' && !e.shiftKey) {
-                  setRotation((r) => ({
-                    yaw: r.yaw + dx * 0.008,
-                    pitch: Math.max(-1.2, Math.min(1.2, r.pitch + dy * 0.008)),
-                  }));
-                } else {
-                  setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
-                }
-              } else {
-                const hit = hitTestNode(e.clientX, e.clientY);
-                setHoveredNodeId(hit ? hit.id : null);
-              }
-            }}
-            onMouseUp={(e) => {
-              const wasMoved = dragRef.current.moved;
-              dragRef.current.active = false;
-              if (!wasMoved) {
-                const hit = hitTestNode(e.clientX, e.clientY);
-                if (hit) setSelectedNodeId(hit.id);
-              }
-            }}
-            onMouseLeave={() => {
-              dragRef.current.active = false;
-              setHoveredNodeId(null);
-            }}
-          />
-
-          {/* LEGEND OVERLAY */}
-          <div className="absolute bottom-3 left-3 rounded-md border border-border/80 bg-card/90 backdrop-blur px-3 py-2 text-[10px] flex flex-wrap items-center gap-3">
-            {(['target', 'class', 'feature', 'template'] as NodeKind[]).map((k) => (
-              <span key={k} className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ backgroundColor: NODE_COLORS[k].fill }} />
-                {NODE_COLORS[k].label}
-              </span>
-            ))}
-            <span className="text-muted-foreground font-mono border-l border-border pl-2.5">
-              {viewMode === '3d' ? 'Drag: 360° 3D orbit · Shift+Drag: pan · Wheel: zoom' : 'Drag: pan · Wheel: zoom'}
-            </span>
-          </div>
-        </div>
-
-        {/* RIGHT NODE & RELATIONSHIP INSPECTOR */}
-        <aside className="w-full lg:w-[320px] xl:w-[340px] shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-card/40 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-3">
-          {selectedNode ? (
+    <div className="h-full w-full overflow-y-auto px-5 py-5 lg:px-7 lg:py-6">
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-5">
+        <AdminPageHeader
+          title="AI Knowledge & Latent Graph"
+          subtitle="Explore PyTorch latent embeddings linking sky targets, spectral features, archive templates, and class hubs."
+          actions={
             <>
-              <Card className="border-border">
-                <CardHeader className="py-2.5 px-3.5 border-b border-border bg-secondary/40">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={cn('text-[10px] font-mono px-2 py-0.5 rounded border', NODE_COLORS[selectedNode.kind].badge)}>
-                      {NODE_COLORS[selectedNode.kind].label}
-                    </span>
-                    {selectedNode.meta.ra !== undefined && (
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        {Number(selectedNode.meta.ra).toFixed(3)}°, {Number(selectedNode.meta.dec).toFixed(3)}°
+              {graph?.checkpoint_meta && (
+                <AdminStatusPill tone={graph.embedding_space === 'trained' ? 'emerald' : 'amber'}>
+                  {graph.embedding_space === 'trained'
+                    ? `LoRA r=${graph.checkpoint_meta.lora_r} · ${Math.round((graph.checkpoint_meta.val_acc || 0) * 100)}% acc`
+                    : 'Untrained Base Prior'}
+                </AdminStatusPill>
+              )}
+              <select
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value as ModelArchitecture)}
+                className="h-8 rounded-lg border border-white/[0.1] bg-background/80 px-3 text-xs font-medium text-foreground focus:border-primary focus:outline-none"
+              >
+                <option value="SpectralResNet102">SpectralResNet102</option>
+                <option value="DipoleConvNet3D">DipoleConvNet3D</option>
+                <option value="AstroFeatureSVM">AstroFeatureSVM</option>
+              </select>
+              <div className="flex rounded-lg border border-white/[0.08] bg-white/[0.03] p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setSpace('base')}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md transition-colors font-medium',
+                    space === 'base' ? 'bg-amber-500/20 text-amber-300' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Base
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSpace('trained')}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md transition-colors font-medium',
+                    space === 'trained'
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Trained LoRA
+                </button>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-lg px-3 text-xs"
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 0, y: 0 });
+                  setRotation({ yaw: -0.52, pitch: 0.32 });
+                }}
+              >
+                Reset View
+              </Button>
+            </>
+          }
+        />
+
+        {/* BAND 2: 4-CARD KPI SUMMARY */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <AdminKpiCard
+            label="Visible Nodes"
+            value={visibleNodes.length}
+            delta={`${graph?.nodes.length ?? 0} total in manifold`}
+            deltaTone="sky"
+            icon={<IconNetwork className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Active Edges"
+            value={visibleEdges.length}
+            delta={`Threshold cos ≥ ${minSimilarity.toFixed(2)}`}
+            deltaTone="muted"
+            icon={<IconActivity className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Embedding Space"
+            value={space === 'trained' ? 'Fine-Tuned' : 'Base Prior'}
+            delta={
+              graph?.checkpoint_meta
+                ? `LoRA r=${graph.checkpoint_meta.lora_r} · ${Math.round((graph.checkpoint_meta.val_acc || 0) * 100)}% val`
+                : 'Unadapted encoder'
+            }
+            deltaTone={space === 'trained' ? 'emerald' : 'amber'}
+            icon={<IconLayers className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Backbone Architecture"
+            value={modelName}
+            delta={viewMode === '3d' ? '3D Galaxy Orbit' : '2D Projection'}
+            deltaTone="muted"
+            icon={<IconCpu className="h-4 w-4" />}
+          />
+        </div>
+
+        {/* BAND 3: GRAPH WORKSPACE + NODE INSPECTOR */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 items-start">
+          {/* LEFT: GRAPH CARD */}
+          <div className="admin-surface rounded-xl overflow-hidden lg:col-span-8 flex flex-col">
+            {/* FILTER & PROJECTION HEADER */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-4 py-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['all', 'target', 'class', 'feature', 'template'] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setKindFilter(k)}
+                    className={cn(
+                      'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                      kindFilter === k
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-white/[0.04] text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {k === 'all' ? 'All Nodes' : NODE_COLORS[k].label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex rounded-lg border border-white/[0.08] bg-white/[0.03] p-0.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('3d')}
+                    className={cn(
+                      'px-2 py-0.5 rounded transition-colors font-medium',
+                      viewMode === '3d' ? 'bg-primary/20 text-sky-300' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    3D
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('2d')}
+                    className={cn(
+                      'px-2 py-0.5 rounded transition-colors font-medium',
+                      viewMode === '2d' ? 'bg-primary/20 text-sky-300' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    2D
+                  </button>
+                </div>
+
+                {viewMode === '3d' && (
+                  <Button
+                    size="sm"
+                    variant={autoOrbit ? 'default' : 'outline'}
+                    className="h-7 rounded-md px-2.5 text-[11px]"
+                    onClick={() => setAutoOrbit((v) => !v)}
+                  >
+                    {autoOrbit ? 'Orbit: ON' : 'Orbit: OFF'}
+                  </Button>
+                )}
+
+                <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-background/60 px-2.5 py-1">
+                  <span className="text-[11px] font-mono text-muted-foreground tabular-nums">
+                    sim {minSimilarity.toFixed(2)}
+                  </span>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={0.85}
+                    step={0.05}
+                    value={minSimilarity}
+                    onChange={(e) => setMinSimilarity(Number(e.target.value))}
+                    className="w-16 accent-primary"
+                  />
+                </div>
+
+                <AdminSearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Filter node..."
+                  className="w-40 sm:w-44"
+                />
+              </div>
+            </div>
+
+            {/* CANVAS STAGE */}
+            <div className="relative h-[460px] lg:h-[580px] overflow-hidden bg-black/35">
+              {loading && !graph && (
+                <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground z-10">
+                  Computing PyTorch embedding graph...
+                </div>
+              )}
+              {error && (
+                <div className="absolute top-3 left-3 z-10 rounded-lg border border-rose-500/35 bg-rose-500/15 px-3 py-1.5 text-xs text-rose-200">
+                  {error}
+                </div>
+              )}
+              <canvas
+                ref={canvasRef}
+                className="w-full h-full cursor-grab active:cursor-grabbing"
+                onWheel={(e) => {
+                  e.preventDefault();
+                  setZoom((z) => Math.max(0.55, Math.min(2.4, z * (e.deltaY < 0 ? 1.08 : 0.92))));
+                }}
+                onMouseDown={(e) => {
+                  dragRef.current = { active: true, x: e.clientX, y: e.clientY, moved: false };
+                }}
+                onMouseMove={(e) => {
+                  if (dragRef.current.active) {
+                    const dx = e.clientX - dragRef.current.x;
+                    const dy = e.clientY - dragRef.current.y;
+                    if (Math.abs(dx) + Math.abs(dy) > 3) dragRef.current.moved = true;
+                    dragRef.current.x = e.clientX;
+                    dragRef.current.y = e.clientY;
+                    setAutoOrbit(false);
+                    if (viewMode === '3d' && !e.shiftKey) {
+                      setRotation((r) => ({
+                        yaw: r.yaw + dx * 0.008,
+                        pitch: Math.max(-1.2, Math.min(1.2, r.pitch + dy * 0.008)),
+                      }));
+                    } else {
+                      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+                    }
+                  } else {
+                    const hit = hitTestNode(e.clientX, e.clientY);
+                    setHoveredNodeId(hit ? hit.id : null);
+                  }
+                }}
+                onMouseUp={(e) => {
+                  const wasMoved = dragRef.current.moved;
+                  dragRef.current.active = false;
+                  if (!wasMoved) {
+                    const hit = hitTestNode(e.clientX, e.clientY);
+                    if (hit) setSelectedNodeId(hit.id);
+                  }
+                }}
+                onMouseLeave={() => {
+                  dragRef.current.active = false;
+                  setHoveredNodeId(null);
+                }}
+              />
+
+              {/* LEGEND OVERLAY */}
+              <div className="absolute bottom-3 left-3 rounded-lg border border-white/[0.08] bg-card/90 backdrop-blur px-3 py-1.5 text-[11px] flex flex-wrap items-center gap-3">
+                {(['target', 'class', 'feature', 'template'] as NodeKind[]).map((k) => (
+                  <span key={k} className="flex items-center gap-1.5 text-foreground/90">
+                    <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ backgroundColor: NODE_COLORS[k].fill }} />
+                    {NODE_COLORS[k].label}
+                  </span>
+                ))}
+                <span className="text-muted-foreground font-mono text-[10px] border-l border-white/[0.08] pl-2.5">
+                  {viewMode === '3d' ? 'Drag: 3D orbit · Shift+Drag: pan · Wheel: zoom' : 'Drag: pan · Wheel: zoom'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT: NODE & RELATIONSHIP INSPECTOR */}
+          <aside className="lg:col-span-4 flex flex-col gap-5">
+            {selectedNode ? (
+              <>
+                <div className="admin-surface rounded-xl overflow-hidden">
+                  <div className="border-b border-white/[0.07] px-4 py-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={cn(
+                          'text-[11px] font-medium px-2 py-0.5 rounded-full border',
+                          NODE_COLORS[selectedNode.kind].badge
+                        )}
+                      >
+                        {NODE_COLORS[selectedNode.kind].label}
                       </span>
+                      {selectedNode.meta.ra !== undefined && (
+                        <span className="text-[11px] font-mono text-muted-foreground tabular-nums">
+                          {Number(selectedNode.meta.ra).toFixed(3)}°, {Number(selectedNode.meta.dec).toFixed(3)}°
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="text-base font-semibold text-foreground mt-2">{selectedNode.label}</h3>
+                  </div>
+
+                  <div className="p-4 text-xs flex flex-col gap-3">
+                    {selectedNode.kind === 'target' && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                            <span className="text-[11px] text-muted-foreground block">CH4 3.32µm</span>
+                            <span className="font-mono font-semibold text-amber-300 tabular-nums">
+                              {selectedNode.meta.ch4_332_depth}
+                            </span>
+                          </div>
+                          <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                            <span className="text-[11px] text-muted-foreground block">H2O 3.05µm</span>
+                            <span className="font-mono font-semibold text-sky-300 tabular-nums">
+                              {selectedNode.meta.h2o_305_depth}
+                            </span>
+                          </div>
+                          <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                            <span className="text-[11px] text-muted-foreground block">D5/D2 Color</span>
+                            <span className="font-mono font-semibold text-emerald-300 tabular-nums">
+                              {selectedNode.meta.ir_color_d5_d2}
+                            </span>
+                          </div>
+                          <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                            <span className="text-[11px] text-muted-foreground block">Domain</span>
+                            <span className="font-medium text-foreground truncate block">
+                              {selectedNode.meta.domain_class}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <Link
+                            to={`/admin/internals?target=${encodeURIComponent(selectedNode.meta.target_id || '')}`}
+                            className="flex-1"
+                          >
+                            <Button size="sm" className="w-full rounded-lg text-xs">
+                              Inspect in Co-Pilot →
+                            </Button>
+                          </Link>
+                          <Link to={`/explore?tab=navigator&ra=${selectedNode.meta.ra}&dec=${selectedNode.meta.dec}`}>
+                            <Button size="sm" variant="outline" className="rounded-lg text-xs">
+                              Sky View
+                            </Button>
+                          </Link>
+                        </div>
+                      </>
+                    )}
+                    {selectedNode.kind !== 'target' && (
+                      <pre className="admin-surface-subtle rounded-lg p-3 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap overflow-x-auto">
+                        {JSON.stringify(selectedNode.meta, null, 2)}
+                      </pre>
                     )}
                   </div>
-                  <CardTitle className="text-sm font-semibold mt-1.5">{selectedNode.label}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-3.5 text-xs flex flex-col gap-2">
-                  {selectedNode.kind === 'target' && (
-                    <>
-                      <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px]">
-                        <div className="bg-secondary/30 p-1.5 rounded">
-                          <span className="text-muted-foreground block">CH4 3.32µm</span>
-                          <span className="text-amber-300 font-bold">{selectedNode.meta.ch4_332_depth}</span>
-                        </div>
-                        <div className="bg-secondary/30 p-1.5 rounded">
-                          <span className="text-muted-foreground block">H2O 3.05µm</span>
-                          <span className="text-sky-300 font-bold">{selectedNode.meta.h2o_305_depth}</span>
-                        </div>
-                        <div className="bg-secondary/30 p-1.5 rounded">
-                          <span className="text-muted-foreground block">D5/D2 Color</span>
-                          <span className="text-emerald-300 font-bold">{selectedNode.meta.ir_color_d5_d2}</span>
-                        </div>
-                        <div className="bg-secondary/30 p-1.5 rounded">
-                          <span className="text-muted-foreground block">Domain</span>
-                          <span className="text-foreground font-bold truncate block">{selectedNode.meta.domain_class}</span>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 pt-1">
-                        <Link
-                          to={`/admin/internals?target=${encodeURIComponent(selectedNode.meta.target_id || '')}`}
-                          className="flex-1"
-                        >
-                          <Button size="sm" className="w-full text-xs">Inspect in Co-Pilot →</Button>
-                        </Link>
-                        <Link
-                          to={`/explore?tab=navigator&ra=${selectedNode.meta.ra}&dec=${selectedNode.meta.dec}`}
-                        >
-                          <Button size="sm" variant="outline" className="text-xs">Sky View</Button>
-                        </Link>
-                      </div>
-                    </>
-                  )}
-                  {selectedNode.kind !== 'target' && (
-                    <pre className="text-[10px] font-mono text-muted-foreground whitespace-pre-wrap">
-                      {JSON.stringify(selectedNode.meta, null, 2)}
-                    </pre>
-                  )}
-                </CardContent>
-              </Card>
+                </div>
 
-              <Card className="border-border">
-                <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/40">
-                  <CardTitle className="text-xs font-semibold">
-                    Connected Relationships ({selectedConnections.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-2 flex flex-col gap-1.5 max-h-[380px] overflow-y-auto">
-                  {selectedConnections.map(({ edge, peer }, idx) => (
-                    <button
-                      key={`${edge.source}-${edge.target}-${idx}`}
-                      onClick={() => peer && setSelectedNodeId(peer.id)}
-                      className="text-left p-2 rounded border border-border/60 hover:border-primary/60 bg-background/60 transition-colors flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium truncate">{peer?.label || edge.target}</div>
-                        <div className="text-[10px] font-mono text-muted-foreground">{edge.relation} · {edge.label}</div>
+                <div className="admin-surface rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-3">
+                    <h3 className="text-sm font-semibold text-foreground">Connected Relationships</h3>
+                    <AdminStatusPill tone="muted">{selectedConnections.length}</AdminStatusPill>
+                  </div>
+                  <div className="max-h-[340px] overflow-y-auto divide-y divide-white/[0.06]">
+                    {selectedConnections.map(({ edge, peer }, idx) => (
+                      <button
+                        key={`${edge.source}-${edge.target}-${idx}`}
+                        type="button"
+                        onClick={() => peer && setSelectedNodeId(peer.id)}
+                        className="w-full text-left px-4 py-2.5 hover:bg-white/[0.03] transition-colors flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-foreground truncate">
+                            {peer?.label || edge.target}
+                          </div>
+                          <div className="text-[11px] font-mono text-muted-foreground">
+                            {edge.relation} · {edge.label}
+                          </div>
+                        </div>
+                        <AdminStatusPill tone="sky">{edge.weight.toFixed(2)}</AdminStatusPill>
+                      </button>
+                    ))}
+                    {selectedConnections.length === 0 && (
+                      <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                        No relationships pass current similarity threshold ({minSimilarity.toFixed(2)}).
                       </div>
-                      <Badge variant="outline" className="font-mono text-[10px] shrink-0">
-                        {edge.weight.toFixed(2)}
-                      </Badge>
-                    </button>
-                  ))}
-                  {selectedConnections.length === 0 && (
-                    <div className="text-xs text-muted-foreground p-2">
-                      No relationships pass current similarity threshold ({minSimilarity.toFixed(2)}).
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : (
-            <div className="text-xs text-muted-foreground">Click any node in the graph to inspect relationships.</div>
-          )}
-        </aside>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="admin-surface rounded-xl p-6 text-center text-xs text-muted-foreground">
+                Click any node in the graph to inspect relationships.
+              </div>
+            )}
+          </aside>
+        </div>
       </div>
     </div>
   );

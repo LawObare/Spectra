@@ -123,6 +123,20 @@ app.include_router(export_router)
 app.include_router(admin_ws_router)
 
 
+@app.get("/")
+async def root_status() -> JSONResponse:
+    """Root service metadata for Hugging Face Spaces container checks."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "service": "spectra-backend",
+            "status": "operational",
+            "health": "/api/health",
+            "liveness": "/api/health/live",
+        },
+    )
+
+
 @app.get("/api/health/live")
 async def health_live() -> JSONResponse:
     """Process liveness check for container supervisor.

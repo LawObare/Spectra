@@ -95,7 +95,17 @@ def test_studio_train_returns_202_and_runs_lora_dft(client):
 
     models_resp = client.get("/api/admin/models").json()
     assert len(models_resp["base_models"]) == 3
-    assert any(m["custom_name"] == "my-y4-detector" for m in models_resp["trained_models"])
+    assert all("layer_specs" in m and len(m["layer_specs"]) >= 2 for m in models_resp["base_models"])
+    assert all("supported_classes" in m and len(m["supported_classes"]) == 6 for m in models_resp["base_models"])
+    matched = [m for m in models_resp["trained_models"] if m["custom_name"] == "my-y4-detector"]
+    assert len(matched) >= 1
+
+    # Promote checkpoint as active identification model
+    promo = client.post("/api/admin/models/promote", json={"model_id": matched[0]["model_id"]})
+    assert promo.status_code == 200
+    assert promo.json()["promoted_model_id"] == matched[0]["model_id"]
+    spec_card = next(m for m in promo.json()["base_models"] if m["model_name"] == "SpectralResNet102")
+    assert spec_card["active_checkpoint"]["model_id"] == matched[0]["model_id"]
 
 
 def test_knowledge_graph_base_and_trained(client):
@@ -125,6 +135,16 @@ def test_identify_targets_returns_gradcam_and_102_saliency(client):
     assert "<think>" in sel["reasoning_trace"]
     assert 0.0 <= sel["base_anomaly_prob"] <= 1.0
     assert 0.0 <= sel["trained_anomaly_prob"] <= 1.0
+    assert isinstance(sel["class_probabilities"], list) and len(sel["class_probabilities"]) == 6
+    assert abs(sum(c["trained_prob"] for c in sel["class_probabilities"]) - 1.0) < 0.05
+    assert "source_centroid" in sel
+    assert 0.0 <= sel["source_centroid"]["x"] <= 32.0
+    assert 0.0 <= sel["source_centroid"]["y"] <= 32.0
+    assert sel["source_centroid"]["radius_px"] >= 2.0
+    assert "base_predicted_domain" in sel
+    wise_target = next((t for t in data["targets"] if "wise" in t["label"].lower()), None)
+    if wise_target is not None:
+        assert wise_target["predicted_domain"] == "Brown Dwarf (Y/T/L)"
 
 
 def test_sft_dataset_all_four_schemas_and_feedback_loop(client):
@@ -133,8 +153,8 @@ def test_sft_dataset_all_four_schemas_and_feedback_loop(client):
         json={
             "target_id": "wise_0855",
             "label": "WISE 0855-0714",
-            "predicted_class": "Y4 Brown Dwarf",
-            "human_class": "Y4 Brown Dwarf (Confirmed)",
+            "predicted_class": "Brown Dwarf (Y/T/L)",
+            "human_class": "Brown Dwarf (Y/T/L)",
             "action": "confirmed",
             "reasoning": "Strong 3.32um CH4 absorption & red D5 excess confirmed.",
         },
@@ -154,6 +174,8 @@ def test_sft_dataset_all_four_schemas_and_feedback_loop(client):
         assert d["total_records"] >= 5
         assert key in d["records"][0]
         assert "<think>" in d["jsonl"]
+        assert "class_buckets" in d and len(d["class_buckets"]) == 6
+        assert "split_summary" in d and (d["split_summary"]["train"] + d["split_summary"]["val"]) == d["total_records"]
 
 
 def test_main_mounts_admin_router():

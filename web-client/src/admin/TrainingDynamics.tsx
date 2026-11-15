@@ -7,8 +7,19 @@ import {
   ModelArchitecture,
   useAdminTelemetry,
 } from './hooks/useAdminTelemetry';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
+import { Button } from '../components/ui';
 import { cn } from '../lib/utils';
+import {
+  AdminKpiCard,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminStatusPill,
+  IconActivity,
+  IconCheckCircle,
+  IconCpu,
+  IconLayers,
+  SegmentedProgressBar,
+} from './components/AdminPrimitives';
 
 const MODEL_DESCRIPTIONS: Record<ModelArchitecture, string> = {
   SpectralResNet102: '1D ResNet + Multi-Head Attention over 102-channel SPHEREx SEDs [0.75–5.00 µm]. Fast CPU SFT & gradient attribution.',
@@ -32,8 +43,25 @@ const FALLBACK_BASE_MODELS: BaseModelCard[] = [
     family: '1D Spectral Transformer-ResNet',
     input_shape: '[B, 2, 102] (Flux + Ivar)',
     layers_summary: 'Conv1d Stem → 2× ResBlock1D → 2-Head Self-Attention → LoRA Head',
-    total_params: 6850,
+    total_params: 6706,
     recommended_for: 'Fast CPU fine-tuning, 102-channel continuum + ice/CH4 attribution',
+    training_cost_label: 'CPU LoRA · ~1.5s · $0 GPU',
+    target_modules: ['attn', 'head'],
+    supported_classes: [
+      'Brown Dwarf (Y/T/L)',
+      'M-Dwarf / High-PM Star',
+      'Pulsating / T-Tauri Variable',
+      'Ice-Absorbed Protostar',
+      'Solar System / Moving',
+      'Galaxy / AGN / Field',
+    ],
+    layer_specs: [
+      { name: 'stem', type: 'Conv1d(2→16, k=7) + BN', shape: '[B, 16, 102]', params: 272, trainable_in_lora: false, role: 'Frozen continuum feature stem' },
+      { name: 'block1', type: 'ResBlock1D(16→16, k=5)', shape: '[B, 16, 102]', params: 2656, trainable_in_lora: false, role: 'Frozen spectral band encoder' },
+      { name: 'block2', type: 'ResBlock1D(16→16, k=5)', shape: '[B, 16, 102]', params: 2656, trainable_in_lora: false, role: 'Saliency hook (block2.out_act)' },
+      { name: 'attn', type: 'MultiheadAttention(16, 2h)', shape: '[B, 102, 16]', params: 1088, trainable_in_lora: true, role: 'LoRA out_proj cross-band attention' },
+      { name: 'head', type: 'LoraLinear(16→2)', shape: '[B, 2]', params: 34, trainable_in_lora: true, role: 'Low-rank adapted classifier readout' },
+    ],
     has_trained_checkpoint: false,
     active_checkpoint: null,
   },
@@ -41,10 +69,25 @@ const FALLBACK_BASE_MODELS: BaseModelCard[] = [
     model_name: 'DipoleConvNet3D',
     title: 'DipoleConvNet-3D + Spatial Grad-CAM',
     family: '3D Spatio-Temporal ConvNet',
-    input_shape: '[B, 6, T, 32, 32] Cutouts',
-    layers_summary: 'Conv3d(6→16) → Conv3d(16→32) → Global Pool → LoRA Classifier',
+    input_shape: '[B, 6, 4, 32, 32] Cutouts',
+    layers_summary: 'Conv3d(6→8) → Pool3d → Conv3d(8→16) → act2 (Grad-CAM) → LoRA Head',
     total_params: 4858,
     recommended_for: 'Multi-epoch proper-motion dipole blinking & Grad-CAM heatmaps',
+    training_cost_label: 'CPU LoRA · ~1.5s · $0 GPU',
+    target_modules: ['head'],
+    supported_classes: [
+      'Brown Dwarf (Y/T/L)',
+      'M-Dwarf / High-PM Star',
+      'Pulsating / T-Tauri Variable',
+      'Ice-Absorbed Protostar',
+      'Solar System / Moving',
+      'Galaxy / AGN / Field',
+    ],
+    layer_specs: [
+      { name: 'conv1+bn1', type: 'Conv3d(6→8, k=3) + BN3d', shape: '[B, 8, T, 16, 16]', params: 1320, trainable_in_lora: false, role: 'Frozen multi-band spatial stem' },
+      { name: 'conv2+bn2', type: 'Conv3d(8→16, k=3) + BN3d', shape: '[B, 16, T, 8, 8]', params: 3504, trainable_in_lora: false, role: 'Spatio-temporal Grad-CAM map (act2)' },
+      { name: 'head', type: 'LoraLinear(16→2)', shape: '[B, 2]', params: 34, trainable_in_lora: true, role: 'Low-rank adapted dipole classifier' },
+    ],
     has_trained_checkpoint: false,
     active_checkpoint: null,
   },
@@ -53,13 +96,57 @@ const FALLBACK_BASE_MODELS: BaseModelCard[] = [
     title: 'AstroFeatureSVM (Gaussian RBF Margin)',
     family: 'Learnable RBF Kernel Classifier',
     input_shape: '[B, 3] ([D5/D2, Motion SNR, Ice Depth])',
-    layers_summary: 'Learnable RBF Centers (K=12) → Gaussian Kernel → LoRA Margin Head',
-    total_params: 226,
+    layers_summary: 'RBFLayer(32 Landmarks, γ) → LoRA Linear Readout',
+    total_params: 163,
     recommended_for: 'Ultra-lightweight interpretable decision boundary & anomaly margin',
+    training_cost_label: 'CPU LoRA · <0.5s · $0 GPU',
+    target_modules: ['readout'],
+    supported_classes: [
+      'Brown Dwarf (Y/T/L)',
+      'M-Dwarf / High-PM Star',
+      'Pulsating / T-Tauri Variable',
+      'Ice-Absorbed Protostar',
+      'Solar System / Moving',
+      'Galaxy / AGN / Field',
+    ],
+    layer_specs: [
+      { name: 'rbf', type: 'RBFLayer(3→32 landmarks, γ)', shape: '[B, 32]', params: 97, trainable_in_lora: false, role: 'Learnable Gaussian basis in [-1, 1]³' },
+      { name: 'readout', type: 'LoraLinear(32→2)', shape: '[B, 2]', params: 66, trainable_in_lora: true, role: 'Low-rank margin hyperplane readout' },
+    ],
     has_trained_checkpoint: false,
     active_checkpoint: null,
   },
 ];
+
+interface StudioDatasetToken {
+  text: string;
+  masked: boolean;
+  label_id: number;
+}
+
+interface StudioDatasetRecord {
+  target_id?: string;
+  label?: string;
+  domain_class?: string;
+  split?: 'train' | 'val';
+  source?: string;
+  tokens_preview?: StudioDatasetToken[];
+}
+
+interface StudioClassBucket {
+  class_name: string;
+  count: number;
+  train_count: number;
+  val_count: number;
+}
+
+interface StudioDatasetSnapshot {
+  total_records: number;
+  feedback_count: number;
+  split_summary?: { train: number; val: number };
+  class_buckets?: StudioClassBucket[];
+  records: StudioDatasetRecord[];
+}
 
 export const TrainingDynamics: React.FC = () => {
   const {
@@ -79,7 +166,9 @@ export const TrainingDynamics: React.FC = () => {
     setSelectedLayer,
     overfittingAnalysis,
     modelsRegistry,
+    promotingModelId,
     refreshModelsRegistry,
+    promoteTrainedModel,
     startTrainingRun,
     pauseTrainingRun,
     resumeTrainingRun,
@@ -91,7 +180,12 @@ export const TrainingDynamics: React.FC = () => {
   const histCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const neuralCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [showScriptDrawer, setShowScriptDrawer] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<'setup' | 'specs' | 'topology'>('setup');
+  const [checkpointSearch, setCheckpointSearch] = useState('');
+  const [checkpointModelFilter, setCheckpointModelFilter] = useState<string>('ALL');
   const [copiedScript, setCopiedScript] = useState(false);
+  const [datasetSnapshot, setDatasetSnapshot] = useState<StudioDatasetSnapshot | null>(null);
+  const [selectedSampleIdx, setSelectedSampleIdx] = useState(0);
   const [neuralYaw, setNeuralYaw] = useState(-0.42);
   const [neuralPitch, setNeuralPitch] = useState(0.24);
   const [neuralAutoOrbit, setNeuralAutoOrbit] = useState(true);
@@ -104,6 +198,19 @@ export const TrainingDynamics: React.FC = () => {
     yaw: -0.42,
     pitch: 0.24,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/admin/sft-dataset?schema=prompt_completion')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload: StudioDatasetSnapshot | null) => {
+        if (!cancelled && payload) setDatasetSnapshot(payload);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     neuralAngleRef.current = { yaw: neuralYaw, pitch: neuralPitch };
@@ -123,7 +230,7 @@ export const TrainingDynamics: React.FC = () => {
   const trl = currentFrame?.trl;
   const paramSummary = useMemo(() => {
     if (trl?.param_summary) return trl.param_summary;
-    const total = hyperparams.model === 'DipoleConvNet3D' ? 4858 : hyperparams.model === 'SpectralResNet102' ? 6850 : 226;
+    const total = hyperparams.model === 'DipoleConvNet3D' ? 4858 : hyperparams.model === 'SpectralResNet102' ? 6706 : 163;
     const loraEst = hyperparams.loraR > 0 ? hyperparams.loraR * 18 : total;
     const trainable = hyperparams.loraR > 0 && hyperparams.freezeBackbone ? loraEst : total;
     return {
@@ -138,6 +245,16 @@ export const TrainingDynamics: React.FC = () => {
       vram_estimate_mb: Number(((total * (hyperparams.quantizationBits / 8)) / (1024 * 1024)).toFixed(4)),
     };
   }, [trl, hyperparams]);
+
+  const activeDatasetRecord = useMemo(() => {
+    if (!datasetSnapshot?.records?.length) return null;
+    return datasetSnapshot.records[selectedSampleIdx] || datasetSnapshot.records[0];
+  }, [datasetSnapshot, selectedSampleIdx]);
+
+  const selectedBaseSpec = useMemo(() => {
+    const list = modelsRegistry?.base_models?.length ? modelsRegistry.base_models : FALLBACK_BASE_MODELS;
+    return list.find((m) => m.model_name === hyperparams.model) || list[0];
+  }, [modelsRegistry, hyperparams.model]);
 
   // Draw Loss + Val Accuracy + TRL Entropy Canvas
   useEffect(() => {
@@ -273,7 +390,7 @@ export const TrainingDynamics: React.FC = () => {
     ctx.fillText('0.0', width / 2, height - 4);
     ctx.textAlign = 'right';
     ctx.fillText('+1.0', width - padL, height - 4);
-  }, [currentFrame, selectedLayer]);
+  }, [currentFrame, selectedLayer, workspaceTab]);
 
   // 3D Live Neural & PEFT LoRA Layer Visualizer
   useEffect(() => {
@@ -626,6 +743,7 @@ export const TrainingDynamics: React.FC = () => {
     isTrainingLive,
     isRunning,
     neuralAutoOrbit,
+    workspaceTab,
   ]);
 
   const pythonSnippet = useMemo(
@@ -668,541 +786,652 @@ trainer.train()`,
     setTimeout(() => setCopiedScript(false), 2500);
   };
 
-  return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
-      {/* TOP BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 border-b border-border bg-card/70 px-3 sm:px-5 py-2.5 shrink-0">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">
-              SFT & LoRA Training Studio
-            </h2>
-            <p className="text-[11px] text-muted-foreground">
-              4-step PyTorch + PEFT LoRA workflow modeled on Hugging Face TRL <code className="font-mono text-sky-400">SFTTrainer</code>
-            </p>
-          </div>
-          <Badge variant={isConnected ? 'sky' : 'amber'} className="font-mono text-[10px]">
-            {isTrainingLive
-              ? 'LIVE PYTORCH TRAINING'
-              : isDemoMode
-                ? 'Local Trajectory Preview'
-                : 'Backend PyTorch Stream'}
-          </Badge>
-          <span className="hidden lg:inline text-[11px] font-mono text-muted-foreground">
-            {statusMessage}
-          </span>
-        </div>
+  const baseModelsList = useMemo(
+    () => (modelsRegistry?.base_models?.length ? modelsRegistry.base_models : FALLBACK_BASE_MODELS),
+    [modelsRegistry]
+  );
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs font-mono"
-            onClick={() => setShowScriptDrawer((v) => !v)}
-          >
-            {showScriptDrawer ? 'Hide Python Script' : '{ } TRL Python Code'}
-          </Button>
-          {isRunning && !isTrainingLive ? (
-            isPaused ? (
-              <Button size="sm" onClick={resumeTrainingRun} className="text-xs">
-                ▶ Resume
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" onClick={pauseTrainingRun} className="text-xs">
-                ⏸ Pause
-              </Button>
-            )
-          ) : null}
-          {isRunning && (
-            <Button size="sm" variant="outline" onClick={abortTrainingRun} className="text-xs">
-              Reset
+  const trainedModelsList = useMemo(
+    () => modelsRegistry?.trained_models || [],
+    [modelsRegistry]
+  );
+
+  const bestValAcc = useMemo(() => {
+    if (trainedModelsList.length === 0) return currentFrame?.metrics.val_f1 ?? 0.89;
+    return Math.max(...trainedModelsList.map((t) => t.val_acc || 0));
+  }, [trainedModelsList, currentFrame]);
+
+  const filteredCheckpoints = useMemo(() => {
+    const q = checkpointSearch.trim().toLowerCase();
+    return trainedModelsList.filter((tm) => {
+      if (checkpointModelFilter !== 'ALL' && tm.model_name !== checkpointModelFilter) return false;
+      if (!q) return true;
+      return (
+        tm.custom_name.toLowerCase().includes(q) ||
+        tm.model_name.toLowerCase().includes(q) ||
+        tm.base_model.toLowerCase().includes(q)
+      );
+    });
+  }, [trainedModelsList, checkpointSearch, checkpointModelFilter]);
+
+  const liveValPct = ((currentFrame?.metrics.val_f1 ?? 0) * 100).toFixed(1);
+
+  return (
+    <div className="flex flex-col gap-5 p-4 sm:p-6 max-w-[1480px] mx-auto">
+      {/* BAND 1: CLEAN HERO HEADER */}
+      <AdminPageHeader
+        title="Fine-Tuning & Model Workstation"
+        subtitle={`${baseModelsList.length} Base Architectures, ${trainedModelsList.length} Saved Checkpoints, ${datasetSnapshot?.total_records ?? 0} Curated Examples · ${
+          isTrainingLive
+            ? 'Live PyTorch Run Active'
+            : isDemoMode
+              ? 'Local Trajectory Ready'
+              : isConnected
+                ? 'PyTorch Engine Connected'
+                : statusMessage
+        }`}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-3 rounded-lg text-xs border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07]"
+              onClick={() => setShowScriptDrawer((v) => !v)}
+            >
+              {showScriptDrawer ? 'Hide Python' : '{ } TRL Script'}
             </Button>
-          )}
-          <Button
-            size="sm"
-            disabled={isTrainingLive}
-            onClick={startTrainingRun}
-            className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
-          >
-            {isTrainingLive ? '⏳ Training PyTorch...' : '▶ + Train New Model'}
-          </Button>
+            {isRunning && !isTrainingLive && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={isPaused ? resumeTrainingRun : pauseTrainingRun}
+                className="h-9 px-3 rounded-lg text-xs border-white/[0.1]"
+              >
+                {isPaused ? 'Resume' : 'Pause'}
+              </Button>
+            )}
+            {isRunning && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={abortTrainingRun}
+                className="h-9 px-3 rounded-lg text-xs border-white/[0.1]"
+              >
+                Reset
+              </Button>
+            )}
+            <Button
+              size="sm"
+              disabled={isTrainingLive}
+              onClick={startTrainingRun}
+              className="h-9 px-4 rounded-lg text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+            >
+              {isTrainingLive ? 'Training on CPU...' : '+ Train New Model'}
+            </Button>
+          </>
+        }
+      />
+
+      {showScriptDrawer && (
+        <div className="rounded-xl border border-white/[0.08] bg-[#0B0C0E] overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.07]">
+            <span className="text-xs font-medium text-foreground">
+              Generated HF TRL <code className="font-mono text-sky-400">SFTTrainer</code> + PEFT Script
+            </span>
+            <Button size="sm" variant="outline" className="h-7 text-xs rounded-lg" onClick={handleCopyScript}>
+              {copiedScript ? 'Copied' : 'Copy Code'}
+            </Button>
+          </div>
+          <pre className="p-4 text-[11px] font-mono text-slate-300 overflow-x-auto leading-relaxed">
+            {pythonSnippet}
+          </pre>
         </div>
+      )}
+
+      {/* BAND 2: 4 KPI SUMMARY CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <AdminKpiCard
+          label="Base Architectures"
+          value={baseModelsList.length}
+          delta={`${hyperparams.model} selected`}
+          deltaTone="sky"
+          icon={<IconLayers />}
+        />
+        <AdminKpiCard
+          label="Trained Checkpoints"
+          value={trainedModelsList.length}
+          delta={modelsRegistry?.training_active ? 'Live run in progress' : 'Saved on CPU disk'}
+          deltaTone="emerald"
+          icon={<IconCheckCircle />}
+        />
+        <AdminKpiCard
+          label="Best Validation Acc"
+          value={`${(bestValAcc * 100).toFixed(1)}%`}
+          delta={`Frame ${liveValPct}% · Epoch ${activeEpoch}/${totalEpochs}`}
+          deltaTone="emerald"
+          icon={<IconActivity />}
+        />
+        <AdminKpiCard
+          label="Trainable Parameters"
+          value={paramSummary.trainable_params.toLocaleString()}
+          delta={`${paramSummary.trainable_pct}% of ${paramSummary.total_params.toLocaleString()} · LoRA r=${hyperparams.loraR}`}
+          deltaTone="muted"
+          icon={<IconCpu />}
+        />
       </div>
 
-      {/* MAIN 2-COLUMN WORKSPACE */}
-      <div className="flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-        {/* LEFT COLUMN: 4-STEP TRAINING STUDIO */}
-        <aside className="w-full lg:w-[350px] xl:w-[380px] shrink-0 border-b lg:border-b-0 lg:border-r border-border bg-card/30 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-3.5">
-          {/* STEP 1: ARCHITECTURE & PEFT LORA */}
-          <Card className="border-border">
-            <CardHeader className="py-2.5 px-3.5 bg-secondary/40 border-b border-border flex flex-row items-center justify-between">
-              <CardTitle className="text-xs font-semibold">Step 1 · Base Model & LoRA Adapter</CardTitle>
-              <Badge variant="sky" className="font-mono text-[10px]">LoraConfig</Badge>
-            </CardHeader>
-            <CardContent className="p-3.5 flex flex-col gap-2.5 text-xs">
-              <div>
-                <label className="text-[10px] uppercase text-muted-foreground font-semibold">
-                  New Model Name (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={hyperparams.customName}
-                  onChange={(e) => setHyperparams((p) => ({ ...p, customName: e.target.value }))}
-                  placeholder={`e.g. ${hyperparams.model.toLowerCase()}-v2`}
-                  className="mt-1 w-full bg-background border border-border rounded px-2.5 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground/60"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-1">
-                {(['SpectralResNet102', 'DipoleConvNet3D', 'AstroFeatureSVM'] as ModelArchitecture[]).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setHyperparams((p) => ({ ...p, model: m }))}
-                    className={cn(
-                      'px-2 py-1.5 rounded text-[10px] font-mono border transition-colors truncate',
-                      hyperparams.model === m
-                        ? 'bg-primary text-primary-foreground border-primary font-semibold'
-                        : 'bg-secondary/40 border-border text-muted-foreground hover:text-foreground'
-                    )}
-                    title={m}
-                  >
-                    {m.replace('Net', '').replace('Feature', '')}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                {MODEL_DESCRIPTIONS[hyperparams.model]}
+      {/* BAND 3: ASYMMETRIC MID GRID (7 COLS WORKBENCH / 5 COLS PERFORMANCE) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+        {/* LEFT 7 COLS: TABBED FINE-TUNE SETUP / LAYER SPECS / WEIGHTS */}
+        <div className="lg:col-span-7 rounded-xl border border-white/[0.075] bg-card flex flex-col overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-white/[0.07]">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">
+                Fine-Tuning Studio &amp; Model Specifications
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Configure PEFT adapters, inspect exact PyTorch layers, or view 3D weight topology
               </p>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <div>
-                  <label className="text-[10px] uppercase text-muted-foreground font-semibold">
-                    LoRA Rank (r={hyperparams.loraR})
-                  </label>
-                  <select
-                    value={hyperparams.loraR}
-                    onChange={(e) => setHyperparams((p) => ({ ...p, loraR: Number(e.target.value) }))}
-                    className="mt-1 w-full bg-background border border-border rounded px-2 py-1 text-xs font-mono"
-                  >
-                    <option value={0}>r=0 (Full Fine-Tune)</option>
-                    <option value={4}>r=4 (Ultra-Compact)</option>
-                    <option value={8}>r=8 (Recommended)</option>
-                    <option value={16}>r=16 (High Capacity)</option>
-                    <option value={32}>r=32 (Dense Adapter)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase text-muted-foreground font-semibold">
-                    Quantization / α
-                  </label>
-                  <select
-                    value={`${hyperparams.quantizationBits}-${hyperparams.loraAlpha}`}
-                    onChange={(e) => {
-                      const [q, a] = e.target.value.split('-').map(Number);
-                      setHyperparams((p) => ({ ...p, quantizationBits: q as 4 | 8 | 16, loraAlpha: a }));
-                    }}
-                    className="mt-1 w-full bg-background border border-border rounded px-2 py-1 text-xs font-mono"
-                  >
-                    <option value="4-32">4-bit QLoRA (α=32)</option>
-                    <option value="8-32">8-bit Adapter (α=32)</option>
-                    <option value="16-16">FP16 / BF16 (α=16)</option>
-                  </select>
-                </div>
-              </div>
-
-              <label className="flex items-center justify-between text-[11px] pt-1 cursor-pointer">
-                <span className="text-muted-foreground">Freeze Backbone Weights (PEFT-Only)</span>
-                <input
-                  type="checkbox"
-                  checked={hyperparams.freezeBackbone}
-                  onChange={(e) => setHyperparams((p) => ({ ...p, freezeBackbone: e.target.checked }))}
-                  className="accent-primary"
-                />
-              </label>
-            </CardContent>
-          </Card>
-
-          {/* STEP 2: DATASET & TOKEN LOSS MASKING */}
-          <Card className="border-border">
-            <CardHeader className="py-2.5 px-3.5 bg-secondary/40 border-b border-border flex flex-row items-center justify-between">
-              <CardTitle className="text-xs font-semibold">Step 2 · Dataset & Token Loss Mask</CardTitle>
-              <Badge variant="outline" className="font-mono text-[10px]">
-                {hyperparams.completionOnlyLoss ? 'Mask=-100' : 'Full Seq'}
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-3.5 flex flex-col gap-2 text-xs">
-              <div className="flex flex-wrap gap-1 p-2 rounded bg-background/80 border border-border/70 font-mono text-[10px] leading-relaxed">
-                {SAMPLE_PROMPT_TOKENS.map((tok, i) => (
-                  <span
-                    key={`p-${i}`}
-                    title={hyperparams.completionOnlyLoss ? 'Prompt token masked with -100 (no gradient)' : 'Loss active'}
-                    className={cn(
-                      'px-1 rounded',
-                      hyperparams.completionOnlyLoss
-                        ? 'bg-slate-800/80 text-slate-400 line-through decoration-slate-600'
-                        : 'bg-sky-500/20 text-sky-300'
-                    )}
-                  >
-                    {tok}
-                  </span>
-                ))}
-                {SAMPLE_COMPLETION_TOKENS.map((tok, i) => (
-                  <span
-                    key={`c-${i}`}
-                    title="Supervised completion / <think> reasoning token"
-                    className={cn(
-                      'px-1 rounded',
-                      tok.includes('think')
-                        ? 'bg-violet-500/25 text-violet-300 font-semibold'
-                        : 'bg-emerald-500/20 text-emerald-300'
-                    )}
-                  >
-                    {tok}
-                  </span>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-muted-foreground">completion_only_loss (Mask Prompt -100)</span>
-                <input
-                  type="checkbox"
-                  checked={hyperparams.completionOnlyLoss}
-                  onChange={(e) => setHyperparams((p) => ({ ...p, completionOnlyLoss: e.target.checked }))}
-                  className="accent-primary"
-                />
-              </div>
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-muted-foreground">packing=True (Zero-Waste Batching)</span>
-                <input
-                  type="checkbox"
-                  checked={hyperparams.packing}
-                  onChange={(e) => setHyperparams((p) => ({ ...p, packing: e.target.checked }))}
-                  className="accent-primary"
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* STEP 3: HARDWARE & PARAMETER BUDGET */}
-          <Card className="border-border">
-            <CardHeader className="py-2 px-3.5 bg-secondary/40 border-b border-border flex flex-row items-center justify-between">
-              <CardTitle className="text-xs font-semibold">Step 3 · Parameter & Memory Budget</CardTitle>
-              <span className="font-mono text-[10px] text-emerald-400 font-semibold">
-                {paramSummary.trainable_pct}% trainable
-              </span>
-            </CardHeader>
-            <CardContent className="p-3.5 flex flex-col gap-2 text-xs">
-              <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden flex">
-                <div
-                  className="bg-emerald-500 h-full transition-all"
-                  style={{ width: `${Math.max(3, paramSummary.trainable_pct)}%` }}
-                />
-                <div className="bg-slate-600/60 h-full flex-1" />
-              </div>
-              <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
-                <div className="bg-secondary/30 p-1.5 rounded">
-                  <div className="text-muted-foreground">Trainable</div>
-                  <div className="text-emerald-400 font-bold">{paramSummary.trainable_params.toLocaleString()}</div>
-                </div>
-                <div className="bg-secondary/30 p-1.5 rounded">
-                  <div className="text-muted-foreground">LoRA Adapter</div>
-                  <div className="text-sky-400 font-bold">{paramSummary.lora_params.toLocaleString()}</div>
-                </div>
-                <div className="bg-secondary/30 p-1.5 rounded">
-                  <div className="text-muted-foreground">Est. Memory</div>
-                  <div className="text-foreground font-bold">{paramSummary.vram_estimate_mb} MB</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* STEP 4: SFTCONFIG & RUN */}
-          <Card className="border-border">
-            <CardHeader className="py-2 px-3.5 bg-secondary/40 border-b border-border flex flex-row items-center justify-between">
-              <CardTitle className="text-xs font-semibold">Step 4 · SFTConfig Objective & Loop</CardTitle>
-              <Badge variant="amber" className="font-mono text-[10px]">{hyperparams.lossType.toUpperCase()}</Badge>
-            </CardHeader>
-            <CardContent className="p-3.5 flex flex-col gap-2.5 text-xs">
-              <div className="grid grid-cols-2 gap-1.5">
+            </div>
+            <div className="inline-flex items-center rounded-lg border border-white/[0.08] bg-background/70 p-0.5">
+              {(
+                [
+                  { id: 'setup', label: 'Setup & Data' },
+                  { id: 'specs', label: 'Layer Specs' },
+                  { id: 'topology', label: 'Weights & 3D' },
+                ] as const
+              ).map((tab) => (
                 <button
-                  onClick={() => setHyperparams((p) => ({ ...p, lossType: 'dft' }))}
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setWorkspaceTab(tab.id)}
                   className={cn(
-                    'py-1.5 px-2 rounded border text-[11px] font-mono',
-                    hyperparams.lossType === 'dft'
-                      ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-semibold'
-                      : 'border-border text-muted-foreground'
+                    'px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors',
+                    workspaceTab === tab.id
+                      ? 'bg-white/[0.09] text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  loss_type=&quot;dft&quot;
+                  {tab.label}
                 </button>
-                <button
-                  onClick={() => setHyperparams((p) => ({ ...p, lossType: 'nll' }))}
-                  className={cn(
-                    'py-1.5 px-2 rounded border text-[11px] font-mono',
-                    hyperparams.lossType === 'nll'
-                      ? 'bg-sky-500/20 border-sky-400 text-sky-300 font-semibold'
-                      : 'border-border text-muted-foreground'
-                  )}
-                >
-                  loss_type=&quot;nll&quot;
-                </button>
-              </div>
+              ))}
+            </div>
+          </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Epochs</label>
-                  <select
-                    value={hyperparams.totalEpochs}
-                    onChange={(e) => setHyperparams((p) => ({ ...p, totalEpochs: Number(e.target.value) }))}
-                    className="mt-0.5 w-full bg-background border border-border rounded px-1.5 py-1 font-mono text-xs"
-                  >
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                    <option value={25}>25</option>
-                    <option value={40}>40</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-muted-foreground">LR</label>
-                  <select
-                    value={hyperparams.lr}
-                    onChange={(e) => setHyperparams((p) => ({ ...p, lr: Number(e.target.value) }))}
-                    className="mt-0.5 w-full bg-background border border-border rounded px-1.5 py-1 font-mono text-xs"
-                  >
-                    <option value={1e-3}>1e-3</option>
-                    <option value={3e-3}>3e-3</option>
-                    <option value={1e-2}>1e-2</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Batch</label>
-                  <select
-                    value={hyperparams.batchSize}
-                    onChange={(e) => setHyperparams((p) => ({ ...p, batchSize: Number(e.target.value) }))}
-                    className="mt-0.5 w-full bg-background border border-border rounded px-1.5 py-1 font-mono text-xs"
-                  >
-                    <option value={16}>16</option>
-                    <option value={32}>32</option>
-                    <option value={64}>64</option>
-                  </select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </aside>
-
-        {/* RIGHT WORKSPACE: LIVE TELEMETRY & SCRIPT */}
-        <section className="flex-1 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-4">
-          {showScriptDrawer && (
-            <Card className="border-sky-500/40 bg-slate-950/90">
-              <CardHeader className="py-2 px-4 border-b border-border flex flex-row items-center justify-between">
-                <CardTitle className="text-xs font-mono text-sky-300">
-                  Generated HF TRL SFTTrainer + PEFT LoRA Script
-                </CardTitle>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleCopyScript}>
-                  {copiedScript ? 'Copied ✓' : 'Copy Python'}
-                </Button>
-              </CardHeader>
-              <CardContent className="p-3">
-                <pre className="text-[11px] font-mono text-slate-200 overflow-x-auto leading-relaxed">
-                  {pythonSnippet}
-                </pre>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* MODEL REGISTRY & + TRAIN NEW MODEL */}
-          <Card className="border-sky-500/30 bg-card/85">
-            <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/35 flex flex-row flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-xs font-semibold">
-                  Models Registry &amp; + Train New Model
-                </CardTitle>
-                <Badge variant="sky" className="font-mono text-[10px]">
-                  {(modelsRegistry?.base_models || FALLBACK_BASE_MODELS).length} Base · {(modelsRegistry?.trained_models || []).length} Trained
-                </Badge>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={hyperparams.customName}
-                  onChange={(e) => setHyperparams((p) => ({ ...p, customName: e.target.value }))}
-                  placeholder={`New model name (e.g. my-${hyperparams.model.toLowerCase()})`}
-                  aria-label="New model name"
-                  className="h-7 w-52 bg-background border border-border rounded px-2.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/60"
-                />
-                <Button
-                  size="sm"
-                  disabled={isTrainingLive}
-                  onClick={startTrainingRun}
-                  className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
-                >
-                  {isTrainingLive ? '⏳ Training...' : '▶ + Train New Model'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void refreshModelsRegistry()}
-                  className="h-7 text-[11px] font-mono"
-                >
-                  ↻ Refresh
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-3.5 flex flex-col gap-3">
-              {/* 3 BASE PYTORCH ARCHITECTURES */}
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">
-                  PyTorch Base Architectures (Click to Select for Training)
-                </div>
+          <div className="p-4 flex-1 flex flex-col gap-4">
+            {workspaceTab === 'setup' && (
+              <>
+                {/* BASE MODEL SELECTOR */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                  {(modelsRegistry?.base_models?.length ? modelsRegistry.base_models : FALLBACK_BASE_MODELS).map((card) => {
+                  {baseModelsList.map((card) => {
                     const selected = hyperparams.model === card.model_name;
                     return (
-                      <div
+                      <button
                         key={card.model_name}
-                        role="button"
-                        tabIndex={0}
+                        type="button"
                         onClick={() => setHyperparams((p) => ({ ...p, model: card.model_name }))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setHyperparams((p) => ({ ...p, model: card.model_name }));
-                          }
-                        }}
                         className={cn(
-                          'rounded-md border p-2.5 text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5',
+                          'rounded-lg border p-3 text-left transition-all flex flex-col justify-between gap-2',
                           selected
-                            ? 'border-sky-400 bg-sky-500/10 ring-1 ring-sky-400/40'
-                            : 'border-border bg-secondary/20 hover:border-border/80 hover:bg-secondary/35'
+                            ? 'border-primary/60 bg-primary/[0.07]'
+                            : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'
                         )}
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="text-xs font-semibold text-foreground leading-tight">
-                              {card.title}
-                            </div>
-                            <div className="text-[10px] font-mono text-sky-400 mt-0.5">
-                              {card.family}
-                            </div>
-                          </div>
-                          <Badge
-                            variant={card.has_trained_checkpoint ? 'emerald' : 'muted'}
-                            className="font-mono text-[9px] shrink-0"
-                          >
-                            {card.has_trained_checkpoint ? 'Trained ✓' : 'Base Ready'}
-                          </Badge>
-                        </div>
-                        <div className="text-[10px] font-mono text-muted-foreground">
-                          In: {card.input_shape} · {card.total_params.toLocaleString()} params
-                        </div>
-                        <div className="text-[10px] text-muted-foreground leading-snug">
-                          {card.layers_summary}
-                        </div>
-                        <div className="flex items-center justify-between pt-1 border-t border-border/50 text-[10px] font-mono">
-                          <span className={selected ? 'text-sky-300 font-semibold' : 'text-muted-foreground'}>
-                            {selected ? '● Selected Base' : 'Click to use base'}
+                          <span className="text-xs font-semibold text-foreground leading-snug">
+                            {card.title.split('+')[0].trim()}
                           </span>
-                          {card.active_checkpoint && (
-                            <span className="text-emerald-400">
-                              Best {(card.active_checkpoint.val_acc * 100).toFixed(1)}%
-                            </span>
-                          )}
+                          <span
+                            className={cn(
+                              'w-2 h-2 rounded-full mt-1 shrink-0',
+                              selected ? 'bg-primary' : 'bg-white/15'
+                            )}
+                          />
                         </div>
-                      </div>
+                        <div className="text-[11px] text-muted-foreground">{card.family}</div>
+                        <div className="flex items-center justify-between pt-2 border-t border-white/[0.06] text-[11px] font-mono">
+                          <span className="text-muted-foreground">
+                            {card.total_params.toLocaleString()}p
+                          </span>
+                          <span className={card.active_checkpoint ? 'text-emerald-400' : 'text-muted-foreground'}>
+                            {card.active_checkpoint
+                              ? `${(card.active_checkpoint.val_acc * 100).toFixed(1)}%`
+                              : 'Base'}
+                          </span>
+                        </div>
+                      </button>
                     );
                   })}
                 </div>
-              </div>
 
-              {/* TRAINED CHECKPOINTS / LORA RUNS */}
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">
-                  Trained Model Checkpoints ({modelsRegistry?.trained_models?.length ?? 0})
-                </div>
-                {modelsRegistry?.trained_models && modelsRegistry.trained_models.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {modelsRegistry.trained_models.map((tm) => (
-                      <div
-                        key={tm.model_id}
-                        className="rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 flex flex-col gap-1"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-mono font-bold text-foreground truncate" title={tm.custom_name}>
-                            {tm.custom_name}
-                          </span>
-                          <Badge variant="emerald" className="font-mono text-[9px] shrink-0">
-                            {(tm.val_acc * 100).toFixed(1)}% acc
-                          </Badge>
-                        </div>
-                        <div className="text-[10px] font-mono text-muted-foreground">
-                          Base: {tm.base_model} · {tm.lora_r > 0 ? `LoRA r=${tm.lora_r}` : 'Full'} · {tm.loss_type.toUpperCase()} · E{tm.epochs_completed}
-                        </div>
-                        <div className="flex items-center justify-between pt-1 text-[10px] font-mono">
-                          <button
-                            type="button"
-                            onClick={() => setHyperparams((p) => ({ ...p, model: tm.model_name }))}
-                            className="text-sky-400 hover:text-sky-300 underline"
-                          >
-                            Select {tm.model_name}
-                          </button>
-                          <Link
-                            to="/admin/boundaries"
-                            className="text-violet-300 hover:text-violet-200 underline"
-                          >
-                            Inspect in 3D Graph →
-                          </Link>
-                        </div>
-                      </div>
-                    ))}
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {MODEL_DESCRIPTIONS[hyperparams.model]}
+                </p>
+
+                {/* CLEAN HYPERPARAMETERS GRID */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">
+                      Checkpoint Run Name
+                    </label>
+                    <input
+                      type="text"
+                      value={hyperparams.customName}
+                      onChange={(e) => setHyperparams((p) => ({ ...p, customName: e.target.value }))}
+                      placeholder={`e.g. ${hyperparams.model.toLowerCase()}-v2`}
+                      className="mt-1.5 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/60"
+                    />
                   </div>
-                ) : (
-                  <div className="text-[11px] font-mono text-muted-foreground rounded border border-dashed border-border px-3 py-2">
-                    Loading trained PyTorch checkpoints or click <span className="text-emerald-400">▶ + Train New Model</span> above to train and save a custom run.
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] font-medium text-muted-foreground">
+                        LoRA Rank
+                      </label>
+                      <select
+                        value={hyperparams.loraR}
+                        onChange={(e) => setHyperparams((p) => ({ ...p, loraR: Number(e.target.value) }))}
+                        className="mt-1.5 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-2 text-xs text-foreground"
+                      >
+                        <option value={0}>r=0 · Full</option>
+                        <option value={4}>r=4 · Light</option>
+                        <option value={8}>r=8 · Balanced</option>
+                        <option value={16}>r=16 · High</option>
+                        <option value={32}>r=32 · Dense</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-medium text-muted-foreground">
+                        Precision / α
+                      </label>
+                      <select
+                        value={`${hyperparams.quantizationBits}-${hyperparams.loraAlpha}`}
+                        onChange={(e) => {
+                          const [q, a] = e.target.value.split('-').map(Number);
+                          setHyperparams((p) => ({ ...p, quantizationBits: q as 4 | 8 | 16, loraAlpha: a }));
+                        }}
+                        className="mt-1.5 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-2 text-xs text-foreground"
+                      >
+                        <option value="4-32">4-bit · α=32</option>
+                        <option value="8-32">8-bit · α=32</option>
+                        <option value="16-16">FP16 · α=16</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Objective</label>
+                    <select
+                      value={hyperparams.lossType}
+                      onChange={(e) => setHyperparams((p) => ({ ...p, lossType: e.target.value as 'dft' | 'nll' }))}
+                      className="mt-1 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-2 text-xs text-foreground"
+                    >
+                      <option value="dft">DFT Loss</option>
+                      <option value="nll">NLL Loss</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Epochs</label>
+                    <select
+                      value={hyperparams.totalEpochs}
+                      onChange={(e) => setHyperparams((p) => ({ ...p, totalEpochs: Number(e.target.value) }))}
+                      className="mt-1 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-2 text-xs text-foreground"
+                    >
+                      <option value={10}>10 epochs</option>
+                      <option value={20}>20 epochs</option>
+                      <option value={25}>25 epochs</option>
+                      <option value={40}>40 epochs</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Learn Rate</label>
+                    <select
+                      value={hyperparams.lr}
+                      onChange={(e) => setHyperparams((p) => ({ ...p, lr: Number(e.target.value) }))}
+                      className="mt-1 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-2 text-xs font-mono text-foreground"
+                    >
+                      <option value={1e-3}>1e-3</option>
+                      <option value={3e-3}>3e-3</option>
+                      <option value={1e-2}>1e-2</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Batch Size</label>
+                    <select
+                      value={hyperparams.batchSize}
+                      onChange={(e) => setHyperparams((p) => ({ ...p, batchSize: Number(e.target.value) }))}
+                      className="mt-1 h-8 w-full rounded-lg border border-white/[0.08] bg-background/80 px-2 text-xs text-foreground"
+                    >
+                      <option value={16}>16</option>
+                      <option value={32}>32</option>
+                      <option value={64}>64</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* DATASET SNAPSHOT & TOKEN MASKING STRIP */}
+                <div className="rounded-lg border border-white/[0.07] bg-background/50 p-3 flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                      <span>Attached SFT Corpus</span>
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        {datasetSnapshot?.split_summary
+                          ? `${datasetSnapshot.split_summary.train} train · ${datasetSnapshot.split_summary.val} val`
+                          : `${datasetSnapshot?.total_records ?? 0} samples`}
+                      </span>
+                    </div>
+                    <Link to="/admin/exports" className="text-xs font-medium text-primary hover:underline">
+                      Manage Class Buckets →
+                    </Link>
+                  </div>
+
+                  {datasetSnapshot?.records?.length ? (
+                    <select
+                      value={selectedSampleIdx}
+                      onChange={(e) => setSelectedSampleIdx(Number(e.target.value))}
+                      className="h-8 w-full rounded-lg border border-white/[0.08] bg-card px-2.5 text-xs text-foreground"
+                    >
+                      {datasetSnapshot.records.map((rec, idx) => (
+                        <option key={`${rec.target_id || idx}-${idx}`} value={idx}>
+                          [{rec.split || 'train'}] {rec.label || rec.target_id} ({rec.domain_class || 'Sample'})
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+
+                  <div className="flex flex-wrap gap-1 font-mono text-[10px] leading-relaxed max-h-20 overflow-y-auto">
+                    {activeDatasetRecord?.tokens_preview?.length
+                      ? activeDatasetRecord.tokens_preview.map((tok, i) => (
+                          <span
+                            key={`${selectedSampleIdx}-${i}`}
+                            className={cn(
+                              'px-1.5 py-0.5 rounded',
+                              tok.masked && hyperparams.completionOnlyLoss
+                                ? 'bg-white/[0.04] text-muted-foreground line-through'
+                                : tok.masked
+                                  ? 'bg-primary/15 text-sky-300'
+                                  : 'bg-emerald-500/15 text-emerald-300'
+                            )}
+                          >
+                            {tok.text}
+                          </span>
+                        ))
+                      : (
+                        <>
+                          {SAMPLE_PROMPT_TOKENS.map((tok, i) => (
+                            <span
+                              key={`p-${i}`}
+                              className={cn(
+                                'px-1.5 py-0.5 rounded',
+                                hyperparams.completionOnlyLoss
+                                  ? 'bg-white/[0.04] text-muted-foreground line-through'
+                                  : 'bg-primary/15 text-sky-300'
+                              )}
+                            >
+                              {tok}
+                            </span>
+                          ))}
+                          {SAMPLE_COMPLETION_TOKENS.map((tok, i) => (
+                            <span key={`c-${i}`} className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">
+                              {tok}
+                            </span>
+                          ))}
+                        </>
+                      )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4 pt-1 border-t border-white/[0.06] text-[11px] text-muted-foreground">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={hyperparams.freezeBackbone}
+                        onChange={(e) => setHyperparams((p) => ({ ...p, freezeBackbone: e.target.checked }))}
+                        className="accent-primary"
+                      />
+                      <span>Freeze Backbone</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={hyperparams.completionOnlyLoss}
+                        onChange={(e) => setHyperparams((p) => ({ ...p, completionOnlyLoss: e.target.checked }))}
+                        className="accent-primary"
+                      />
+                      <span>Mask Prompt (-100)</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={hyperparams.packing}
+                        onChange={(e) => setHyperparams((p) => ({ ...p, packing: e.target.checked }))}
+                        className="accent-primary"
+                      />
+                      <span>Sequence Packing</span>
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {workspaceTab === 'specs' && selectedBaseSpec && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">{selectedBaseSpec.title}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Input: <span className="font-mono">{selectedBaseSpec.input_shape}</span> · Target modules:{' '}
+                      <span className="font-mono text-sky-300">
+                        {(selectedBaseSpec.target_modules || ['head']).join(', ')}
+                      </span>
+                    </div>
+                  </div>
+                  <AdminStatusPill tone="emerald">
+                    {selectedBaseSpec.training_cost_label || 'CPU LoRA · $0 GPU'}
+                  </AdminStatusPill>
+                </div>
+
+                {selectedBaseSpec.layer_specs && selectedBaseSpec.layer_specs.length > 0 && (
+                  <div className="overflow-x-auto rounded-lg border border-white/[0.07]">
+                    <table className="w-full text-left text-xs">
+                      <thead className="border-b border-white/[0.07] bg-white/[0.02] text-[11px] font-medium text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2.5">Layer</th>
+                          <th className="px-3 py-2.5">Module</th>
+                          <th className="px-3 py-2.5">Output Shape</th>
+                          <th className="px-3 py-2.5 text-right">Params</th>
+                          <th className="px-3 py-2.5">LoRA Mode</th>
+                          <th className="px-3 py-2.5">Role</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.06]">
+                        {selectedBaseSpec.layer_specs.map((layer) => (
+                          <tr key={layer.name} className="hover:bg-white/[0.02]">
+                            <td className="px-3 py-2.5 font-mono font-medium text-foreground">{layer.name}</td>
+                            <td className="px-3 py-2.5 font-mono text-sky-300">{layer.type}</td>
+                            <td className="px-3 py-2.5 font-mono text-muted-foreground">{layer.shape}</td>
+                            <td className="px-3 py-2.5 font-mono text-right tabular-nums text-foreground">
+                              {layer.params.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <AdminStatusPill tone={layer.trainable_in_lora ? 'emerald' : 'muted'}>
+                                {layer.trainable_in_lora ? 'LoRA Target' : 'Frozen'}
+                              </AdminStatusPill>
+                            </td>
+                            <td className="px-3 py-2.5 text-muted-foreground">{layer.role}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {selectedBaseSpec.supported_classes && selectedBaseSpec.supported_classes.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[11px] text-muted-foreground mr-1">6 Classification Classes:</span>
+                    {selectedBaseSpec.supported_classes.map((cls) => (
+                      <span
+                        key={cls}
+                        className="px-2 py-0.5 rounded-full border border-white/[0.08] bg-white/[0.03] text-[11px] text-foreground/85"
+                      >
+                        {cls}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
-            </CardContent>
-          </Card>
+            )}
 
-          {/* OFFICIAL TRL LOGGED METRICS GRID */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-            {[
-              { k: 'global_step', v: String(trl?.global_step ?? activeEpoch * 6), c: 'text-foreground' },
-              { k: 'epoch', v: `${activeEpoch}/${totalEpochs}`, c: 'text-sky-400' },
-              { k: 'num_tokens', v: (trl?.num_tokens ?? 0).toLocaleString(), c: 'text-foreground' },
-              { k: 'loss', v: (currentFrame?.metrics.train_loss ?? 0).toFixed(4), c: 'text-sky-400' },
-              { k: 'val_loss', v: (currentFrame?.metrics.val_loss ?? 0).toFixed(4), c: 'text-amber-400' },
-              { k: 'entropy', v: `${(trl?.entropy ?? 0).toFixed(3)} b`, c: 'text-violet-400' },
-              { k: 'mean_tok_acc', v: `${((trl?.mean_token_accuracy ?? currentFrame?.metrics.val_f1 ?? 0) * 100).toFixed(1)}%`, c: 'text-emerald-400' },
-              { k: 'grad_norm', v: (currentFrame?.metrics.global_grad_norm ?? 0).toFixed(4), c: 'text-foreground' },
-            ].map((item) => (
-              <div key={item.k} className="rounded border border-border bg-card/70 px-2.5 py-2">
-                <div className="text-[10px] font-mono text-muted-foreground">{item.k}</div>
-                <div className={cn('text-sm font-mono font-bold mt-0.5', item.c)}>{item.v}</div>
-              </div>
-            ))}
-          </div>
+            {workspaceTab === 'topology' && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-foreground">
+                    3D Neural &amp; PEFT LoRA Topology · {hyperparams.model}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={neuralAutoOrbit ? 'default' : 'outline'}
+                      className="h-7 text-[11px] px-2.5 rounded-lg"
+                      onClick={() => setNeuralAutoOrbit((v) => !v)}
+                    >
+                      {neuralAutoOrbit ? 'Auto-Orbit: On' : 'Auto-Orbit: Off'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[11px] px-2.5 rounded-lg"
+                      onClick={() => {
+                        setNeuralAutoOrbit(false);
+                        neuralAngleRef.current = { yaw: -0.42, pitch: 0.24 };
+                        setNeuralYaw(-0.42);
+                        setNeuralPitch(0.24);
+                      }}
+                    >
+                      Reset View
+                    </Button>
+                  </div>
+                </div>
 
-          {/* LIVE TRAINING CHART */}
-          <Card className="border-border">
-            <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/30 flex flex-row flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-3">
-                <CardTitle className="text-xs font-semibold">Live Loss, Validation Accuracy & Shannon Entropy</CardTitle>
-                <div className="flex items-center gap-3 text-[10px] font-mono">
-                  <span className="text-sky-400">━ Train Loss</span>
-                  <span className="text-amber-400">┅ Val Loss</span>
-                  <span className="text-violet-400">┅ Entropy (bits)</span>
-                  <span className="text-emerald-400">━ Mean Token Acc (%)</span>
+                <canvas
+                  ref={neuralCanvasRef}
+                  aria-label="3D neural and LoRA architecture canvas"
+                  onMouseDown={(e) => {
+                    setNeuralAutoOrbit(false);
+                    neuralDragRef.current = { dragging: true, x: e.clientX, y: e.clientY };
+                  }}
+                  onMouseMove={(e) => {
+                    if (!neuralDragRef.current.dragging) return;
+                    const dx = e.clientX - neuralDragRef.current.x;
+                    const dy = e.clientY - neuralDragRef.current.y;
+                    neuralDragRef.current.x = e.clientX;
+                    neuralDragRef.current.y = e.clientY;
+                    neuralAngleRef.current.yaw += dx * 0.008;
+                    neuralAngleRef.current.pitch = Math.max(-1.1, Math.min(1.1, neuralAngleRef.current.pitch + dy * 0.006));
+                  }}
+                  onMouseUp={() => {
+                    neuralDragRef.current.dragging = false;
+                  }}
+                  onMouseLeave={() => {
+                    neuralDragRef.current.dragging = false;
+                  }}
+                  className="w-full h-56 rounded-lg border border-white/[0.07] cursor-grab active:cursor-grabbing"
+                />
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-white/[0.07] bg-background/50 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-foreground">Confusion Matrix</span>
+                      <span className="text-[11px] font-mono text-emerald-400">
+                        P {currentFrame?.confusion.precision ?? 0}% · R {currentFrame?.confusion.recall ?? 0}%
+                      </span>
+                    </div>
+                    <table className="w-full text-center font-mono text-xs border border-white/[0.07]">
+                      <thead className="bg-white/[0.03] text-[10px] text-muted-foreground">
+                        <tr>
+                          <th className="p-1.5 border border-white/[0.07] text-left">True \ Pred</th>
+                          {(currentFrame?.confusion.classes || ['Field', 'Anomaly']).map((c) => (
+                            <th key={c} className="p-1.5 border border-white/[0.07]">{c}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(currentFrame?.confusion.matrix || [[0, 0], [0, 0]]).map((row, ri) => (
+                          <tr key={ri}>
+                            <td className="p-1.5 border border-white/[0.07] text-left font-sans text-[11px] text-muted-foreground">
+                              {currentFrame?.confusion.classes[ri] || `C${ri}`}
+                            </td>
+                            {row.map((val, ci) => (
+                              <td
+                                key={ci}
+                                className={cn(
+                                  'p-1.5 border border-white/[0.07] font-semibold',
+                                  ri === ci ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/10 text-rose-300'
+                                )}
+                              >
+                                {val}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="rounded-lg border border-white/[0.07] bg-background/50 p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground">Layer Weight Distribution</span>
+                      <select
+                        value={selectedLayer}
+                        onChange={(e) => setSelectedLayer(e.target.value as AdminLayerName)}
+                        className="h-7 rounded border border-white/[0.08] bg-card px-2 text-[10px] font-mono max-w-[150px]"
+                      >
+                        {activeLayerKeys.map((k) => (
+                          <option key={k} value={k}>{k}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <canvas ref={histCanvasRef} className="w-full h-32 rounded border border-white/[0.07]" />
+                  </div>
                 </div>
               </div>
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {overfittingAnalysis.message}
-              </span>
-            </CardHeader>
-            <CardContent className="p-3 flex flex-col gap-2">
-              <canvas ref={lossCanvasRef} className="w-full h-56 rounded border border-border/60" />
-              <div className="flex items-center gap-3 px-1">
-                <span className="text-[10px] font-mono text-muted-foreground shrink-0">Scrub Epoch:</span>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT 5 COLS: PERFORMANCE CARD (mirrors Dash1 Performance widget) */}
+        <div className="lg:col-span-5 rounded-xl border border-white/[0.075] bg-card flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/[0.07]">
+            <h3 className="text-sm font-semibold text-foreground">Performance</h3>
+            <AdminStatusPill tone={overfittingAnalysis.isOverfitting ? 'amber' : 'emerald'}>
+              {overfittingAnalysis.isOverfitting
+                ? `Val Plateau · Best Ep ${overfittingAnalysis.optimalCheckpoint}`
+                : `Healthy · Ep ${overfittingAnalysis.optimalCheckpoint}`}
+            </AdminStatusPill>
+          </div>
+          <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+            <div>
+              <div className="flex items-baseline gap-2.5">
+                <span className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">
+                  {liveValPct}%
+                </span>
+                <span className="text-xs text-emerald-400 font-medium">
+                  Epoch {activeEpoch}/{totalEpochs} · Val Loss {(currentFrame?.metrics.val_loss ?? 0).toFixed(3)}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono text-muted-foreground mt-2">
+                <span className="text-sky-400">━ Train Loss</span>
+                <span className="text-amber-400">┅ Val Loss</span>
+                <span className="text-violet-400">┅ Entropy</span>
+                <span className="text-emerald-400">━ Val Acc %</span>
+              </div>
+            </div>
+
+            <canvas ref={lossCanvasRef} className="w-full h-56 rounded-lg border border-white/[0.07]" />
+
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-muted-foreground shrink-0">Epoch</span>
                 <input
                   type="range"
                   min={1}
@@ -1211,146 +1440,170 @@ trainer.train()`,
                   onChange={(e) => scrubToEpoch(Number(e.target.value))}
                   className="flex-1 accent-primary"
                 />
-                <span className="text-[11px] font-mono font-semibold text-foreground w-14 text-right">
+                <span className="text-xs font-mono font-medium text-foreground w-14 text-right tabular-nums">
                   E{activeEpoch}/{totalEpochs}
                 </span>
               </div>
-            </CardContent>
-          </Card>
 
-          {/* 3D LIVE NEURAL & PEFT LORA TOPOLOGY VISUALIZER */}
-          <Card className="border-violet-500/30">
-            <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/30 flex flex-row flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-xs font-semibold">
-                  3D Live Neural &amp; PEFT LoRA Architecture Visualizer
-                </CardTitle>
-                <Badge variant="outline" className="font-mono text-[10px] border-violet-500/40 bg-violet-500/15 text-violet-300">
-                  {hyperparams.model}
-                </Badge>
-                <Badge variant={hyperparams.loraR > 0 ? 'amber' : 'emerald'} className="font-mono text-[10px]">
-                  {hyperparams.loraR > 0
-                    ? `LoRA r=${hyperparams.loraR} · ${paramSummary.trainable_pct.toFixed(1)}% trainable`
-                    : 'Full Fine-Tune (100%)'}
-                </Badge>
+              <div className="grid grid-cols-4 gap-2 pt-2 border-t border-white/[0.07] text-center">
+                <div>
+                  <div className="text-[10px] text-muted-foreground">Step</div>
+                  <div className="text-xs font-mono font-semibold text-foreground mt-0.5">
+                    {trl?.global_step ?? activeEpoch * 6}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground">Train Loss</div>
+                  <div className="text-xs font-mono font-semibold text-sky-400 mt-0.5">
+                    {(currentFrame?.metrics.train_loss ?? 0).toFixed(3)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground">Entropy</div>
+                  <div className="text-xs font-mono font-semibold text-violet-400 mt-0.5">
+                    {(trl?.entropy ?? 0).toFixed(2)}b
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground">Grad Norm</div>
+                  <div className="text-xs font-mono font-semibold text-foreground mt-0.5">
+                    {(currentFrame?.metrics.global_grad_norm ?? 0).toFixed(3)}
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5">
-                <Button
-                  size="sm"
-                  variant={neuralAutoOrbit ? 'default' : 'outline'}
-                  className="h-6 text-[10px] font-mono px-2"
-                  onClick={() => setNeuralAutoOrbit((v) => !v)}
-                >
-                  {neuralAutoOrbit ? 'Auto-Orbit: ON' : 'Auto-Orbit: OFF'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-[10px] font-mono px-2"
-                  onClick={() => {
-                    setNeuralAutoOrbit(false);
-                    neuralAngleRef.current = { yaw: -0.42, pitch: 0.24 };
-                    setNeuralYaw(-0.42);
-                    setNeuralPitch(0.24);
-                  }}
-                >
-                  Reset 3D
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-3">
-              <canvas
-                ref={neuralCanvasRef}
-                aria-label="3D neural and LoRA architecture canvas"
-                onMouseDown={(e) => {
-                  setNeuralAutoOrbit(false);
-                  neuralDragRef.current = { dragging: true, x: e.clientX, y: e.clientY };
-                }}
-                onMouseMove={(e) => {
-                  if (!neuralDragRef.current.dragging) return;
-                  const dx = e.clientX - neuralDragRef.current.x;
-                  const dy = e.clientY - neuralDragRef.current.y;
-                  neuralDragRef.current.x = e.clientX;
-                  neuralDragRef.current.y = e.clientY;
-                  neuralAngleRef.current.yaw += dx * 0.008;
-                  neuralAngleRef.current.pitch = Math.max(
-                    -1.1,
-                    Math.min(1.1, neuralAngleRef.current.pitch + dy * 0.006)
-                  );
-                }}
-                onMouseUp={() => {
-                  neuralDragRef.current.dragging = false;
-                }}
-                onMouseLeave={() => {
-                  neuralDragRef.current.dragging = false;
-                }}
-                className="w-full h-64 rounded border border-border/60 cursor-grab active:cursor-grabbing"
-              />
-            </CardContent>
-          </Card>
-
-          {/* BOTTOM ROW: CONFUSION MATRIX + LAYER WEIGHT HISTOGRAM */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card className="border-border">
-              <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/30 flex flex-row items-center justify-between">
-                <CardTitle className="text-xs font-semibold">Validation Confusion Matrix</CardTitle>
-                <span className="font-mono text-[11px] text-emerald-400">
-                  Precision {currentFrame?.confusion.precision ?? 0}% · Recall {currentFrame?.confusion.recall ?? 0}%
-                </span>
-              </CardHeader>
-              <CardContent className="p-4">
-                <table className="w-full text-center font-mono text-xs border border-border">
-                  <thead className="bg-secondary/40 text-[10px] text-muted-foreground">
-                    <tr>
-                      <th className="p-2 border border-border text-left">True \ Pred</th>
-                      {(currentFrame?.confusion.classes || ['Field', 'Anomaly']).map((c) => (
-                        <th key={c} className="p-2 border border-border">{c}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(currentFrame?.confusion.matrix || [[0, 0], [0, 0]]).map((row, ri) => (
-                      <tr key={ri}>
-                        <td className="p-2 border border-border text-left font-sans text-[11px] text-muted-foreground">
-                          {currentFrame?.confusion.classes[ri] || `Class ${ri}`}
-                        </td>
-                        {row.map((val, ci) => (
-                          <td
-                            key={ci}
-                            className={cn(
-                              'p-2 border border-border font-bold',
-                              ri === ci ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/10 text-rose-300'
-                            )}
-                          >
-                            {val}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border">
-              <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/30 flex flex-row items-center justify-between gap-2">
-                <CardTitle className="text-xs font-semibold">PyTorch Layer Weight Distribution</CardTitle>
-                <select
-                  value={selectedLayer}
-                  onChange={(e) => setSelectedLayer(e.target.value as AdminLayerName)}
-                  className="bg-background border border-border rounded px-2 py-0.5 text-[10px] font-mono max-w-[190px]"
-                >
-                  {activeLayerKeys.map((k) => (
-                    <option key={k} value={k}>{k}</option>
-                  ))}
-                </select>
-              </CardHeader>
-              <CardContent className="p-3">
-                <canvas ref={histCanvasRef} className="w-full h-36 rounded border border-border/60" />
-              </CardContent>
-            </Card>
+            </div>
           </div>
-        </section>
+        </div>
+      </div>
+
+      {/* BAND 4: CLEAN MODEL CHECKPOINTS TABLE (mirrors Dash1 List Projects table) */}
+      <div className="rounded-xl border border-white/[0.075] bg-card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-white/[0.07]">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">
+              Model Checkpoints &amp; Adapters
+            </h3>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Promote trained LoRA adapters as the active inference checkpoint for Live Identification
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <AdminSearchInput
+              value={checkpointSearch}
+              onChange={setCheckpointSearch}
+              placeholder="Search checkpoints..."
+              className="w-48"
+            />
+            <select
+              value={checkpointModelFilter}
+              onChange={(e) => setCheckpointModelFilter(e.target.value)}
+              className="h-8 rounded-lg border border-white/[0.08] bg-background/80 px-2.5 text-xs text-foreground"
+            >
+              <option value="ALL">All Models</option>
+              <option value="SpectralResNet102">SpectralResNet102</option>
+              <option value="DipoleConvNet3D">DipoleConvNet3D</option>
+              <option value="AstroFeatureSVM">AstroFeatureSVM</option>
+            </select>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void refreshModelsRegistry()}
+              className="h-8 px-3 rounded-lg text-xs border-white/[0.08]"
+            >
+              ↻ Refresh
+            </Button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead className="border-b border-white/[0.07] text-[11px] font-medium text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Checkpoint Name</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Val Accuracy</th>
+                <th className="px-4 py-2.5 font-medium">Adapter Spec</th>
+                <th className="px-4 py-2.5 font-medium">Epochs</th>
+                <th className="px-4 py-2.5 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.06] text-xs">
+              {filteredCheckpoints.length > 0 ? (
+                filteredCheckpoints.map((tm) => {
+                  const isActive = Boolean(
+                    modelsRegistry?.base_models?.some(
+                      (bm) => bm.active_checkpoint?.model_id === tm.model_id
+                    )
+                  );
+                  const isPromoting = promotingModelId === tm.model_id;
+                  return (
+                    <tr key={tm.model_id} className="hover:bg-white/[0.02] transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span className={cn('w-2 h-2 rounded-full shrink-0', isActive ? 'bg-emerald-400' : 'bg-primary')} />
+                          <div>
+                            <div className="font-medium text-foreground">{tm.custom_name}</div>
+                            <div className="text-[11px] text-muted-foreground">{tm.base_model}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <AdminStatusPill tone={isActive ? 'emerald' : 'sky'}>
+                          {isActive ? 'Active' : 'Ready'}
+                        </AdminStatusPill>
+                      </td>
+                      <td className="px-4 py-3">
+                        <SegmentedProgressBar
+                          percent={tm.val_acc * 100}
+                          tone={isActive ? 'emerald' : 'sky'}
+                        />
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-muted-foreground">
+                        {tm.lora_r > 0 ? `LoRA r=${tm.lora_r}` : 'Full'} · {tm.loss_type.toUpperCase()}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs tabular-nums text-foreground">
+                        {tm.epochs_completed} epochs
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setHyperparams((p) => ({ ...p, model: tm.model_name }))}
+                            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Use Base
+                          </button>
+                          {!isActive && (
+                            <button
+                              type="button"
+                              disabled={isPromoting}
+                              onClick={() => void promoteTrainedModel(tm.model_id)}
+                              className="px-2.5 py-1 rounded-md bg-primary/15 border border-primary/30 hover:bg-primary/25 text-sky-300 text-[11px] font-medium disabled:opacity-50"
+                            >
+                              {isPromoting ? 'Promoting...' : 'Promote'}
+                            </button>
+                          )}
+                          <Link
+                            to="/admin/internals"
+                            className="px-2.5 py-1 rounded-md border border-white/[0.09] hover:bg-white/[0.06] text-[11px] text-foreground transition-colors"
+                          >
+                            Identify →
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-xs text-muted-foreground">
+                    No matching checkpoints found. Click <span className="text-primary font-medium">+ Train New Model</span> above to train and persist a new adapter.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

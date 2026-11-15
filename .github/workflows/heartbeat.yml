@@ -1,0 +1,47 @@
+name: Spectra Keep-Alive Heartbeat
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Postgres heartbeat
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "Skipping direct Supabase ping: SUPABASE_DB_URL secret not set."
+            exit 0
+          fi
+          python3 -m pip install -q asyncpg
+          python3 - <<'EOF'
+          import asyncio, os, asyncpg
+
+          async def ping():
+              conn = await asyncpg.connect(os.environ["SUPABASE_DB_URL"], timeout=20.0)
+              try:
+                  row = await conn.fetchrow(
+                      "UPDATE heartbeat SET last_ping = NOW() WHERE id = 1 RETURNING id, last_ping"
+                  )
+                  print("Supabase heartbeat updated:", dict(row) if row else None)
+              finally:
+                  await conn.close()
+
+          asyncio.run(ping())
+          EOF
+
+      - name: Ping FastAPI & Supabase health endpoint
+        env:
+          BACKEND_HEALTH_URL: ${{ vars.BACKEND_HEALTH_URL }}
+        run: |
+          if [ -z "$BACKEND_HEALTH_URL" ]; then
+            echo "Skipping FastAPI health ping: set BACKEND_HEALTH_URL repository variable once HF Space is live."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_HEALTH_URL")
+          echo "Heartbeat HTTP status: $code"
+          test "$code" -eq 200

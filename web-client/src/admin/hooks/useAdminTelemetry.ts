@@ -100,6 +100,15 @@ export interface TrainedModelCard {
   param_summary?: Record<string, number>;
 }
 
+export interface ModelLayerSpec {
+  name: string;
+  type: string;
+  shape: string;
+  params: number;
+  trainable_in_lora: boolean;
+  role: string;
+}
+
 export interface BaseModelCard {
   model_name: ModelArchitecture;
   title: string;
@@ -108,6 +117,10 @@ export interface BaseModelCard {
   layers_summary: string;
   total_params: number;
   recommended_for: string;
+  layer_specs?: ModelLayerSpec[];
+  target_modules?: string[];
+  supported_classes?: string[];
+  training_cost_label?: string;
   has_trained_checkpoint: boolean;
   active_checkpoint: TrainedModelCard | null;
 }
@@ -308,14 +321,14 @@ export function normalizeBackendFrame(raw: Record<string, any>, fallbackHyper: H
 function generateOfflineFallbackFrames(hyper: Hyperparameters): TelemetryFrame[] {
   const frames: TelemetryFrame[] = [];
   const total = hyper.totalEpochs;
-  const totalParams = hyper.model === 'DipoleConvNet3D' ? 4858 : hyper.model === 'SpectralResNet102' ? 6850 : 226;
+  const totalParams = hyper.model === 'DipoleConvNet3D' ? 4858 : hyper.model === 'SpectralResNet102' ? 6706 : 163;
   const loraParams = hyper.loraR > 0 ? hyper.loraR * 18 : totalParams;
 
   for (let e = 1; e <= total; e++) {
     const t = e / Math.max(1, total);
-    const trainLoss = Number(Math.max(0.06, 0.72 * Math.exp(-3.2 * t) + 0.05).toFixed(4));
-    const valLoss = Number(Math.max(0.08, 0.74 * Math.exp(-2.9 * t) + 0.07).toFixed(4));
-    const valAcc = Number(Math.min(0.96, 0.56 + 0.39 * (1 - Math.exp(-3.4 * t))).toFixed(4));
+    const trainLoss = Number(Math.max(0.14, 0.72 * Math.exp(-2.8 * t) + 0.12).toFixed(4));
+    const valLoss = Number(Math.max(0.18, 0.75 * Math.exp(-2.5 * t) + 0.16).toFixed(4));
+    const valAcc = Number(Math.min(0.91, 0.56 + 0.34 * (1 - Math.exp(-3.1 * t))).toFixed(4));
     const curLr = Number((hyper.lr * (0.1 + 0.45 * (1 + Math.cos(Math.PI * t)))).toFixed(6));
     const gradNorm = Number(Math.max(0.015, 0.24 * Math.exp(-2.1 * t) + 0.02).toFixed(4));
 
@@ -393,6 +406,7 @@ export function useAdminTelemetry() {
   const [hyperparams, setHyperparams] = useState<Hyperparameters>(DEFAULT_HYPERPARAMS);
   const [activeEpoch, setActiveEpoch] = useState<number>(1);
   const [modelsRegistry, setModelsRegistry] = useState<ModelsRegistryResponse | null>(null);
+  const [promotingModelId, setPromotingModelId] = useState<string | null>(null);
 
   const refreshModelsRegistry = useCallback(async () => {
     try {
@@ -404,6 +418,27 @@ export function useAdminTelemetry() {
       }
     } catch {
       // Backend offline or unavailable; ignore
+    }
+  }, []);
+
+  const promoteTrainedModel = useCallback(async (modelId: string): Promise<boolean> => {
+    setPromotingModelId(modelId);
+    try {
+      const res = await fetch('/api/admin/models/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id: modelId }),
+      });
+      if (!res.ok) return false;
+      const data: ModelsRegistryResponse = await res.json();
+      if (data && Array.isArray(data.base_models)) {
+        setModelsRegistry(data);
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setPromotingModelId(null);
     }
   }, []);
 
@@ -474,7 +509,8 @@ export function useAdminTelemetry() {
   // Connect WebSocket for selected architecture
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/admin/ws/training?model=${encodeURIComponent(hyperparams.model)}`;
+    const wsBase = (import.meta.env.VITE_WS_BASE_URL || `${protocol}//${window.location.host}`).replace(/\/+$/, '');
+    const wsUrl = `${wsBase}/api/admin/ws/training?model=${encodeURIComponent(hyperparams.model)}`;
     let closed = false;
 
     try {
@@ -727,7 +763,9 @@ export function useAdminTelemetry() {
     setSelectedProbeTarget,
     overfittingAnalysis,
     modelsRegistry,
+    promotingModelId,
     refreshModelsRegistry,
+    promoteTrainedModel,
     startTrainingRun,
     pauseTrainingRun,
     resumeTrainingRun,
