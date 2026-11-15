@@ -1,0 +1,51 @@
+name: Deploy Backend to Hugging Face Space
+
+on:
+  push:
+    branches: [main, deployment]
+    paths:
+      - "backend/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "start.sh"
+      - "hf/README.md"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble Hugging Face Space bundle
+        run: |
+          mkdir -p space
+          cp -r backend Dockerfile .dockerignore start.sh space/
+          cp hf/README.md space/README.md
+          rm -rf space/backend/cache/cutouts space/backend/.venv space/backend/tests
+
+      - name: Push bundle to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USER: ${{ vars.HF_USER }}
+          HF_SPACE: ${{ vars.HF_SPACE || 'spectra-mission-engine' }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_USER" ]; then
+            echo "Skipping HF Space upload: set HF_TOKEN secret and HF_USER repository variable to enable."
+            exit 0
+          fi
+          pip install -q "huggingface_hub>=0.24"
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          repo_id = f'{os.environ["HF_USER"]}/{os.environ["HF_SPACE"]}'
+          api.upload_folder(
+              folder_path="space",
+              repo_id=repo_id,
+              repo_type="space",
+              commit_message=f'Deploy {os.environ.get("GITHUB_SHA", "")[:7]}',
+          )
+          print(f"Uploaded Space bundle to {repo_id}")
+          EOF
