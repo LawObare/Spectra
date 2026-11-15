@@ -1155,7 +1155,7 @@ export const MolecularIceStudio: React.FC = () => {
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
         {/* LEFT PANEL — Sightline Selection & Live Spatial Aperture */}
         <section className="flex w-full lg:w-[380px] xl:w-[410px] shrink-0 flex-col gap-3 lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-border p-3 sm:p-4">
-          <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+          <div data-tour="ice-sightline-picker" className="rounded-lg border border-border bg-card p-3 space-y-2.5">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
@@ -1275,7 +1275,7 @@ export const MolecularIceStudio: React.FC = () => {
           />
 
           {/* Interactive Aperture & Sky Annulus Photometry */}
-          <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+          <div data-tour="ice-aperture-check" className="rounded-lg border border-border bg-card p-3 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
                 2. Star Beam vs Empty Sky Check
@@ -1471,6 +1471,7 @@ export const MolecularIceStudio: React.FC = () => {
                     <Button
                       variant="outline"
                       size="xs"
+                      title="Load pre-installed Taurus cloud target RW Aurigae to inspect real frozen ice dips right away"
                       onClick={() => handleSelectInstalledSection(rwSec)}
                     >
                       Try RW Aurigae (Taurus Cloud)
@@ -1480,6 +1481,7 @@ export const MolecularIceStudio: React.FC = () => {
                 {activeSpectrum.fidelity !== 'true_102_ch' && liveStatus !== 'error' && (
                   <Button
                     size="xs"
+                    title="Download all 102 infrared wavelength colors from NASA IRSA to resolve narrow H₂O (3.05 µm), CO₂ (4.27 µm), and CO (4.67 µm) ice dips"
                     onClick={() => {
                       const coordKey = `${selectedTarget.ra.toFixed(5)},${selectedTarget.dec.toFixed(5)}`;
                       setForceFullResolutionKey(coordKey);
@@ -1489,11 +1491,21 @@ export const MolecularIceStudio: React.FC = () => {
                   </Button>
                 )}
                 {effectiveSolution.brownDwarfNotice && (
-                  <Button variant="outline" size="xs" onClick={() => setTab('spectral')}>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    title="Jump to 102-Band Spectrum to see this brown dwarf's 3.3 µm methane gas dip"
+                    onClick={() => setTab('spectral')}
+                  >
                     Inspect Brown Dwarf in Spectrum →
                   </Button>
                 )}
-                <Button variant="outline" size="xs" onClick={() => setTab('comparator')}>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  title="Return to Time-Domain to blink multi-month photos of this sky field"
+                  onClick={() => setTab('comparator')}
+                >
                   ← Time-Domain
                 </Button>
               </div>
@@ -1511,13 +1523,14 @@ export const MolecularIceStudio: React.FC = () => {
           </div>
 
           {/* Interactive 3-Step Visual Story Chart */}
-          <div className="rounded-lg border border-border bg-black/60 p-3 space-y-2.5">
+          <div data-tour="ice-studio-transmission" className="rounded-lg border border-border bg-black/60 p-3 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex overflow-hidden rounded-sm border border-border">
                   <button
                     type="button"
                     onClick={() => setMode('transmission')}
+                    title="Recommended beginner view: shows what % of starlight makes it through without being swallowed by ice (dips below 100% = ice)"
                     className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
                       mode === 'transmission'
                         ? 'bg-emerald-500/20 text-emerald-300'
@@ -1529,6 +1542,7 @@ export const MolecularIceStudio: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setMode('raw')}
+                    title="Compare raw measured starlight brightness against the smooth clean baseline curve"
                     className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
                       mode === 'raw' ? 'bg-primary/20 text-primary' : 'bg-background text-muted-foreground hover:text-white'
                     }`}
@@ -1538,6 +1552,7 @@ export const MolecularIceStudio: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setMode('tau')}
+                    title="Optical depth (τ): flips dips upside down as upward spikes so taller peaks mean thicker frozen ice"
                     className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
                       mode === 'tau' ? 'bg-sky-500/20 text-sky-300' : 'bg-background text-muted-foreground hover:text-white'
                     }`}
@@ -1555,13 +1570,14 @@ export const MolecularIceStudio: React.FC = () => {
                         ? 'bg-cyan-500/20 text-cyan-200'
                         : 'bg-background text-muted-foreground hover:text-white'
                     }`}
-                    title="Zoom into 2.4–5.0 µm where frozen H₂O, CO₂, and CO ice dips live"
+                    title="Zoom into 2.4–5.0 µm where frozen water (H₂O), dry ice (CO₂), and CO ice dips appear"
                   >
                     Ice Zone (2.4–5 µm)
                   </button>
                   <button
                     type="button"
                     onClick={() => setWaveZoom('full')}
+                    title="Zoom out across all 0.75–5.0 µm SPHEREx colors to see the smooth warm starlight baseline on the left"
                     className={`px-2 py-1 font-mono text-[10px] transition-colors cursor-pointer ${
                       waveZoom === 'full'
                         ? 'bg-cyan-500/20 text-cyan-200'
