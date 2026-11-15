@@ -5,19 +5,12 @@
  * - SPECIFICATION.md §1.3 Audit #10 (point-source background-star workflow)
  * - SPECIFICATION.md §2.4 (verified laboratory A-values)
  * - SPECIFICATION.md §6.3.4 (Tab 4: Molecular & Ice Mapping Studio)
- * - tasks.md Dev 5 (role:E5-datasci) Issue #25
- *
- * Physics:
- *   tau(lambda) = -ln(F_obs / F_cont)
- *   nu = 10000 / lambda [cm^-1]
- *   N_ice = (1 / A) * integral(tau(nu) dnu) [cm^-2]
- *
- * Solid-ice A-values are never applied to the 3.32 um photospheric CH4 feature of
- * WISE 0855-0714 or Epsilon Indi B; those sightlines are explicitly suppressed.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Input, Select } from '../components/ui';
+import { ActiveCaseBanner } from '../components/ActiveCaseBanner';
+import { CutoutProbeMinimap } from '../components/CutoutProbeMinimap';
 import {
   InstalledCutoutsModal,
   UseCurrentSelectedButton,
@@ -44,6 +37,7 @@ export interface IceTarget {
 }
 
 export type IceKey = 'h2o' | 'co2' | 'co2_13' | 'co' | 'ch3oh';
+type SpectralFidelity = 'true_102_ch' | 'broadband_6_interpolated';
 
 export interface IceBand {
   key: IceKey;
@@ -82,6 +76,7 @@ export interface SpectrumSource {
   wavelengthsUm: number[];
   flux: number[];
   badge: string;
+  fidelity: SpectralFidelity;
   coverage?: boolean[];
 }
 
@@ -158,6 +153,36 @@ export const PHOTOSPHERIC_CH4_NOTICE =
   'Scientific notice: the 3.32 um CH4 feature in WISE 0855-0714 and Epsilon Indi B is ' +
   'photospheric gas, not solid interstellar ice. Laboratory solid-ice A-values are not ' +
   'applied to brown-dwarf photospheres, and spurious ice column densities are suppressed.';
+
+export const ICE_CLOUD_SIGHTLINES: IceTarget[] = [
+  {
+    id: 'elias16_taurus',
+    name: 'Elias 16 (Taurus Dark Cloud)',
+    ra: 69.91125,
+    dec: 26.19028,
+    catalog: 'Taurus Molecular Cloud',
+    environment: 'Reddened background K-giant · classic H2O/CO2 ice sightline',
+    badge: '[IRSA Live]',
+  },
+  {
+    id: 'j110621_cham',
+    name: 'J110621 (Chamaeleon I Cloud)',
+    ra: 166.59042,
+    dec: -77.39819,
+    catalog: 'Chamaeleon I (JWST Ice Age)',
+    environment: 'Background star behind dense cloud core · H2O/CO2/CO ices',
+    badge: '[IRSA Live]',
+  },
+  {
+    id: 'm42_orion',
+    name: 'Orion Nebula (M42 / Trapezium)',
+    ra: 83.82208,
+    dec: -5.39111,
+    catalog: 'Orion Molecular Cloud',
+    environment: 'Star-forming cloud complex · icy dust & PAH sightlines',
+    badge: '[IRSA Live]',
+  },
+];
 
 export const BROWN_DWARF_GUARD_TARGETS: IceTarget[] = [
   {
@@ -257,8 +282,6 @@ export function fitChebyshevContinuum(
     });
     if (design.length < order + 1) break;
 
-    // Small Tikhonov penalty on degree-3/4 terms: the mandated continuum windows are
-    // narrow, so unregularised high-order fits amplify sub-percent absorption leakage.
     const trace = normal.reduce((sum, row, index) => sum + row[index], 0);
     const scale = trace / (order + 1);
     for (let index = 3; index <= order; index++) normal[index][index] += 1e-4 * scale * 10;
@@ -390,6 +413,14 @@ function distanceArcsec(ra1: number, dec1: number, ra2: number, dec2: number): n
   return Math.hypot(projected, dec1 - dec2) * 3600;
 }
 
+function inferFidelity(payload: any): SpectralFidelity {
+  const raw = payload?.provenance?.spectral_fidelity;
+  if (raw === 'true_102_ch') return 'true_102_ch';
+  const method = String(payload?.provenance?.method || '').toLowerCase();
+  if (method.includes('hdu 5') || method.includes('wcs-wave')) return 'true_102_ch';
+  return 'broadband_6_interpolated';
+}
+
 function resolveInitialTarget(
   readySections: Array<{ section_id: string; label: string; ra: number; dec: number; source_badge?: string }>,
   activeName: string | null,
@@ -417,7 +448,7 @@ function resolveInitialTarget(
       isBrownDwarf: brownDwarf,
     };
   }
-  const guardMatch = BROWN_DWARF_GUARD_TARGETS.find(
+  const guardMatch = [...ICE_CLOUD_SIGHTLINES, ...BROWN_DWARF_GUARD_TARGETS].find(
     (target) =>
       distanceArcsec(ra, dec, target.ra, target.dec) < 30 ||
       (activeName || '').toLowerCase().includes(target.name.toLowerCase())
@@ -441,23 +472,61 @@ function resolveInitialTarget(
 // --------------------------------------------------------------------------------------
 
 export const MolecularIceStudio: React.FC = () => {
-  const { ra, dec, activeTargetName, colorPalette, currentSelectedSection } = useTelemetryStore();
-  const { setTab, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
-  const [selectedLiveId, setSelectedLiveId] = useState<string>('wise_0855');
+  const {
+    ra,
+    dec,
+    fovArcsec,
+    activeTargetName,
+    colorPalette,
+    currentSelectedSection,
+    setCurrentSelectedSection,
+    probedPixel,
+    setProbedPixel,
+    setProbeSkyPosition,
+    apertureRadiusPx,
+    skyAnnulusInnerPx,
+    skyAnnulusOuterPx,
+    setIceAperture,
+    setCaseFindings,
+  } = useTelemetryStore();
+
+  const {
+    setTab,
+    setRa: setUrlRa,
+    setDec: setUrlDec,
+    setFov: setUrlFov,
+    setProbeX: setUrlProbeX,
+    setProbeY: setUrlProbeY,
+  } = useSpectraUrlState();
+
+  const [selectedLiveId, setSelectedLiveId] = useState<string>('elias16_taurus');
   const [selectedSource, setSelectedSource] = useState<'primary' | 'sky'>('primary');
-  const [apertureRadius, setApertureRadius] = useState(1.5);
-  const [annulusInner, setAnnulusInner] = useState(3.0);
-  const [annulusOuter, setAnnulusOuter] = useState(5.0);
-  const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('tau');
+  const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('raw');
   const [sourceMode, setSourceMode] = useState<'installed' | 'live'>('installed');
   const { installedSections } = useInstalledSectionState();
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
   const [isCutoutBrowserOpen, setIsCutoutBrowserOpen] = useState(false);
+  const [forceFullResolutionKey, setForceFullResolutionKey] = useState<string | null>(null);
   const [liveSpectrum, setLiveSpectrum] = useState<SpectrumSource | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [liveStatusMessage, setLiveStatusMessage] = useState('');
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
+  const [showLabDetails, setShowLabDetails] = useState(false);
   const [ledgerState, setLedgerState] = useState<'idle' | 'submitting' | 'logged' | 'offline'>('idle');
-  const [ledgerNote, setLedgerNote] = useState<string>('');
+  const [ledgerNote, setLedgerNote] = useState('');
+
+  // Debounced aperture values so typing/sliding triggers smooth tensor photometry
+  const [debouncedAperture, setDebouncedAperture] = useState({
+    r: apertureRadiusPx,
+    inR: skyAnnulusInnerPx,
+    outR: skyAnnulusOuterPx,
+  });
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setDebouncedAperture({ r: apertureRadiusPx, inR: skyAnnulusInnerPx, outR: skyAnnulusOuterPx });
+    }, 150);
+    return () => window.clearTimeout(id);
+  }, [apertureRadiusPx, skyAnnulusInnerPx, skyAnnulusOuterPx]);
 
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
@@ -474,7 +543,9 @@ export const MolecularIceStudio: React.FC = () => {
   const handleSelectInstalledSection = useCallback(
     (chosen: InstalledSection) => {
       setSourceMode('installed');
+      setForceFullResolutionKey(null);
       setSelectedSectionId(chosen.section_id);
+      setCurrentSelectedSection(chosen);
       setLedgerState('idle');
       setLedgerNote('');
       setUrlRa(Number(chosen.ra.toFixed(5)));
@@ -487,10 +558,39 @@ export const MolecularIceStudio: React.FC = () => {
         probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
       });
     },
-    [setUrlRa, setUrlDec, setUrlFov]
+    [setUrlRa, setUrlDec, setUrlFov, setCurrentSelectedSection]
   );
 
-  // Load installed sections once on mount / target change
+  const handleSelectIcySightline = useCallback(
+    (target: IceTarget) => {
+      setSourceMode('live');
+      setForceFullResolutionKey(null);
+      setSelectedLiveId(target.id);
+      setLedgerState('idle');
+      setLedgerNote('');
+      setUrlRa(Number(target.ra.toFixed(5)));
+      setUrlDec(Number(target.dec.toFixed(5)));
+      useTelemetryStore.setState({
+        ra: target.ra,
+        dec: target.dec,
+        activeTargetName: target.name,
+        probeSkyPosition: { ra: target.ra, dec: target.dec },
+      });
+    },
+    [setUrlRa, setUrlDec]
+  );
+
+  const handleMinimapPixelSelect = useCallback(
+    (px: number, py: number, skyCoord: { ra: number; dec: number }) => {
+      setForceFullResolutionKey(null);
+      setProbedPixel({ x: px, y: py });
+      setProbeSkyPosition(skyCoord);
+      setUrlProbeX(px);
+      setUrlProbeY(py);
+    },
+    [setProbedPixel, setProbeSkyPosition, setUrlProbeX, setUrlProbeY]
+  );
+
   useEffect(() => {
     if (installedSections.length === 0) {
       void fetchInstalledSections();
@@ -502,7 +602,6 @@ export const MolecularIceStudio: React.FC = () => {
       setSelectedSectionId('');
       return;
     }
-
     const exactMatch =
       readyInstalledSections.find(
         (section) => Math.abs(section.ra - ra) < 1e-4 && Math.abs(section.dec - dec) < 1e-4
@@ -510,45 +609,46 @@ export const MolecularIceStudio: React.FC = () => {
       readyInstalledSections.find(
         (section) => distanceArcsec(section.ra, section.dec, ra, dec) < 0.2
       );
-
-    const fallbackMatch = findMatchingSection(readyInstalledSections, ra, dec) || readyInstalledSections[0];
-    const nextSection = exactMatch || fallbackMatch;
-    setSelectedSectionId(nextSection ? nextSection.section_id : '');
-  }, [readyInstalledSections, ra, dec]);
+    if (exactMatch) {
+      setSelectedSectionId(exactMatch.section_id);
+      return;
+    }
+    const fallbackMatch = findMatchingSection(readyInstalledSections, ra, dec);
+    if (fallbackMatch) {
+      setSelectedSectionId(fallbackMatch.section_id);
+    } else if (!selectedSectionId) {
+      setSelectedSectionId(readyInstalledSections[0].section_id);
+    }
+  }, [readyInstalledSections, ra, dec, selectedSectionId]);
 
   const liveTargets = useMemo<IceTarget[]>(() => {
-    const base: IceTarget[] = [
-      {
-        id: 'active_coord',
-        name: activeTargetName || `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`,
-        ra,
-        dec,
-        catalog: 'Active Telemetry Coordinate',
-        environment: isBrownDwarfTarget(activeTargetName, ra, dec)
-          ? 'Brown dwarf - photospheric CH4 guardrail'
-          : 'Point-source line of sight',
-        badge: '[IRSA Live]',
-        isBrownDwarf: isBrownDwarfTarget(activeTargetName, ra, dec),
-      },
-      ...BROWN_DWARF_GUARD_TARGETS,
-    ];
-    return base;
+    const activeCoordTarget: IceTarget = {
+      id: 'active_coord',
+      name: activeTargetName || `J2000 ${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°`,
+      ra,
+      dec,
+      catalog: 'Active Telemetry Coordinate',
+      environment: isBrownDwarfTarget(activeTargetName, ra, dec)
+        ? 'Brown dwarf - photospheric CH4 guardrail'
+        : 'Point-source line of sight',
+      badge: '[IRSA Live]',
+      isBrownDwarf: isBrownDwarfTarget(activeTargetName, ra, dec),
+    };
+    return [...ICE_CLOUD_SIGHTLINES, activeCoordTarget, ...BROWN_DWARF_GUARD_TARGETS];
   }, [activeTargetName, ra, dec]);
 
   useEffect(() => {
     const exactLiveTarget =
       liveTargets.find(
-        (target) => Math.abs(target.ra - ra) < 1e-4 && Math.abs(target.dec - dec) < 1e-4
-      ) ||
-      liveTargets.find((target) => distanceArcsec(target.ra, target.dec, ra, dec) < 0.2);
-
+        (target) => target.id !== 'active_coord' && distanceArcsec(target.ra, target.dec, ra, dec) < 2.0
+      ) || null;
     if (exactLiveTarget) {
       setSelectedLiveId((prev) => (prev === exactLiveTarget.id ? prev : exactLiveTarget.id));
     }
   }, [liveTargets, ra, dec]);
 
   const selectedTarget = useMemo<IceTarget>(() => {
-    if (sourceMode === 'installed') {
+    if (sourceMode === 'installed' && !forceFullResolutionKey) {
       const activeSec =
         readyInstalledSections.find((s) => s.section_id === selectedSectionId) ||
         readyInstalledSections.find(
@@ -562,36 +662,63 @@ export const MolecularIceStudio: React.FC = () => {
     }
     const picked =
       liveTargets.find((t) => t.id === selectedLiveId) ||
-      liveTargets.find(
-        (t) => Math.abs(t.ra - ra) < 1e-4 && Math.abs(t.dec - dec) < 1e-4
-      ) ||
-      liveTargets.find((t) => distanceArcsec(t.ra, t.dec, ra, dec) < 0.2) ||
+      liveTargets.find((t) => distanceArcsec(t.ra, t.dec, ra, dec) < 2.0) ||
       liveTargets[0];
     if (picked) return picked;
     return resolveInitialTarget(readyInstalledSections, activeTargetName, ra, dec);
-  }, [sourceMode, readyInstalledSections, selectedSectionId, ra, dec, liveTargets, selectedLiveId, activeTargetName]);
+  }, [
+    sourceMode,
+    forceFullResolutionKey,
+    readyInstalledSections,
+    selectedSectionId,
+    ra,
+    dec,
+    liveTargets,
+    selectedLiveId,
+    activeTargetName,
+  ]);
 
-  // Installed section or on-demand live HDU 6 spectrum (no synthetic fallback).
+  // Fetch installed tensor aperture photometry OR full 102-channel HDU 6 WCS-WAVE extraction
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    const coordKey = `${selectedTarget.ra.toFixed(5)},${selectedTarget.dec.toFixed(5)}`;
+    const forceLiveFull = forceFullResolutionKey === coordKey;
     setLiveStatus('loading');
-    setLiveSpectrum(null);
+    setLiveStatusMessage(
+      forceLiveFull || sourceMode === 'live'
+        ? `Querying full 102-ch HDU 6 spectrum for ${selectedTarget.name}…`
+        : `Computing ${selectedSource === 'sky' ? 'sky ring' : 'aperture'} photometry on cutout…`
+    );
 
     const fetchSourceSpectrum = async () => {
       try {
         let payload: any;
-        if (sourceMode === 'installed') {
+        if (sourceMode === 'installed' && !forceLiveFull) {
           const activeSec =
             readyInstalledSections.find((s) => s.section_id === selectedSectionId) ||
             findMatchingSection(readyInstalledSections, ra, dec) ||
             readyInstalledSections[0];
           if (!activeSec) {
-            if (!cancelled) setLiveStatus('idle');
+            if (!cancelled) {
+              setLiveStatus('idle');
+              setLiveSpectrum(null);
+            }
             return;
           }
+          const qs = new URLSearchParams({
+            normalize: 'false',
+            sample_mode: selectedSource,
+            aperture_radius: String(debouncedAperture.r),
+            annulus_inner: String(debouncedAperture.inR),
+            annulus_outer: String(debouncedAperture.outR),
+          });
+          if (probedPixel) {
+            qs.set('px', String(probedPixel.x));
+            qs.set('py', String(probedPixel.y));
+          }
           try {
-            const res = await fetch(`/api/sections/${activeSec.section_id}/spectrum?normalize=false`, {
+            const res = await fetch(`/api/sections/${activeSec.section_id}/spectrum?${qs.toString()}`, {
               signal: controller.signal,
             });
             const contentType = (res.headers.get('content-type') || '').toLowerCase();
@@ -604,8 +731,9 @@ export const MolecularIceStudio: React.FC = () => {
           if (!payload) {
             payload = await fetchStaticSectionSpectrum(activeSec.section_id, controller.signal);
           }
-          if (!payload) throw new Error('Installed spectrum unavailable');
+          if (!payload) throw new Error('Installed cutout spectrum unavailable');
         } else {
+          // Try full_resolution synchronous /spectrum first (or queued task fallback)
           const response = await fetch('/api/spectrum/tasks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -619,28 +747,45 @@ export const MolecularIceStudio: React.FC = () => {
             const poll = await fetch(`/api/spectrum/tasks/${taskId}`, { signal: controller.signal });
             if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
             const task = await poll.json();
+            if (!cancelled && task.message) setLiveStatusMessage(task.message);
             if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
-            if (task.status === 'complete') { payload = task.result; break; }
+            if (task.status === 'complete') {
+              payload = task.result;
+              break;
+            }
           }
         }
         if (cancelled || !payload) return;
         const sourceBadge = payload.provenance?.source_badge;
         const isValidBadge =
           typeof sourceBadge === 'string' &&
-          (/^\[Installed\]/.test(sourceBadge) ||
-            /^\[IRSA Live \(.+\)\]$/.test(sourceBadge));
-        if (!isValidBadge || !Array.isArray(payload.wavelengths_um) || payload.wavelengths_um.length < 102 || !Array.isArray(payload.flux_jy) || payload.flux_jy.length < 102 || !Array.isArray(payload.channel_coverage)) {
+          (/^\[Installed\]/.test(sourceBadge) || /^\[IRSA Live \(.+\)\]$/.test(sourceBadge));
+        if (
+          !isValidBadge ||
+          !Array.isArray(payload.wavelengths_um) ||
+          payload.wavelengths_um.length < 102 ||
+          !Array.isArray(payload.flux_jy) ||
+          payload.flux_jy.length < 102 ||
+          !Array.isArray(payload.channel_coverage)
+        ) {
           throw new Error('Malformed spectrum payload');
         }
         setLiveSpectrum({
           wavelengthsUm: payload.wavelengths_um,
-          flux: payload.flux_jy.map((flux: number, i: number) => payload.channel_coverage[i] ? flux : Number.NaN),
+          flux: payload.flux_jy.map((flux: number, i: number) =>
+            payload.channel_coverage[i] ? flux : Number.NaN
+          ),
           badge: sourceBadge as string,
+          fidelity: inferFidelity(payload),
           coverage: payload.channel_coverage,
         });
         setLiveStatus('ready');
-      } catch {
-        if (!cancelled) setLiveStatus('error');
+        setLiveStatusMessage('');
+      } catch (err) {
+        if (!cancelled) {
+          setLiveStatus('error');
+          setLiveStatusMessage(err instanceof Error ? err.message : 'Spectrum unavailable');
+        }
       }
     };
     void fetchSourceSpectrum();
@@ -648,14 +793,36 @@ export const MolecularIceStudio: React.FC = () => {
       cancelled = true;
       controller.abort();
     };
-  }, [selectedTarget.ra, selectedTarget.dec, sourceMode, selectedSectionId, readyInstalledSections, ra, dec]);
+  }, [
+    selectedTarget.ra,
+    selectedTarget.dec,
+    selectedTarget.name,
+    sourceMode,
+    forceFullResolutionKey,
+    selectedSectionId,
+    readyInstalledSections,
+    ra,
+    dec,
+    selectedSource,
+    debouncedAperture.r,
+    debouncedAperture.inR,
+    debouncedAperture.outR,
+    probedPixel?.x,
+    probedPixel?.y,
+  ]);
 
   const activeSpectrum: SpectrumSource = useMemo(() => {
     if (liveSpectrum) return liveSpectrum;
     return {
       wavelengthsUm: [],
       flux: [],
-      badge: liveStatus === 'loading' ? '[Loading Archive Spectrum…]' : liveStatus === 'error' ? '[Spectrum Unavailable]' : '[No Archive Data]',
+      fidelity: 'broadband_6_interpolated',
+      badge:
+        liveStatus === 'loading'
+          ? '[Extracting Spectrum…]'
+          : liveStatus === 'error'
+            ? '[Spectrum Unavailable]'
+            : '[No Archive Data]',
     };
   }, [liveSpectrum, liveStatus]);
 
@@ -664,19 +831,32 @@ export const MolecularIceStudio: React.FC = () => {
       ? activeSpectrum.wavelengthsUm.filter((_, i) => activeSpectrum.coverage?.[i])
       : activeSpectrum.wavelengthsUm;
     const flux = activeSpectrum.coverage
-      ? activeSpectrum.flux.filter((_, i) => activeSpectrum.coverage?.[i] && Number.isFinite(activeSpectrum.flux[i]))
+      ? activeSpectrum.flux.filter(
+          (_, i) => activeSpectrum.coverage?.[i] && Number.isFinite(activeSpectrum.flux[i])
+        )
       : activeSpectrum.flux;
     if (wavelengths.length < 5) {
       return {
-        wavelengthsUm: wavelengths, flux, continuum: [], tau: [], ratioPercent: null,
+        wavelengthsUm: wavelengths,
+        flux,
+        continuum: [],
+        tau: [],
+        ratioPercent: null,
         brownDwarfNotice: null,
-        bands: ICE_BANDS.map((band) => ({ key: band.key, species: band.species, centerUm: band.centerUm, aValue: band.aValue, integratedTauCm1: null, columnDensity: null, suppressed: true })),
+        bands: ICE_BANDS.map((band) => ({
+          key: band.key,
+          species: band.species,
+          centerUm: band.centerUm,
+          aValue: band.aValue,
+          integratedTauCm1: null,
+          columnDensity: null,
+          suppressed: true,
+        })),
       };
     }
     return analyzeIceProfile(selectedTarget, wavelengths, flux);
   }, [activeSpectrum, selectedTarget]);
 
-  // A sky-annulus selection has no background-star continuum; never report N_ice for it.
   const effectiveSolution = useMemo(() => {
     if (selectedSource !== 'sky') return solution;
     return {
@@ -690,7 +870,60 @@ export const MolecularIceStudio: React.FC = () => {
       ratioPercent: null,
     };
   }, [selectedSource, solution]);
+
   const skySelected = selectedSource === 'sky';
+  const h2oDensity = effectiveSolution.bands.find((b) => b.key === 'h2o')?.columnDensity ?? null;
+  const co2Density = effectiveSolution.bands.find((b) => b.key === 'co2')?.columnDensity ?? null;
+  const maxBandTau = useMemo(
+    () => solution.tau.reduce((mx, v) => (Number.isFinite(v) ? Math.max(mx, v) : mx), 0),
+    [solution.tau]
+  );
+  const iceDetected =
+    !skySelected &&
+    !effectiveSolution.brownDwarfNotice &&
+    activeSpectrum.fidelity === 'true_102_ch' &&
+    ((h2oDensity !== null && h2oDensity >= 1e16) || (co2Density !== null && co2Density >= 1e15) || maxBandTau >= 0.08);
+
+  // Sync Ice Studio verdict back into Active Case
+  useEffect(() => {
+    const targetKey =
+      sourceMode === 'installed' && activeInstalledSection
+        ? activeInstalledSection.section_id
+        : `${selectedTarget.ra.toFixed(4)},${selectedTarget.dec.toFixed(4)}`;
+    let summary = 'Awaiting 102-ch spectrum';
+    if (effectiveSolution.brownDwarfNotice) {
+      summary = 'CH₄ brown dwarf (no solid ice)';
+    } else if (skySelected) {
+      summary = 'Inspecting sky ring glow';
+    } else if (activeSpectrum.fidelity !== 'true_102_ch') {
+      summary = '6-band preview (extract 102-ch for ice)';
+    } else if (iceDetected && h2oDensity !== null) {
+      summary = `Ice detected · CO₂/H₂O ${effectiveSolution.ratioPercent?.toFixed(0) ?? '—'}%`;
+    } else if (solution.wavelengthsUm.length >= 5) {
+      summary = 'Clear sightline (no solid ice)';
+    }
+    setCaseFindings(
+      {
+        iceSummary: summary,
+        iceDetected,
+        iceRatioPercent: effectiveSolution.ratioPercent,
+      },
+      targetKey
+    );
+  }, [
+    sourceMode,
+    activeInstalledSection,
+    selectedTarget.ra,
+    selectedTarget.dec,
+    effectiveSolution.brownDwarfNotice,
+    effectiveSolution.ratioPercent,
+    skySelected,
+    activeSpectrum.fidelity,
+    iceDetected,
+    h2oDensity,
+    solution.wavelengthsUm.length,
+    setCaseFindings,
+  ]);
 
   const toggleBand = (key: IceKey) => {
     setActiveBands((previous) =>
@@ -700,7 +933,11 @@ export const MolecularIceStudio: React.FC = () => {
 
   const selectedBands = effectiveSolution.bands.filter((band) => activeBands.includes(band.key));
   const maxTau = Math.max(0.4, ...solution.tau.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)));
-  const maxFlux = Math.max(1e-6, ...solution.flux.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)));
+  const maxFlux = Math.max(
+    1e-6,
+    ...solution.flux.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)),
+    ...solution.continuum.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0))
+  );
   const transmission = useMemo(
     () => solution.tau.map((value) => Math.exp(-Math.max(0, value))),
     [solution.tau]
@@ -719,6 +956,24 @@ export const MolecularIceStudio: React.FC = () => {
       .filter((pt): pt is string => pt !== null)
       .join(' ');
   };
+
+  // Highlight ice-absorption area (where baseline > observed) in Starlight vs Baseline mode
+  const absorptionShadingPath = useMemo(() => {
+    if (mode !== 'raw' || solution.wavelengthsUm.length < 2) return '';
+    const upperPts: string[] = [];
+    const lowerPts: string[] = [];
+    solution.wavelengthsUm.forEach((wave, index) => {
+      const f = solution.flux[index];
+      const c = solution.continuum[index];
+      if (!Number.isFinite(wave) || !Number.isFinite(f) || !Number.isFinite(c)) return;
+      const x = 54 + ((wave - 0.75) / 4.25) * 842;
+      const yCont = Math.max(16, Math.min(330, 330 - (Math.max(0, c) / maxFlux) * 290));
+      const yObs = Math.max(16, Math.min(330, 330 - (Math.max(0, Math.min(f, c)) / maxFlux) * 290));
+      upperPts.push(`${x.toFixed(1)},${yCont.toFixed(1)}`);
+      lowerPts.unshift(`${x.toFixed(1)},${yObs.toFixed(1)}`);
+    });
+    return upperPts.length >= 2 ? [...upperPts, ...lowerPts].join(' ') : '';
+  }, [mode, solution.wavelengthsUm, solution.flux, solution.continuum, maxFlux]);
 
   const handleSubmitLedger = useCallback(async () => {
     setLedgerState('submitting');
@@ -742,8 +997,8 @@ export const MolecularIceStudio: React.FC = () => {
       : `SPLICES point-source ice ledger: N(H2O) = ${formatColumnDensity(nH2O?.columnDensity ?? null)} cm^-2, ` +
         `N(CO2) = ${formatColumnDensity(nCO2?.columnDensity ?? null)} cm^-2, ` +
         `CO2/H2O = ${effectiveSolution.ratioPercent?.toFixed(2) ?? '—'}%. ` +
-        `Aperture ${apertureRadius.toFixed(1)} px; sky annulus ` +
-        `${annulusInner.toFixed(1)}-${annulusOuter.toFixed(1)} px; ` +
+        `Aperture ${apertureRadiusPx.toFixed(1)} px; sky annulus ` +
+        `${skyAnnulusInnerPx.toFixed(1)}-${skyAnnulusOuterPx.toFixed(1)} px; ` +
         `source ${activeSpectrum.badge}.`;
     try {
       const response = await fetch('/api/forum/threads', {
@@ -770,536 +1025,626 @@ export const MolecularIceStudio: React.FC = () => {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setLedgerState('logged');
-      setLedgerNote('Molecular ice ledger entry submitted to /explore/discussions.');
+      setLedgerNote('Molecular ice ledger entry submitted to Community Discussions (#ice_source).');
     } catch {
       setLedgerState('offline');
       setLedgerNote('Forum endpoint unavailable — failed to submit ledger entry.');
     }
-  }, [effectiveSolution, apertureRadius, annulusInner, annulusOuter, activeSpectrum.badge, selectedTarget]);
+  }, [
+    effectiveSolution,
+    apertureRadiusPx,
+    skyAnnulusInnerPx,
+    skyAnnulusOuterPx,
+    activeSpectrum.badge,
+    selectedTarget,
+  ]);
 
   return (
-    <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-background font-sans text-xs text-foreground">
-      {/* LEFT PANEL — SPLICES Background Target Explorer */}
-      <section className="flex w-full lg:w-[44%] xl:w-[46%] lg:min-w-[360px] shrink-0 lg:shrink flex-col gap-3 lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-border p-3 sm:p-4">
-        <header className="flex items-start justify-between gap-2 border-b border-border pb-2.5">
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground">
-              SPLICES Background Target Explorer
-            </h2>
-            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-              Point-source pencil beam · ice mapping behind molecular clouds
-            </p>
-          </div>
-          <Badge variant={activeSpectrum.badge.startsWith('[Installed]') || activeSpectrum.badge.startsWith('[IRSA Live') ? 'sky' : 'amber'} className="font-mono text-[10px]">
-            {activeSpectrum.badge}
-          </Badge>
-        </header>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background font-sans text-xs text-foreground">
+      <ActiveCaseBanner activeLens="ice" sectionLabel={selectedTarget.name} />
 
-        <div className="space-y-2 rounded-sm border border-border bg-card px-3 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[11px] font-medium text-foreground">Spectrum source</div>
-              <div className="text-[10px] text-muted-foreground">
-                {sourceMode === 'installed'
-                  ? readyInstalledSections.length === 0
-                    ? 'No installed section available — switch to Live /api/spectrum or install a section in Navigator'
-                    : liveStatus === 'loading'
-                      ? 'Loading installed section spectrum…'
-                      : liveStatus === 'ready'
-                        ? `${liveSpectrum?.badge || 'Installed'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
-                        : 'Installed spectrum unavailable'
-                  : liveStatus === 'loading'
-                    ? 'Fetching HDU 6 WCS-WAVE spectrum…'
-                    : liveStatus === 'ready'
-                      ? `${liveSpectrum?.badge || 'Spectrum'} · ${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 channels`
-                      : 'Live spectrum unavailable'}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        {/* LEFT PANEL — Sightline Selection & Live Spatial Aperture */}
+        <section className="flex w-full lg:w-[380px] xl:w-[410px] shrink-0 flex-col gap-3 lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-border p-3 sm:p-4">
+          <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                  1. Pick Sightline Source
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  Test real molecular-cloud stars or your active cutout
+                </div>
               </div>
+              <Select
+                value={sourceMode}
+                onChange={(event) => {
+                  setSourceMode(event.target.value as 'installed' | 'live');
+                  setForceFullResolutionKey(null);
+                  setLedgerState('idle');
+                  setLedgerNote('');
+                }}
+                sizeVariant="xs"
+                aria-label="Ice spectrum source mode"
+              >
+                <option value="installed">Installed Cutouts ({readyInstalledSections.length})</option>
+                <option value="live">Icy Cloud Sightlines</option>
+              </Select>
             </div>
-            <Select
-              value={sourceMode}
-              onChange={(event) => {
-                setSourceMode(event.target.value as 'installed' | 'live');
-                setLedgerState('idle');
-                setLedgerNote('');
-              }}
-              sizeVariant="xs"
-            >
-              <option value="installed">Installed ({readyInstalledSections.length})</option>
-              <option value="live">Live /api/spectrum</option>
-            </Select>
-          </div>
-          {currentSelectedSection && (
-            <UseCurrentSelectedButton
-              section={currentSelectedSection}
-              isActive={
-                sourceMode === 'installed' &&
-                selectedSectionId === currentSelectedSection.section_id
-              }
-              colorPalette={colorPalette}
-              onSelect={handleSelectInstalledSection}
-            />
-          )}
-          {sourceMode === 'installed' && readyInstalledSections.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsCutoutBrowserOpen(true)}
-              aria-label="Browse installed sections for Ice Studio"
-              className="inline-flex h-7 max-w-[230px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 hover:bg-emerald-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
-              title="Browse installed cutouts with previews"
-            >
-              <span className="truncate">
-                {activeInstalledSection ? activeInstalledSection.label : 'Browse Installed'}
-              </span>
-              <span className="shrink-0 font-mono text-[10px] text-emerald-300/90">
-                ({readyInstalledSections.length})
-              </span>
-            </button>
-          )}
-          {sourceMode === 'live' && (
-            <Select
-              id="splices-target"
-              value={selectedLiveId}
-              onChange={(event) => {
-                setSelectedLiveId(event.target.value);
-                setLedgerState('idle');
-                setLedgerNote('');
-              }}
-              sizeVariant="xs"
-              aria-label="Choose live coordinate target"
-            >
-              {liveTargets.map((target) => (
-                <option key={target.id} value={target.id}>
-                  {target.name} ({target.ra.toFixed(3)}°, {target.dec >= 0 ? '+' : ''}{target.dec.toFixed(3)}°)
-                </option>
-              ))}
-            </Select>
-          )}
-        </div>
 
-        <div className="rounded-sm border border-border bg-card p-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-mono text-sm font-semibold text-foreground">{selectedTarget.name}</div>
-              <div className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-                RA {selectedTarget.ra.toFixed(5)}° · Dec {selectedTarget.dec >= 0 ? '+' : ''}
-                {selectedTarget.dec.toFixed(5)}°
-              </div>
-            </div>
-            <Badge variant={selectedTarget.isBrownDwarf ? 'amber' : 'emerald'} className="font-mono">
-              {selectedTarget.isBrownDwarf
-                ? 'CH4 gas guard'
-                : `${liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102 ch`}
-            </Badge>
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-            <div className="rounded-sm bg-secondary p-2">
-              <div className="text-muted-foreground">Catalog</div>
-              <div className="mt-0.5 font-mono text-[10px] leading-tight text-foreground">{selectedTarget.catalog}</div>
-            </div>
-            <div className="rounded-sm bg-secondary p-2">
-              <div className="text-muted-foreground">Environment</div>
-              <div className="mt-0.5 font-mono text-[10px] leading-tight text-foreground">{selectedTarget.environment}</div>
-            </div>
-          </div>
-        </div>
-
-        <fieldset className="rounded-sm border border-border bg-card p-3">
-          <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Target selection controls
-          </legend>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-1.5 text-[11px]">
-              <input
-                type="radio"
-                name="ice-source"
-                checked={selectedSource === 'primary'}
-                onChange={() => setSelectedSource('primary')}
-                className="accent-primary"
+            {currentSelectedSection && (
+              <UseCurrentSelectedButton
+                section={currentSelectedSection}
+                isActive={
+                  sourceMode === 'installed' &&
+                  !forceFullResolutionKey &&
+                  selectedSectionId === currentSelectedSection.section_id
+                }
+                colorPalette={colorPalette}
+                onSelect={handleSelectInstalledSection}
               />
-              Primary background star
-            </label>
-            <label className="flex items-center gap-1.5 text-[11px]">
-              <input
-                type="radio"
-                name="ice-source"
-                checked={selectedSource === 'sky'}
-                onChange={() => setSelectedSource('sky')}
-                className="accent-primary"
-              />
-              Sky annulus
-            </label>
-          </div>
-          {selectedSource === 'sky' && (
-            <p className="mt-2 rounded-sm border border-amber-500/30 bg-amber-500/10 p-2 text-[10px] text-amber-300">
-              Sky annulus pixels are background-only. Solid-ice A-values require a bright background star;
-              switch back to Primary background star to compute N_ice.
-            </p>
-          )}
-        </fieldset>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <label className="text-[11px] text-muted-foreground">
-            Aperture radius [px]
-            <Input
-              type="number"
-              min={0.5}
-              max={4}
-              step={0.1}
-              value={apertureRadius}
-              onChange={(event) => setApertureRadius(Number(event.target.value))}
-              className="mt-1"
-            />
-          </label>
-          <label className="text-[11px] text-muted-foreground">
-            Sky annulus inner [px]
-            <Input
-              type="number"
-              min={1}
-              max={8}
-              step={0.1}
-              value={annulusInner}
-              onChange={(event) => setAnnulusInner(Number(event.target.value))}
-              className="mt-1"
-            />
-          </label>
-          <label className="text-[11px] text-muted-foreground">
-            Sky annulus outer [px]
-            <Input
-              type="number"
-              min={2}
-              max={12}
-              step={0.1}
-              value={annulusOuter}
-              onChange={(event) => setAnnulusOuter(Number(event.target.value))}
-              className="mt-1"
-            />
-          </label>
-        </div>
-
-        <div className="rounded-sm border border-border bg-card p-3">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Line-of-sight geometry
-          </h3>
-          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono text-[11px] tabular-nums">
-            <dt className="text-muted-foreground">Fitted stellar continuum</dt>
-            <dd className="text-right text-foreground">4th-order Chebyshev</dd>
-            <dt className="text-muted-foreground">Continuum windows</dt>
-            <dd className="text-right text-foreground">2.1–2.4, 3.7–3.9 µm</dd>
-            <dt className="text-muted-foreground">Covered channels</dt>
-            <dd className="text-right text-foreground">
-              {liveSpectrum?.coverage?.filter(Boolean).length ?? 0}/102
-            </dd>
-            <dt className="text-muted-foreground">Source badge</dt>
-            <dd className="flex justify-end">
-              <Badge
-                variant={activeSpectrum.badge.startsWith('[Installed]') || activeSpectrum.badge.startsWith('[IRSA Live') ? 'sky' : 'amber'}
-                className="font-mono text-[9px]"
-              >
-                {activeSpectrum.badge}
-              </Badge>
-            </dd>
-          </dl>
-        </div>
-
-        {solution.brownDwarfNotice && (
-          <div className="rounded-sm border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-200">
-            <div className="mb-1 font-semibold uppercase tracking-wide text-amber-300">
-              Photospheric CH4 — solid-ice guardrail
-            </div>
-            {solution.brownDwarfNotice}
-          </div>
-        )}
-
-        {skySelected && (
-          <div className="rounded-sm border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-200">
-            <div className="mb-1 font-semibold uppercase tracking-wide text-amber-300">
-              Sky annulus selected
-            </div>
-            The local sky annulus contains no background-star continuum. Solid-ice column densities and
-            the CO2/H2O ratio are suppressed until “Primary background star” is selected.
-          </div>
-        )}
-
-        <div className="mt-auto rounded-sm border border-border bg-card p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Pencil-beam photometry
-            </span>
-            <Badge variant="muted" className="font-mono">
-              {selectedSource === 'primary' ? 'POINT SOURCE' : 'SKY ONLY'}
-            </Badge>
-          </div>
-          <p className="mt-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground">
-            Aperture {apertureRadius.toFixed(1)} px · sky annulus{' '}
-            {annulusInner.toFixed(1)}–{annulusOuter.toFixed(1)} px · archive 102-channel extraction
-          </p>
-        </div>
-      </section>
-
-      {/* RIGHT PANEL — Optical Depth Lab */}
-      <section className="flex min-w-0 flex-1 flex-col gap-3 lg:overflow-y-auto p-3 sm:p-4">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2.5">
-          <div>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground">
-              Optical Depth Lab
-            </h2>
-            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-              τ(λ) = −ln(F_obs / F_cont) · ν = 10000 / λ · N_ice = (1/A) ∫ τ(ν) dν
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">Mode</span>
-            <div className="flex overflow-hidden rounded-sm border border-border">
-              <button
-                type="button"
-                onClick={() => setMode('raw')}
-                className={`px-2.5 py-1 text-[11px] transition-colors ${
-                  mode === 'raw' ? 'bg-primary/20 text-primary' : 'bg-background text-muted-foreground'
-                }`}
-              >
-                Raw MJy/sr
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('transmission')}
-                className={`px-2.5 py-1 text-[11px] transition-colors ${
-                  mode === 'transmission'
-                    ? 'bg-primary/20 text-primary'
-                    : 'bg-background text-muted-foreground'
-                }`}
-              >
-                Transmission F/F_cont
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('tau')}
-                className={`px-2.5 py-1 text-[11px] transition-colors ${
-                  mode === 'tau' ? 'bg-primary/20 text-primary' : 'bg-background text-muted-foreground'
-                }`}
-              >
-                Optical Depth τ
-              </button>
-            </div>
-            <Button variant="outline" size="xs" onClick={() => setTab('navigator')}>
-              Back to Sky Search
-            </Button>
-          </div>
-        </header>
-
-        <div className="rounded-sm border border-border bg-black/60 p-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            {ICE_BANDS.map((band) => (
-              <button
-                key={band.key}
-                type="button"
-                onClick={() => toggleBand(band.key)}
-                aria-pressed={activeBands.includes(band.key)}
-                className={`rounded-sm border px-2 py-0.5 font-mono text-[10px] transition-colors ${
-                  activeBands.includes(band.key)
-                    ? 'border-primary/50 bg-primary/15 text-primary'
-                    : 'border-border bg-background text-muted-foreground'
-                }`}
-              >
-                {band.species} {band.centerUm.toFixed(2)} µm
-              </button>
-            ))}
-          </div>
-          <svg className="h-[290px] w-full" viewBox="0 0 940 350" preserveAspectRatio="none" role="img" aria-label="Optical depth versus wavelength">
-            {[0.2, 0.4, 0.6, 0.8].map((fraction) => {
-              const y = 330 - fraction * 290;
-              return (
-                <g key={fraction}>
-                  <line x1="54" y1={y} x2="896" y2={y} stroke="#262626" strokeWidth="1" />
-                  <text x="48" y={y + 3} textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
-                    {mode === 'tau'
-                      ? (fraction * maxTau).toFixed(2)
-                      : mode === 'transmission'
-                        ? fraction.toFixed(1)
-                        : (fraction * maxFlux).toFixed(3)}
-                  </text>
-                </g>
-              );
-            })}
-            <line x1="54" y1="330" x2="896" y2="330" stroke="#737373" strokeWidth="1" />
-            <line x1="54" y1="16" x2="54" y2="330" stroke="#737373" strokeWidth="1" />
-            {[1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0].map((wave) => {
-              const x = 54 + ((wave - 0.75) / 4.25) * 842;
-              return (
-                <g key={wave}>
-                  <line x1={x} y1="16" x2={x} y2="330" stroke="#1f1f1f" strokeWidth="1" />
-                  <text x={x} y="346" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
-                    {wave.toFixed(1)}
-                  </text>
-                </g>
-              );
-            })}
-            {ICE_BANDS.filter((band) => activeBands.includes(band.key)).map((band) => {
-              const x = 54 + ((band.centerUm - 0.75) / 4.25) * 842;
-              return (
-                <g key={band.key}>
-                  <line x1={x} y1="16" x2={x} y2="330" stroke={band.color} strokeDasharray="3,3" opacity={0.55} />
-                  <text x={x + 4} y="28" fill={band.color} fontSize="9" fontFamily="monospace">
-                    {band.species}
-                  </text>
-                </g>
-              );
-            })}
-            {solution.wavelengthsUm.length === 0 ? (
-              <text x="474" y="175" textAnchor="middle" fill="#A3A3A3" fontSize="12" fontFamily="monospace">
-                {liveStatus === 'loading'
-                  ? 'Loading archive 102-channel spectrum…'
-                  : 'No archive spectrum loaded — select an installed section or Live /api/spectrum'}
-              </text>
-            ) : mode === 'tau' ? (
-              <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.tau, maxTau)} />
-            ) : mode === 'transmission' ? (
-              <polyline fill="none" stroke="#34d399" strokeWidth="1.8" points={plotPoints(transmission, 1.0)} />
-            ) : (
-              <>
-                <polyline fill="none" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="4,3" points={plotPoints(solution.continuum, maxFlux)} />
-                <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.flux, maxFlux)} />
-              </>
             )}
-            <text x="474" y="14" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
-              Wavelength λ [µm] · D1 → D6 (0.75–5.00 µm)
-            </text>
-          </svg>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="muted" className="font-mono">
-            Aperture {apertureRadius.toFixed(1)} px
-          </Badge>
-          <Badge variant="muted" className="font-mono">
-            Sky {annulusInner.toFixed(1)}–{annulusOuter.toFixed(1)} px
-          </Badge>
-          <Badge variant="sky" className="font-mono">
-            τ mode: 4th-order Chebyshev
-          </Badge>
-          <Badge
-            variant={activeSpectrum.badge.startsWith('[Installed]') || activeSpectrum.badge.startsWith('[IRSA Live') ? 'sky' : 'amber'}
-            className="font-mono"
-          >
-            {activeSpectrum.badge}
-          </Badge>
-        </div>
+            {sourceMode === 'installed' && readyInstalledSections.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsCutoutBrowserOpen(true)}
+                aria-label="Browse installed sections for Ice Studio"
+                className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 hover:bg-emerald-900/50 cursor-pointer"
+              >
+                <span className="truncate">
+                  {activeInstalledSection ? activeInstalledSection.label : 'Browse Installed'}
+                </span>
+                <span className="shrink-0 font-mono text-[10px] text-emerald-300/90">
+                  ({readyInstalledSections.length})
+                </span>
+              </button>
+            )}
 
-        <div className="rounded-sm border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Column density quantifications
-            </h3>
-            <Badge variant={effectiveSolution.ratioPercent === null ? 'amber' : 'emerald'} className="font-mono">
-              CO2 / H2O ={' '}
-              {effectiveSolution.ratioPercent === null
-                ? 'suppressed'
-                : `${effectiveSolution.ratioPercent.toFixed(2)}%`}
-            </Badge>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] border-collapse text-left font-mono text-[11px] tabular-nums">
-              <thead className="border-b border-border bg-secondary font-sans text-[10px] text-muted-foreground">
-                <tr>
-                  <th className="py-1.5 pl-3">Molecular ruler</th>
-                  <th className="py-1.5">λ center</th>
-                  <th className="py-1.5">Band</th>
-                  <th className="py-1.5 text-right">Lab A [cm/molec]</th>
-                  <th className="py-1.5 text-right">∫ τ(ν) dν [cm⁻¹]</th>
-                  <th className="py-1.5 pr-3 text-right">N_ice [cm⁻²]</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {effectiveSolution.bands
-                  .filter((band) => activeBands.includes(band.key))
-                  .map((band) => {
-                    const definition = ICE_BANDS.find((item) => item.key === band.key);
+            {/* Quick Icy Cloud Sightline Chips */}
+            <div className="pt-1 border-t border-border/60 space-y-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-cyan-300">
+                Recommended Cosmic Ice Sightlines
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {ICE_CLOUD_SIGHTLINES.map((site) => {
+                  const isActive =
+                    sourceMode === 'live' && selectedLiveId === site.id;
                   return (
-                    <tr key={band.key} className={band.suppressed ? 'text-muted-foreground' : 'text-foreground'}>
-                      <td className="py-1.5 pl-3 font-sans">
-                        <span className="font-medium">{band.species}</span>
-                        <span className="ml-1 text-[10px] text-muted-foreground">{definition?.label}</span>
-                      </td>
-                      <td className="py-1.5 text-primary">{band.centerUm.toFixed(2)} µm</td>
-                      <td className="py-1.5 text-muted-foreground">{definition?.detector}</td>
-                      <td className="py-1.5 text-right text-muted-foreground">{band.aValue.toExponential(1)}</td>
-                      <td className="py-1.5 text-right">{band.integratedTauCm1 === null ? '—' : band.integratedTauCm1.toFixed(3)}</td>
-                      <td className={`py-1.5 pr-3 text-right ${band.suppressed ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {band.suppressed ? 'suppressed' : formatColumnDensity(band.columnDensity)}
-                      </td>
-                    </tr>
+                    <button
+                      key={site.id}
+                      type="button"
+                      onClick={() => handleSelectIcySightline(site)}
+                      className={`rounded-md border px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer ${
+                        isActive
+                          ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-100'
+                          : 'border-border bg-secondary/70 text-neutral-300 hover:border-cyan-500/40 hover:text-white'
+                      }`}
+                      title={site.environment}
+                    >
+                      {site.name.split(' (')[0]}
+                    </button>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
-            <span>{selectedBands.length} active molecular rulers · trapezoidal integration in wavenumber space</span>
-            <span>Literature A-values: Gerakines 1995 · Boogert 2000 · Jiang 1975 · Kerkhof 1999</span>
-          </div>
-        </div>
+              </div>
+            </div>
 
-        {effectiveSolution.brownDwarfNotice || skySelected ? (
-          <div className="rounded-sm border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] text-amber-200">
-            <div className="font-semibold text-amber-300">Solid-ice column densities suppressed</div>
-            <p className="mt-1 leading-relaxed">
-              {effectiveSolution.brownDwarfNotice ||
-                'Sky-annulus selection has no background-star continuum; select the primary background star to compute N_ice.'}
+            {sourceMode === 'live' && (
+              <Select
+                id="splices-target"
+                value={selectedLiveId}
+                onChange={(event) => {
+                  const chosen = liveTargets.find((t) => t.id === event.target.value);
+                  if (chosen) handleSelectIcySightline(chosen);
+                }}
+                sizeVariant="xs"
+                aria-label="Choose live coordinate target"
+              >
+                {liveTargets.map((target) => (
+                  <option key={target.id} value={target.id}>
+                    {target.name} ({target.ra.toFixed(2)}°, {target.dec >= 0 ? '+' : ''}
+                    {target.dec.toFixed(2)}°)
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+
+          <CutoutProbeMinimap
+            section={sourceMode === 'installed' ? activeInstalledSection : null}
+            colorPalette={colorPalette}
+            probePixel={probedPixel ?? { x: 24, y: 24 }}
+            fallbackRa={selectedTarget.ra}
+            fallbackDec={selectedTarget.dec}
+            fallbackFovArcsec={fovArcsec}
+            onSelectPixel={handleMinimapPixelSelect}
+            showApertureOverlay={sourceMode === 'installed'}
+            apertureRadiusPx={apertureRadiusPx}
+            annulusInnerPx={skyAnnulusInnerPx}
+            annulusOuterPx={skyAnnulusOuterPx}
+            caption="Click background star to place green aperture & sky ring"
+          />
+
+          {/* Interactive Aperture & Sky Annulus Photometry */}
+          <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                2. Star Aperture vs Sky Ring
+              </span>
+              <Badge variant={selectedSource === 'primary' ? 'emerald' : 'amber'} className="font-mono text-[10px]">
+                {selectedSource === 'primary' ? 'Star − Sky' : 'Sky Ring Only'}
+              </Badge>
+            </div>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+                <input
+                  type="radio"
+                  name="ice-source"
+                  checked={selectedSource === 'primary'}
+                  onChange={() => setSelectedSource('primary')}
+                  className="accent-emerald-400"
+                />
+                Background star (sky subtracted)
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+                <input
+                  type="radio"
+                  name="ice-source"
+                  checked={selectedSource === 'sky'}
+                  onChange={() => setSelectedSource('sky')}
+                  className="accent-amber-400"
+                />
+                Sky ring (dust check)
+              </label>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <label className="text-[10px] text-muted-foreground">
+                Star r [px]
+                <Input
+                  type="number"
+                  min={0.5}
+                  max={4}
+                  step={0.1}
+                  value={apertureRadiusPx}
+                  onChange={(event) =>
+                    setIceAperture(
+                      Math.max(0.5, Math.min(4, Number(event.target.value) || 1.5)),
+                      skyAnnulusInnerPx,
+                      skyAnnulusOuterPx
+                    )
+                  }
+                  className="mt-1"
+                />
+              </label>
+              <label className="text-[10px] text-muted-foreground">
+                Sky in [px]
+                <Input
+                  type="number"
+                  min={1}
+                  max={8}
+                  step={0.1}
+                  value={skyAnnulusInnerPx}
+                  onChange={(event) => {
+                    const nextIn = Math.max(1, Math.min(8, Number(event.target.value) || 3));
+                    setIceAperture(apertureRadiusPx, nextIn, Math.max(nextIn + 0.5, skyAnnulusOuterPx));
+                  }}
+                  className="mt-1"
+                />
+              </label>
+              <label className="text-[10px] text-muted-foreground">
+                Sky out [px]
+                <Input
+                  type="number"
+                  min={2}
+                  max={12}
+                  step={0.1}
+                  value={skyAnnulusOuterPx}
+                  onChange={(event) =>
+                    setIceAperture(
+                      apertureRadiusPx,
+                      skyAnnulusInnerPx,
+                      Math.max(skyAnnulusInnerPx + 0.5, Math.min(12, Number(event.target.value) || 5))
+                    )
+                  }
+                  className="mt-1"
+                />
+              </label>
+            </div>
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              Shining starlight behind dust reveals ice absorption; subtracting the dashed amber sky ring removes surrounding glow.
             </p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="rounded-sm border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">N(H2O)</div>
-              <div className="mt-1 font-mono text-sm text-sky-300">
-                {formatColumnDensity(effectiveSolution.bands.find((band) => band.key === 'h2o')?.columnDensity ?? null)}
-              </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">molecules cm⁻²</div>
-            </div>
-            <div className="rounded-sm border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">N(CO2)</div>
-              <div className="mt-1 font-mono text-sm text-amber-300">
-                {formatColumnDensity(effectiveSolution.bands.find((band) => band.key === 'co2')?.columnDensity ?? null)}
-              </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">molecules cm⁻²</div>
-            </div>
-            <div className="rounded-sm border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">CO2 / H2O</div>
-              <div className="mt-1 font-mono text-sm text-emerald-300">
-                {effectiveSolution.ratioPercent === null ? '—' : `${effectiveSolution.ratioPercent.toFixed(2)}%`}
-              </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">ice abundance ratio</div>
-            </div>
-          </div>
-        )}
+        </section>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border bg-card p-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Submit Molecular Ice Ledger Entry
-            </div>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">
-              Zero-auth observer headers · channel #ice_source · data honesty badge preserved.
-            </p>
-          </div>
-          <Button
-            onClick={handleSubmitLedger}
-            disabled={ledgerState === 'submitting' || selectedSource === 'sky' || solution.wavelengthsUm.length < 5}
-            variant={effectiveSolution.brownDwarfNotice ? 'outline' : 'default'}
+        {/* RIGHT PANEL — Flashlight Through Cosmic Ice Lab */}
+        <section className="flex min-w-0 flex-1 flex-col gap-3 lg:overflow-y-auto p-3 sm:p-4">
+          {/* Plain-English Ice Verdict Hero */}
+          <div
+            className={`rounded-xl border p-3.5 ${
+              effectiveSolution.brownDwarfNotice || skySelected
+                ? 'border-amber-500/40 bg-amber-950/20'
+                : iceDetected
+                  ? 'border-cyan-500/40 bg-gradient-to-r from-cyan-950/35 via-card to-card'
+                  : 'border-border bg-card'
+            }`}
           >
-            {ledgerState === 'submitting' ? 'Submitting…' : ledgerState === 'logged' ? 'Ledger entry logged' : 'Submit ledger entry'}
-          </Button>
-        </div>
-        {ledgerNote && (
-          <p className={`text-[10px] ${ledgerState === 'offline' ? 'text-amber-400' : 'text-emerald-400'}`}>
-            {ledgerNote}
-          </p>
-        )}
-      </section>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-cyan-300">
+                    3. Cosmic Ice Verdict
+                  </span>
+                  <Badge
+                    variant={activeSpectrum.fidelity === 'true_102_ch' ? 'sky' : 'amber'}
+                    className="font-mono text-[10px]"
+                  >
+                    {activeSpectrum.fidelity === 'true_102_ch'
+                      ? 'True 102-Ch HDU 6'
+                      : '6-Band Cutout Preview'}
+                  </Badge>
+                  <Badge variant="muted" className="font-mono text-[10px]">
+                    {activeSpectrum.badge}
+                  </Badge>
+                </div>
+
+                <h2 className="mt-1 text-base font-semibold text-foreground">
+                  {effectiveSolution.brownDwarfNotice
+                    ? 'False-Positive Guard: Methane Gas (Brown Dwarf), Not Solid Ice'
+                    : skySelected
+                      ? 'Inspecting Empty Sky Ring (Surrounding Cloud Glow Only)'
+                      : activeSpectrum.fidelity !== 'true_102_ch'
+                        ? `Broadband Preview for ${selectedTarget.name}`
+                        : iceDetected
+                          ? `Solid Ice Absorption Detected along ${selectedTarget.name}`
+                          : `Clear Sightline: No Solid Ice Above Noise at ${selectedTarget.name}`}
+                </h2>
+
+                <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                  {effectiveSolution.brownDwarfNotice ? (
+                    <>
+                      The 3.32 µm dip comes from warm atmospheric CH₄ gas inside {selectedTarget.name}. Solid-ice column densities are suppressed so you don&apos;t log a brown dwarf as frozen cloud ice.
+                    </>
+                  ) : skySelected ? (
+                    <>
+                      Sky-ring pixels carry background cloud emission without a bright star behind them, so solid-ice column densities are suppressed until you switch back to Background Star.
+                    </>
+                  ) : activeSpectrum.fidelity !== 'true_102_ch' ? (
+                    <>
+                      Installed cutout cubes only store 6 broad bands (D1–D6), which smooth out narrow CO₂ (4.27 µm) and CO (4.67 µm) ice dips. Extract the full 102-channel HDU 6 spectrum from IRSA to measure solid ice accurately.
+                    </>
+                  ) : iceDetected ? (
+                    <>
+                      Starlight dipped noticeably inside laboratory ice bands (CO₂ / H₂O ={' '}
+                      <strong className="text-cyan-300">
+                        {effectiveSolution.ratioPercent?.toFixed(1) ?? '—'}%
+                      </strong>
+                      ).
+                    </>
+                  ) : (
+                    <>
+                      {selectedTarget.environment}. Try an icy molecular-cloud sightline (Elias 16, J110621, M42 Orion) to see deep H₂O & CO₂ absorption troughs.
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {activeSpectrum.fidelity !== 'true_102_ch' && (
+                  <Button
+                    size="xs"
+                    onClick={() => {
+                      const coordKey = `${selectedTarget.ra.toFixed(5)},${selectedTarget.dec.toFixed(5)}`;
+                      setForceFullResolutionKey(coordKey);
+                    }}
+                  >
+                    Extract Full 102-Ch (IRSA)
+                  </Button>
+                )}
+                {effectiveSolution.brownDwarfNotice && (
+                  <Button variant="outline" size="xs" onClick={() => setTab('spectral')}>
+                    Inspect Brown Dwarf in Spectrum →
+                  </Button>
+                )}
+                <Button variant="outline" size="xs" onClick={() => setTab('comparator')}>
+                  ← Time-Domain
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive 3-Step Visual Story Chart */}
+          <div className="rounded-lg border border-border bg-black/60 p-3 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex overflow-hidden rounded-sm border border-border">
+                <button
+                  type="button"
+                  onClick={() => setMode('raw')}
+                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                    mode === 'raw' ? 'bg-primary/20 text-primary' : 'bg-background text-muted-foreground hover:text-white'
+                  }`}
+                >
+                  1. Starlight vs. Baseline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('transmission')}
+                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                    mode === 'transmission'
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : 'bg-background text-muted-foreground hover:text-white'
+                  }`}
+                >
+                  2. % Light Passing Through
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('tau')}
+                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                    mode === 'tau' ? 'bg-sky-500/20 text-sky-300' : 'bg-background text-muted-foreground hover:text-white'
+                  }`}
+                >
+                  3. Ice Absorption Spikes (τ)
+                </button>
+              </div>
+
+              {/* Explicit Chart Legend */}
+              <div className="flex flex-wrap items-center gap-3 text-[10px] text-neutral-300">
+                {mode === 'raw' && (
+                  <>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-amber-400" />
+                      Expected clean starlight
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-0.5 w-4 bg-sky-400" />
+                      Observed starlight
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-2.5 w-3 rounded-xs bg-sky-400/25 border border-sky-400/40" />
+                      Absorbed by ice
+                    </span>
+                  </>
+                )}
+                {mode === 'transmission' && (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-300">
+                    <span className="inline-block h-0.5 w-4 bg-emerald-400" />
+                    Fraction transmitted (1.0 = unblocked starlight)
+                  </span>
+                )}
+                {mode === 'tau' && (
+                  <span className="inline-flex items-center gap-1.5 text-sky-300">
+                    <span className="inline-block h-0.5 w-4 bg-sky-400" />
+                    Optical depth τ (taller peak = thicker ice layer)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {ICE_BANDS.map((band) => (
+                <button
+                  key={band.key}
+                  type="button"
+                  onClick={() => toggleBand(band.key)}
+                  aria-pressed={activeBands.includes(band.key)}
+                  className={`rounded-sm border px-2 py-0.5 font-mono text-[10px] transition-colors cursor-pointer ${
+                    activeBands.includes(band.key)
+                      ? 'border-primary/50 bg-primary/15 text-primary'
+                      : 'border-border bg-background text-muted-foreground'
+                  }`}
+                >
+                  {band.species} {band.centerUm.toFixed(2)} µm
+                </button>
+              ))}
+            </div>
+
+            <svg
+              className="h-[260px] sm:h-[290px] w-full"
+              viewBox="0 0 940 350"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="Optical depth and continuum comparison versus wavelength"
+            >
+              {[0.2, 0.4, 0.6, 0.8].map((fraction) => {
+                const y = 330 - fraction * 290;
+                return (
+                  <g key={fraction}>
+                    <line x1="54" y1={y} x2="896" y2={y} stroke="#262626" strokeWidth="1" />
+                    <text x="48" y={y + 3} textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
+                      {mode === 'tau'
+                        ? (fraction * maxTau).toFixed(2)
+                        : mode === 'transmission'
+                          ? `${Math.round(fraction * 100)}%`
+                          : (fraction * maxFlux).toFixed(3)}
+                    </text>
+                  </g>
+                );
+              })}
+              <line x1="54" y1="330" x2="896" y2="330" stroke="#737373" strokeWidth="1" />
+              <line x1="54" y1="16" x2="54" y2="330" stroke="#737373" strokeWidth="1" />
+              {[1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0].map((wave) => {
+                const x = 54 + ((wave - 0.75) / 4.25) * 842;
+                return (
+                  <g key={wave}>
+                    <line x1={x} y1="16" x2={x} y2="330" stroke="#1f1f1f" strokeWidth="1" />
+                    <text x={x} y="346" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
+                      {wave.toFixed(1)}
+                    </text>
+                  </g>
+                );
+              })}
+              {ICE_BANDS.filter((band) => activeBands.includes(band.key)).map((band) => {
+                const x = 54 + ((band.centerUm - 0.75) / 4.25) * 842;
+                return (
+                  <g key={band.key}>
+                    <line x1={x} y1="16" x2={x} y2="330" stroke={band.color} strokeDasharray="3,3" opacity={0.55} />
+                    <text x={x + 4} y="28" fill={band.color} fontSize="9" fontFamily="monospace">
+                      {band.species}
+                    </text>
+                  </g>
+                );
+              })}
+              {solution.wavelengthsUm.length === 0 ? (
+                <text x="474" y="175" textAnchor="middle" fill="#A3A3A3" fontSize="12" fontFamily="monospace">
+                  {liveStatus === 'loading'
+                    ? liveStatusMessage || 'Extracting archive spectrum…'
+                    : 'No archive spectrum loaded — select an installed cutout or Icy Cloud Sightline'}
+                </text>
+              ) : mode === 'tau' ? (
+                <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.tau, maxTau)} />
+              ) : mode === 'transmission' ? (
+                <polyline fill="none" stroke="#34d399" strokeWidth="1.8" points={plotPoints(transmission, 1.0)} />
+              ) : (
+                <>
+                  {absorptionShadingPath && (
+                    <polygon points={absorptionShadingPath} fill="rgba(56, 189, 248, 0.18)" />
+                  )}
+                  <polyline
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="1.4"
+                    strokeDasharray="4,3"
+                    points={plotPoints(solution.continuum, maxFlux)}
+                  />
+                  <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.flux, maxFlux)} />
+                </>
+              )}
+              <text x="474" y="14" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
+                Wavelength λ [µm] · 0.75–5.00 µm
+              </text>
+            </svg>
+          </div>
+
+          {/* Human-Readable Column Density Summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="rounded-lg border border-border bg-card p-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Water Ice — N(H₂O)</div>
+              <div className="mt-1 font-mono text-base font-semibold text-sky-300">
+                {effectiveSolution.brownDwarfNotice || skySelected
+                  ? 'suppressed'
+                  : formatColumnDensity(h2oDensity)}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">molecules cm⁻² · 3.05 µm</div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Dry Ice — N(CO₂)</div>
+              <div className="mt-1 font-mono text-base font-semibold text-amber-300">
+                {effectiveSolution.brownDwarfNotice || skySelected
+                  ? 'suppressed'
+                  : formatColumnDensity(co2Density)}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">molecules cm⁻² · 4.27 µm</div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">CO₂ / H₂O Ratio</div>
+              <div className="mt-1 font-mono text-base font-semibold text-emerald-300">
+                {effectiveSolution.ratioPercent === null ? 'suppressed' : `${effectiveSolution.ratioPercent.toFixed(1)}%`}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">typical dense cloud: 15–25%</div>
+            </div>
+          </div>
+
+          {/* Toggleable Lab Quantification Details */}
+          <div className="rounded-lg border border-border bg-card">
+            <button
+              type="button"
+              onClick={() => setShowLabDetails((prev) => !prev)}
+              className="flex w-full items-center justify-between px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <span>Lab Quantification Table ({selectedBands.length} Ice Bands & Lab A-Values)</span>
+              <span className="font-mono text-[10px]">{showLabDetails ? 'Hide −' : 'Inspect +'}</span>
+            </button>
+            {showLabDetails && (
+              <div className="border-t border-border">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] border-collapse text-left font-mono text-[11px] tabular-nums">
+                    <thead className="border-b border-border bg-secondary font-sans text-[10px] text-muted-foreground">
+                      <tr>
+                        <th className="py-1.5 pl-3">Molecular ruler</th>
+                        <th className="py-1.5">λ center</th>
+                        <th className="py-1.5">Band</th>
+                        <th className="py-1.5 text-right">Lab A [cm/molec]</th>
+                        <th className="py-1.5 text-right">∫ τ(ν) dν [cm⁻¹]</th>
+                        <th className="py-1.5 pr-3 text-right">N_ice [cm⁻²]</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {effectiveSolution.bands
+                        .filter((band) => activeBands.includes(band.key))
+                        .map((band) => {
+                          const definition = ICE_BANDS.find((item) => item.key === band.key);
+                          return (
+                            <tr key={band.key} className={band.suppressed ? 'text-muted-foreground' : 'text-foreground'}>
+                              <td className="py-1.5 pl-3 font-sans">
+                                <span className="font-medium">{band.species}</span>
+                                <span className="ml-1 text-[10px] text-muted-foreground">{definition?.label}</span>
+                              </td>
+                              <td className="py-1.5 text-primary">{band.centerUm.toFixed(2)} µm</td>
+                              <td className="py-1.5 text-muted-foreground">{definition?.detector}</td>
+                              <td className="py-1.5 text-right text-muted-foreground">{band.aValue.toExponential(1)}</td>
+                              <td className="py-1.5 text-right">
+                                {band.integratedTauCm1 === null ? '—' : band.integratedTauCm1.toFixed(3)}
+                              </td>
+                              <td className={`py-1.5 pr-3 text-right ${band.suppressed ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                {band.suppressed ? 'suppressed' : formatColumnDensity(band.columnDensity)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
+                  <span>4th-order Chebyshev continuum (2.1–2.4, 3.7–3.9 µm) · τ(λ) = −ln(F_obs / F_cont)</span>
+                  <span>A-values: Gerakines 1995 · Boogert 2000 · Jiang 1975 · Kerkhof 1999</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Community SPLICES Ice Ledger Submission */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card p-3">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                Log SPLICES Ice Finding
+              </div>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                Publishes aperture photometry & CO₂/H₂O ratio to Community Discussions (#ice_source).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {ledgerState === 'logged' && (
+                <Button variant="outline" size="xs" onClick={() => setTab('discussions')}>
+                  View in Discussions →
+                </Button>
+              )}
+              <Button
+                onClick={handleSubmitLedger}
+                disabled={ledgerState === 'submitting' || selectedSource === 'sky' || solution.wavelengthsUm.length < 5}
+                variant={effectiveSolution.brownDwarfNotice ? 'outline' : 'default'}
+              >
+                {ledgerState === 'submitting'
+                  ? 'Submitting…'
+                  : ledgerState === 'logged'
+                    ? 'Ledger entry logged'
+                    : 'Submit ledger entry'}
+              </Button>
+            </div>
+          </div>
+          {ledgerNote && (
+            <p className={`text-[10px] ${ledgerState === 'offline' ? 'text-amber-400' : 'text-emerald-400'}`}>
+              {ledgerNote}
+            </p>
+          )}
+        </section>
+      </div>
+
       <InstalledCutoutsModal
         isOpen={isCutoutBrowserOpen}
         onClose={handleCloseCutoutBrowser}
         sections={readyInstalledSections}
-        activeSectionId={selectedSectionId || null}
+        activeSectionId={activeInstalledSection?.section_id || null}
         currentComparatorSectionId={currentSelectedSection?.section_id || null}
         colorPalette={colorPalette}
         subtitle="Preview calibrated SPHEREx cutout stamps and select one for molecular ice analysis."
