@@ -30,17 +30,19 @@ export const AdminLayout: React.FC = () => {
   const getActiveTab = () => {
     if (currentPath.includes('/admin/boundaries')) return 'boundaries';
     if (currentPath.includes('/admin/internals')) return 'internals';
-    if (currentPath.includes('/admin/exports') || currentPath.includes('/admin/triage')) return 'exports';
+    if (currentPath.includes('/admin/triage')) return 'triage';
+    if (currentPath.includes('/admin/exports')) return 'exports';
     return 'dynamics';
   };
 
   const activeTab = getActiveTab();
 
   const navItems = [
-    { id: 'dynamics', label: '1. SFT & LoRA Training Studio', path: '/admin/dynamics' },
-    { id: 'boundaries', label: '2. AI Knowledge & Relationship Graph', path: '/admin/boundaries' },
-    { id: 'internals', label: '3. Live AI Identification Co-Pilot', path: '/admin/internals' },
-    { id: 'exports', label: '4. TRL Dataset & Export Hub', path: '/admin/exports' },
+    { id: 'dynamics', label: '1. Fine-Tuning & Model Specs', path: '/admin/dynamics' },
+    { id: 'exports', label: '2. Datasets & Class Buckets', path: '/admin/exports' },
+    { id: 'internals', label: '3. Live Model Identification', path: '/admin/internals' },
+    { id: 'boundaries', label: '4. Embedding & Decision Space', path: '/admin/boundaries' },
+    { id: 'triage', label: '5. Hard-Negative Triage', path: '/admin/triage' },
   ];
 
   return (
@@ -51,14 +53,14 @@ export const AdminLayout: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-primary" />
             <h1 className="text-xs font-semibold tracking-wide text-foreground">
-              Spectra AI Lab · SFTTrainer & Mission Control
+              Spectra AI Lab · Fine-Tuning &amp; Mission Control
             </h1>
           </div>
           <Badge variant="sky" className="font-mono text-[10px]">
-            PyTorch + HF TRL
+            LoRA Fine-Tuning Workstation
           </Badge>
-          <Badge variant="amber" className="font-mono text-[10px]">
-            Read-Only Demo Mode
+          <Badge variant="emerald" className="font-mono text-[10px]">
+            CPU Adapter Engine · $0 GPU
           </Badge>
         </div>
 
