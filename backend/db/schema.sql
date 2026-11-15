@@ -180,3 +180,4 @@ CREATE TABLE IF NOT EXISTS installed_sections (
 
 CREATE INDEX IF NOT EXISTS idx_installed_sections_spatial ON installed_sections (ra, dec);
 CREATE INDEX IF NOT EXISTS idx_installed_sections_status ON installed_sections (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_installed_sections_status_updated ON installed_sections (status, updated_at DESC);
