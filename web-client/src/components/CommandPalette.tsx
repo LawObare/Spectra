@@ -50,85 +50,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     }
   }, [isOpen]);
 
-  // Build Palette Actions
+  // Build Palette Actions (Navigation & /admin pinned first above the 24-star catalog)
   const actions: PaletteAction[] = [
-    // 1. Searchable Sky Catalog Targets
-    ...SEARCHABLE_SKY_CATALOG.map((item) => {
-      const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === item.id);
-      return {
-        id: `catalog-${item.id}`,
-        category: 'Sky Catalog' as const,
-        label: `${item.name} — ${item.description}`,
-        shortcut: `${item.ra.toFixed(2)}°, ${item.dec >= 0 ? '+' : ''}${item.dec.toFixed(2)}°`,
-        perform: () => {
-          setCoordinates(
-            item.ra,
-            item.dec,
-            item.name,
-            isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
-          );
-          setRa(item.ra);
-          setDec(item.dec);
-          if (item.preset) {
-            setRgbPreset(item.preset);
-            setPreset(item.preset);
-          }
-          onClose();
-        },
-      };
-    }),
-
-    // 2. Workspace Tabs
-    {
-      id: 'tab-navigator',
-      category: 'Workspaces',
-      label: 'Open Tab 1: Sky & spectral image search (stitched LVF footprints)',
-      perform: () => {
-        setTab('navigator');
-        onClose();
-      },
-    },
-    {
-      id: 'tab-comparator',
-      category: 'Workspaces',
-      label: 'Open Tab 2: Time-domain comparator (multi-epoch Float32 blinker)',
-      perform: () => {
-        setTab('comparator');
-        onClose();
-      },
-    },
-    {
-      id: 'tab-spectral',
-      category: 'Workspaces',
-      label: 'Open Tab 3: Spectrophotometric lab (102-channel WCS-WAVE)',
-      perform: () => {
-        setTab('spectral');
-        onClose();
-      },
-    },
-    {
-      id: 'tab-ice',
-      category: 'Workspaces',
-      label: 'Open Tab 4: Molecular and ice studio (laboratory A-values)',
-      perform: () => {
-        setTab('ice');
-        onClose();
-      },
-    },
-    {
-      id: 'tab-discussions',
-      category: 'Workspaces',
-      label: 'Open Tab 5: Observation discussions and archive cross-match',
-      perform: () => {
-        setTab('discussions');
-        onClose();
-      },
-    },
+    // 1. Mission Control (/admin), Walkthrough & Workspaces (immediately visible on Ctrl+K)
     {
       id: 'nav-admin-mission-control',
       category: 'Workspaces',
       label: 'Open Mission Control (/admin — AI Fine-Tuning & Triage)',
-      shortcut: '/admin',
+      shortcut: 'Ctrl+Shift+A',
       perform: () => {
         onClose();
         navigate('/admin/dynamics');
@@ -137,18 +66,64 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'help-walkthrough',
       category: 'Viewer Controls',
-      label: 'Help: Start Interactive Walkthrough (Explore -> /admin)',
+      label: 'Start Interactive Walkthrough (25-Card Beginner Guide)',
+      shortcut: 'Guide',
       perform: () => {
         onClose();
         startFullTour();
       },
     },
+    {
+      id: 'tab-navigator',
+      category: 'Workspaces',
+      label: 'Tab 1: Sky Map & Cutout Installer (Navigator)',
+      perform: () => {
+        setTab('navigator');
+        onClose();
+      },
+    },
+    {
+      id: 'tab-comparator',
+      category: 'Workspaces',
+      label: 'Tab 2: Time-Domain Blinker (Spot Moving & Flashing Stars)',
+      perform: () => {
+        setTab('comparator');
+        onClose();
+      },
+    },
+    {
+      id: 'tab-spectral',
+      category: 'Workspaces',
+      label: 'Tab 3: 102-Band Spectrum (Identify Infrared Color Barcodes)',
+      perform: () => {
+        setTab('spectral');
+        onClose();
+      },
+    },
+    {
+      id: 'tab-ice',
+      category: 'Workspaces',
+      label: 'Tab 4: Ice Studio (Detect Frozen Water & CO₂ in Clouds)',
+      perform: () => {
+        setTab('ice');
+        onClose();
+      },
+    },
+    {
+      id: 'tab-discussions',
+      category: 'Workspaces',
+      label: 'Tab 5: Community Forum (Notes & Discoveries)',
+      perform: () => {
+        setTab('discussions');
+        onClose();
+      },
+    },
 
-    // 3. Render Modes
+    // 2. Render Modes
     {
       id: 'mode-blink',
       category: 'Render Modes',
-      label: 'Set comparator to blink mode',
+      label: 'Set comparator to Temporal Blink mode',
       shortcut: '1',
       perform: () => {
         setRenderMode('blink');
@@ -158,7 +133,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'mode-diff',
       category: 'Render Modes',
-      label: 'Set comparator to wavelength-matched difference mode',
+      label: 'Set comparator to Motion Diff mode (old vs. new subtraction)',
       shortcut: '2',
       perform: () => {
         setRenderMode('difference');
@@ -168,7 +143,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     {
       id: 'mode-coadd',
       category: 'Render Modes',
-      label: 'Set comparator to inverse-variance co-add stack',
+      label: 'Set comparator to Deep Co-Add stack',
       shortcut: '3',
       perform: () => {
         setRenderMode('coadd');
@@ -176,7 +151,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       },
     },
 
-    // 4. Viewer Controls
+    // 3. Viewer Controls
     {
       id: 'ctrl-play-pause',
       category: 'Viewer Controls',
@@ -207,6 +182,32 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
         onClose();
       },
     },
+
+    // 4. Searchable Sky Catalog Targets
+    ...SEARCHABLE_SKY_CATALOG.map((item) => {
+      const isBench = MANDATORY_BENCHMARKS.some((b) => b.id === item.id);
+      return {
+        id: `catalog-${item.id}`,
+        category: 'Sky Catalog' as const,
+        label: `${item.name} — ${item.description}`,
+        shortcut: `${item.ra.toFixed(2)}°, ${item.dec >= 0 ? '+' : ''}${item.dec.toFixed(2)}°`,
+        perform: () => {
+          setCoordinates(
+            item.ra,
+            item.dec,
+            item.name,
+            isBench ? '[NASA Benchmark (Pre-cached)]' : '[IRSA Live (spherex_qr2)]'
+          );
+          setRa(item.ra);
+          setDec(item.dec);
+          if (item.preset) {
+            setRgbPreset(item.preset);
+            setPreset(item.preset);
+          }
+          onClose();
+        },
+      };
+    }),
   ];
 
   // Check if query is a direct coordinate string
@@ -315,7 +316,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-background/80 backdrop-blur-sm pt-[14dvh] select-none"
+      className="fixed inset-0 z-[80] flex items-start justify-center bg-background/80 backdrop-blur-sm pt-[14dvh] select-none"
       onClick={onClose}
     >
       <div
@@ -348,7 +349,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
-            placeholder="Enter RA/Dec, SIMBAD object name, workspace, or command..."
+            placeholder="Open /admin, jump tabs, or type a star name / sky coordinate..."
             className="w-full bg-transparent py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none"
           />
           <kbd className="rounded-sm border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
