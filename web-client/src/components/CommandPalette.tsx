@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTelemetryStore } from '../store/useTelemetryStore';
+import { useWalkthroughStore } from '../store/useWalkthroughStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import {
   MANDATORY_BENCHMARKS,
@@ -36,6 +38,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
   } = useTelemetryStore();
 
   const { setTab, setRa, setDec, setPreset } = useSpectraUrlState();
+  const navigate = useNavigate();
+  const startFullTour = useWalkthroughStore((s) => s.startFullTour);
 
   // Focus input when opened
   useEffect(() => {
@@ -118,6 +122,25 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       perform: () => {
         setTab('discussions');
         onClose();
+      },
+    },
+    {
+      id: 'nav-admin-mission-control',
+      category: 'Workspaces',
+      label: 'Open Mission Control (/admin — AI Fine-Tuning & Triage)',
+      shortcut: '/admin',
+      perform: () => {
+        onClose();
+        navigate('/admin/dynamics');
+      },
+    },
+    {
+      id: 'help-walkthrough',
+      category: 'Viewer Controls',
+      label: 'Help: Start Interactive Walkthrough (Explore -> /admin)',
+      perform: () => {
+        onClose();
+        startFullTour();
       },
     },
 
