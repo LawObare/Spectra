@@ -66,16 +66,17 @@ const CATALOG_PROPER_MOTIONS: Record<string, { pmRaMasYr: number; pmDecMasYr: nu
 
 // Progressive Multi-Order HEALPix (HiPS) All-Sky Survey Configurations (Aladin Lite v3 Native WebGL2)
 type PhotographicSurveyId =
-  | 'legacy-dr10'
   | 'allwise-color'
-  | 'sdss-color'
   | '2mass-color'
   | 'dss2-color'
-  | 'spitzer-color';
+  | 'sdss-color'
+  | 'spitzer-color'
+  | 'galex-color';
 
 interface PhotographicSurveySpec {
   id: PhotographicSurveyId;
   hipsUrl: string;
+  cooFrame?: 'equatorial' | 'galactic';
   maxOrder?: number;
   imgFormat?: 'jpeg' | 'png';
   tileSize?: number;
@@ -86,49 +87,70 @@ interface PhotographicSurveySpec {
 
 const PHOTOGRAPHIC_SURVEYS: PhotographicSurveySpec[] = [
   {
-    id: 'legacy-dr10',
-    hipsUrl: 'https://alaskybis.cds.unistra.fr/DESI-legacy-surveys/DR10/CDS_P_DESI-Legacy-Surveys_DR10_color',
-    label: 'DESI Legacy Survey DR10',
-    badge: 'Optical g/r/i/z · resolved galaxies · partial sky',
-    description: 'DESI Legacy Survey DR10 calibrated color imagery for resolving extended galaxies where the survey has coverage.',
-  },
-  {
     id: 'allwise-color',
-    hipsUrl: 'https://skies.esac.esa.int/AllWISEColor',
+    hipsUrl: 'https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1',
+    cooFrame: 'equatorial',
     maxOrder: 8,
     imgFormat: 'jpeg',
     tileSize: 512,
     label: 'AllWISE Infrared',
-    badge: 'WISE 3.4 & 4.6 µm (All-Sky)',
-    description: 'All-sky WISE infrared HiPS. Its 6–12 arcsec source resolution can blend point sources at a 6° field on typical displays.',
-  },
-  {
-    id: 'sdss-color',
-    hipsUrl: 'https://skies.esac.esa.int/SDSS9Color',
-    label: 'SDSS Optical (High-Res)',
-    badge: 'SDSS DR9 · 0.4″/px · JPEG · ~36% sky',
-    description: 'High-resolution SDSS DR9 color imagery (about 0.4 arcsec/pixel); coverage is limited to about 36% of the sky and tiles use JPEG.',
+    badge: 'WISE 3.4, 4.6 & 22 µm (All-Sky)',
+    description: 'All-sky WISE infrared HiPS served via NASA/IPAC IRSA. Its 6–12 arcsec source resolution can blend point sources at wide fields.',
   },
   {
     id: '2mass-color',
-    hipsUrl: 'https://skies.esac.esa.int/2MASSColor',
+    hipsUrl: 'https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color',
+    cooFrame: 'equatorial',
+    maxOrder: 9,
+    imgFormat: 'jpeg',
+    tileSize: 512,
     label: '2MASS Near-IR',
     badge: 'J/H/Ks (All-Sky, Order 9)',
-    description: 'Two Micron All-Sky Survey (J, H, Ks) resolving crisp stellar populations and Galactic structure.',
+    description: 'Two Micron All-Sky Survey (J, H, Ks) via NASA/IPAC IRSA resolving crisp stellar populations and Galactic structure.',
   },
   {
     id: 'dss2-color',
-    hipsUrl: 'https://skies.esac.esa.int/DSSColor',
+    hipsUrl: 'https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color',
+    cooFrame: 'equatorial',
+    maxOrder: 9,
+    imgFormat: 'jpeg',
+    tileSize: 512,
     label: 'DSS2 Optical',
     badge: 'Palomar/UKST (All-Sky, Order 9)',
-    description: 'Digitized Sky Survey full-sphere optical photographic mosaic covering 100% of both hemispheres.',
+    description: 'Digitized Sky Survey full-sphere optical photographic mosaic via NASA/IPAC IRSA covering both hemispheres.',
+  },
+  {
+    id: 'sdss-color',
+    hipsUrl: 'https://irsa.ipac.caltech.edu/data/hips/CDS/SDSS/DR9/color',
+    cooFrame: 'equatorial',
+    maxOrder: 10,
+    imgFormat: 'jpeg',
+    tileSize: 512,
+    label: 'SDSS Optical (High-Res)',
+    badge: 'SDSS DR9 · ~36% sky',
+    description: 'High-resolution SDSS DR9 optical color imagery via NASA/IPAC IRSA covering the Sloan northern/equatorial footprint.',
   },
   {
     id: 'spitzer-color',
-    hipsUrl: 'https://skies.esac.esa.int/Spitzer/IRAC1_bright_ISM',
+    hipsUrl: 'https://irsa.ipac.caltech.edu/data/hips/CDS/SPITZER/IRAC1',
+    cooFrame: 'galactic',
+    maxOrder: 9,
+    imgFormat: 'jpeg',
+    tileSize: 512,
     label: 'Spitzer 3.6 µm',
-    badge: 'IRAC Ch 1 (Deep IR, Order 10 PNG)',
-    description: 'Spitzer Space Telescope high-sensitivity infrared array camera mapping Galactic dust and star formation regions in lossless PNG tiles.',
+    badge: 'IRAC Ch 1 (Galactic Plane)',
+    description: 'Spitzer Space Telescope infrared array camera via NASA/IPAC IRSA mapping Galactic dust and star formation regions.',
+  },
+  {
+    id: 'galex-color',
+    hipsUrl: 'https://irsa.ipac.caltech.edu/data/hips/CDS/GALEX/GR6-03-2014/AIS-Color',
+    cooFrame: 'equatorial',
+    maxOrder: 8,
+    imgFormat: 'jpeg',
+    tileSize: 512,
+    label: 'GALEX Ultraviolet',
+    badge: 'FUV/NUV All-Sky Imaging',
+    description: 'NASA GALEX GR6 All-Sky Imaging Survey color mosaic via NASA/IPAC IRSA highlighting hot stars and active galaxies.',
   },
 ];
 
@@ -565,7 +587,7 @@ export const CelestialNavigator: React.FC = () => {
     }, 25000);
     return A.HiPS(surveySpec.hipsUrl, {
       name: surveySpec.label,
-      cooFrame: 'equatorial',
+      cooFrame: surveySpec.cooFrame ?? 'equatorial',
       maxOrder: surveySpec.maxOrder,
       imgFormat: surveySpec.imgFormat,
       tileSize: surveySpec.tileSize,
@@ -1279,7 +1301,7 @@ export const CelestialNavigator: React.FC = () => {
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladinReady || !aladin) return;
-    if (typeof A.catalogFromVizieR !== 'function') {
+    if (typeof A.catalogFromURL !== 'function') {
       setGaiaStatus('unavailable');
       return;
     }
@@ -1297,16 +1319,19 @@ export const CelestialNavigator: React.FC = () => {
       gaiaMotionOverlayRef.current = motionOverlay;
       aladin.addOverlay(motionOverlay);
 
-      A.catalogFromVizieR(
-        'I/355/gaiadr3',
-        { ra, dec },
-        300 / 3600,
+      const vizierUrl =
+        `https://vizier.cfa.harvard.edu/viz-bin/votable?-source=I/355/gaiadr3` +
+        `&-c=${encodeURIComponent(`${ra} ${dec}`)}` +
+        `&-out.max=50&-c.rd=${(300 / 3600).toFixed(6)}` +
+        `&-out.add=RA_ICRS&-out.add=DE_ICRS&-out.add=pmRA&-out.add=pmDE&-out.add=Gmag&-out.add=s_region&-out.add=s_fov`;
+
+      A.catalogFromURL(
+        vizierUrl,
         {
           name: 'Gaia DR3 · G < 18 · 300 arcsec',
           color: '#FBBF24',
           sourceSize: 6,
           limit: 50,
-          colnames: ['RA_ICRS', 'DE_ICRS', 'pmRA', 'pmDE', 'Gmag'],
           filter: (source: any) => Number(source?.data?.Gmag ?? source?.data?.G) < 18,
         },
         (catalog: any) => {
@@ -1337,7 +1362,8 @@ export const CelestialNavigator: React.FC = () => {
             console.warn('Gaia DR3 query failed:', error);
             setGaiaStatus('unavailable');
           }
-        }
+        },
+        false
       );
     }, 1200);
 
@@ -1355,7 +1381,7 @@ export const CelestialNavigator: React.FC = () => {
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
     if (!aladinReady || !aladin) return;
-    if (typeof A.catalogFromSkyBot !== 'function') {
+    if (typeof A.catalogFromSkyBot !== 'function' || window.location.protocol === 'https:') {
       setSkybotStatus('unavailable');
       return;
     }
