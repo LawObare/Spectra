@@ -182,6 +182,10 @@ def _extract_spectrum_from_tensor_payload(
     py: int | None = None,
     epoch: int | None = None,
     normalize: bool = False,
+    aperture_radius: float | None = None,
+    annulus_inner: float | None = None,
+    annulus_outer: float | None = None,
+    sample_mode: str = "primary",
 ) -> dict[str, Any]:
     """Derive a 102-channel spectrum at (px, py) directly from an installed tensor."""
     header, flux, variance, flags, n_exp = _unpack_tensor_arrays(payload)
@@ -197,25 +201,84 @@ def _extract_spectrum_from_tensor_payload(
     fallback_bands: list[str] = []
     epoch_indices = [max(0, min(n_epochs - 1, epoch))] if epoch is not None else list(range(n_epochs))
 
+    yy, xx = np.ogrid[:h, :w]
+    dist_grid = np.hypot(xx - cx, yy - cy)
+    has_annulus = (
+        annulus_inner is not None
+        and annulus_outer is not None
+        and annulus_outer > annulus_inner
+    )
+    in_annulus = (
+        (dist_grid >= float(annulus_inner)) & (dist_grid <= float(annulus_outer))
+        if has_annulus
+        else (dist_grid >= 3.0) & (dist_grid <= 5.0)
+    )
+    use_aperture = aperture_radius is not None or sample_mode == "sky"
+    eff_aperture = float(aperture_radius) if aperture_radius is not None else 1.5
+    in_aperture = dist_grid <= eff_aperture
+
     for b in range(min(n_bands, 6)):
         weights_sum = 0.0
         weighted_flux = 0.0
         combined_flag = 0
-        for e in epoch_indices:
-            f_val = float(flux[e, b, cy, cx])
-            v_val = float(variance[e, b, cy, cx])
-            flg_val = int(flags[e, b, cy, cx])
-            cnt_val = int(n_exp[e, b, cy, cx])
-            if not math.isfinite(f_val) or cnt_val == 0:
-                continue
-            combined_flag |= flg_val
-            w_inv = 1.0 / max(v_val, 1e-8) if math.isfinite(v_val) and v_val > 0 else 1.0
-            weighted_flux += f_val * w_inv
-            weights_sum += w_inv
+
+        if sample_mode == "sky":
+            ann_ys, ann_xs = np.where(in_annulus)
+            for ny, nx in zip(ann_ys.tolist(), ann_xs.tolist(), strict=False):
+                for e in epoch_indices:
+                    f_val = float(flux[e, b, ny, nx])
+                    v_val = float(variance[e, b, ny, nx])
+                    flg_val = int(flags[e, b, ny, nx])
+                    cnt_val = int(n_exp[e, b, ny, nx])
+                    if not math.isfinite(f_val) or cnt_val == 0:
+                        continue
+                    combined_flag |= flg_val
+                    w_inv = 1.0 / max(v_val, 1e-8) if math.isfinite(v_val) and v_val > 0 else 1.0
+                    weighted_flux += f_val * w_inv
+                    weights_sum += w_inv
+        elif use_aperture:
+            sky_bg = 0.0
+            if has_annulus:
+                ann_vals: list[float] = []
+                ann_ys, ann_xs = np.where(in_annulus)
+                for ny, nx in zip(ann_ys.tolist(), ann_xs.tolist(), strict=False):
+                    for e in epoch_indices:
+                        f_val = float(flux[e, b, ny, nx])
+                        cnt_val = int(n_exp[e, b, ny, nx])
+                        if math.isfinite(f_val) and cnt_val > 0:
+                            ann_vals.append(f_val)
+                if ann_vals:
+                    sky_bg = float(np.median(np.asarray(ann_vals, dtype=np.float64)))
+
+            ap_ys, ap_xs = np.where(in_aperture)
+            for ny, nx in zip(ap_ys.tolist(), ap_xs.tolist(), strict=False):
+                for e in epoch_indices:
+                    f_val = float(flux[e, b, ny, nx])
+                    v_val = float(variance[e, b, ny, nx])
+                    flg_val = int(flags[e, b, ny, nx])
+                    cnt_val = int(n_exp[e, b, ny, nx])
+                    if not math.isfinite(f_val) or cnt_val == 0:
+                        continue
+                    combined_flag |= flg_val
+                    w_inv = 1.0 / max(v_val, 1e-8) if math.isfinite(v_val) and v_val > 0 else 1.0
+                    weighted_flux += (f_val - sky_bg) * w_inv
+                    weights_sum += w_inv
+        else:
+            for e in epoch_indices:
+                f_val = float(flux[e, b, cy, cx])
+                v_val = float(variance[e, b, cy, cx])
+                flg_val = int(flags[e, b, cy, cx])
+                cnt_val = int(n_exp[e, b, cy, cx])
+                if not math.isfinite(f_val) or cnt_val == 0:
+                    continue
+                combined_flag |= flg_val
+                w_inv = 1.0 / max(v_val, 1e-8) if math.isfinite(v_val) and v_val > 0 else 1.0
+                weighted_flux += f_val * w_inv
+                weights_sum += w_inv
 
         # Saturated/masked source cores (bright stars like Barnard's Star or R Draconis)
         # can have n_exp=0 / NaN at the exact center pixel; recover flux from unmasked PSF wings.
-        if weights_sum <= 0.0:
+        if weights_sum <= 0.0 and sample_mode != "sky":
             for radius in (1, 2, 3, 4):
                 y_lo, y_hi = max(0, cy - radius), min(h, cy + radius + 1)
                 x_lo, x_hi = max(0, cx - radius), min(w, cx + radius + 1)
@@ -327,7 +390,15 @@ def _extract_spectrum_from_tensor_payload(
             "covered_channels": sum(channel_cov),
             "channel_count": TOTAL_SPHEREX_CHANNELS,
             "aperture_fallback_bands": fallback_bands,
-            "method": "Installed Section Tensor (6-band inverse-variance)",
+            "spectral_fidelity": "broadband_6_interpolated",
+            "sample_mode": sample_mode,
+            "aperture_radius_px": aperture_radius,
+            "annulus_px": [annulus_inner, annulus_outer] if has_annulus else None,
+            "method": (
+                f"Installed Section Tensor ({sample_mode} aperture r={eff_aperture:.1f}px)"
+                if use_aperture
+                else "Installed Section Tensor (6-band inverse-variance)"
+            ),
         },
     }
 
@@ -1144,6 +1215,10 @@ async def get_installed_section_spectrum(
     py: int | None = Query(None, ge=0),
     epoch: int | None = Query(None, ge=0),
     normalize: bool = Query(False),
+    aperture_radius: float | None = Query(None, ge=0.5, le=12.0),
+    annulus_inner: float | None = Query(None, ge=1.0, le=16.0),
+    annulus_outer: float | None = Query(None, ge=1.5, le=20.0),
+    sample_mode: str = Query("primary", pattern="^(primary|sky)$"),
 ) -> dict[str, Any]:
     """Return the 102-channel spectrum for an installed section (or probed pixel)."""
     pool = await _get_pool(request)
@@ -1172,15 +1247,28 @@ async def get_installed_section_spectrum(
                 py=py,
                 epoch=epoch,
                 normalize=normalize,
+                aperture_radius=aperture_radius,
+                annulus_inner=annulus_inner,
+                annulus_outer=annulus_outer,
+                sample_mode=sample_mode,
             )
         if pool is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
         raise HTTPException(status_code=404, detail=f"Installed section {section_id} not found")
 
     tensor_path = _resolve_existing_tensor_path(section_id, row["tensor_path"])
+    has_spatial_override = (
+        px is not None
+        or py is not None
+        or epoch is not None
+        or aperture_radius is not None
+        or annulus_inner is not None
+        or annulus_outer is not None
+        or sample_mode != "primary"
+    )
 
-    # If caller probes a specific pixel/epoch, compute directly from persisted tensor
-    if (px is not None or py is not None or epoch is not None) and tensor_path:
+    # If caller probes a specific pixel/epoch/aperture, compute directly from persisted tensor
+    if has_spatial_override and tensor_path:
         payload = await asyncio.to_thread(_read_installed_tensor_bytes, tensor_path)
         return _extract_spectrum_from_tensor_payload(
             payload,
@@ -1191,12 +1279,18 @@ async def get_installed_section_spectrum(
             py=py,
             epoch=epoch,
             normalize=normalize,
+            aperture_radius=aperture_radius,
+            annulus_inner=annulus_inner,
+            annulus_outer=annulus_outer,
+            sample_mode=sample_mode,
         )
 
     raw_spec = row["spectrum_json"]
     if raw_spec:
         spec = json.loads(raw_spec) if isinstance(raw_spec, str) else dict(raw_spec)
-        prov = spec.get("provenance") or {}
+        prov = dict(spec.get("provenance") or {})
+        prov.setdefault("spectral_fidelity", "broadband_6_interpolated")
+        spec["provenance"] = prov
         covered = int(prov.get("covered_channels") or 0)
         needs_refresh = covered == 0 or (covered < TOTAL_SPHEREX_CHANNELS and "aperture_fallback_bands" not in prov)
         if not needs_refresh or not tensor_path:
