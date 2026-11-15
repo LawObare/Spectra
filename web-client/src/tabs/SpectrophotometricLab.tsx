@@ -46,11 +46,31 @@ const FLAG_DEFS: Record<number, string> = {
   22: 'GHOST',
 };
 
+const BAND_ANCHOR_UM = [0.93, 1.37, 2.025, 3.12, 4.12, 4.71];
+
+function describeWavelengthZone(lam: number): string {
+  if (Math.abs(lam - 3.32) <= 0.14) return 'Methane (CH₄) gas dip — hallmark of cold brown dwarfs';
+  if (Math.abs(lam - 3.05) <= 0.18) return 'Water ice (H₂O) & steam zone — cold clouds/cool atmospheres carve dips here';
+  if (Math.abs(lam - 4.27) <= 0.12) return 'Dry ice (CO₂) zone — dense molecular-cloud fingerprint';
+  if (Math.abs(lam - 1.6) <= 0.08) return '1.6 µm H⁻ opacity bump — stellar & galaxy peak clue';
+  if (Math.abs(lam - 2.3) <= 0.12) return 'CO bandhead — giant stars & warm circumstellar disks';
+  if (lam < 1.5) return 'Hot starlight zone — bright here if the object is warm (like a sun-like or M star)';
+  if (lam < 3.82) return 'Mid-IR molecule zone — water vapor, methane, and solid ices absorb light here';
+  return 'Cold thermal heat zone — rises here only if the object is very cold (<1,000 K) or dusty';
+}
+
+function formatTemplateDisplayName(rawName: string): string {
+  return rawName
+    .replace(/\s*Variant\s*#\d+/i, ' Family')
+    .replace(/\s*#\d+/g, '')
+    .trim();
+}
+
 const REST_LINES: Array<{ key: string; label: string; lambdaRestUm: number; color: string }> = [
   { key: 'Ha', label: 'Hα', lambdaRestUm: 0.6563, color: '#ef4444' },
   { key: 'OIII', label: '[O III]', lambdaRestUm: 0.5007, color: '#22c55e' },
   { key: 'PaB', label: 'Paβ', lambdaRestUm: 1.282, color: '#38bdf8' },
-  { key: 'HBump', label: '1.6µm H-bump', lambdaRestUm: 1.6, color: '#a78bfa' },
+  { key: 'HBump', label: 'H-bump', lambdaRestUm: 1.6, color: '#a78bfa' },
   { key: 'BrG', label: 'Brγ', lambdaRestUm: 2.166, color: '#f59e0b' },
 ];
 
@@ -506,7 +526,14 @@ export const SpectrophotometricLab: React.FC = () => {
   }, [overlayEpoch, isSpectralBlinkSynced, activeInstalledSection, activeEpochIndex, probedPixel?.x, probedPixel?.y]);
 
   const [colorByMjd, setColorByMjd] = useState(false);
-  const [flagTip, setFlagTip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [hoverInsight, setHoverInsight] = useState<{
+    waveUm: number;
+    detector: string;
+    flux: number;
+    meaning: string;
+    flagText: string;
+  } | null>(null);
+  const [confirmedIdentity, setConfirmedIdentity] = useState<string | null>(null);
   const [similarMatches, setSimilarMatches] = useState<
     Array<{ id?: string; name: string; spectral_class: string; similarity: number; flux_curve: number[] }>
   >([]);
@@ -517,6 +544,7 @@ export const SpectrophotometricLab: React.FC = () => {
   const chartRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
   const spectrumRef = useRef<SpectralChannel[]>([]);
+  const spectralFidelityRef = useRef<SpectralFidelity>(spectralFidelity);
   const colorByMjdRef = useRef(false);
   const specMjdRef = useRef<number[]>([]);
   const mjdRangeRef = useRef<[number, number] | null>(null);
@@ -524,6 +552,10 @@ export const SpectrophotometricLab: React.FC = () => {
   useEffect(() => {
     zRef.current = manualRedshiftZ;
   }, [manualRedshiftZ]);
+  useEffect(() => {
+    spectralFidelityRef.current = spectralFidelity;
+    if (plotRef.current) plotRef.current.redraw(false);
+  }, [spectralFidelity]);
 
   const epochIndex = isSpectralBlinkSynced ? activeEpochIndex : 0;
   const mjd = useMemo(() => {
@@ -675,32 +707,120 @@ export const SpectrophotometricLab: React.FC = () => {
     return Math.abs(meanBase) > 1e-9 ? ((meanEp - meanBase) / Math.abs(meanBase)) * 100 : null;
   }, [overlayEpoch, isSpectralBlinkSynced, epochCompareChannels, spectrum]);
 
-  // Summary facts for Hero Identity Card
+  // Summary facts & live human-readable chart narration
   const spectrumSummary = useMemo(() => {
     const finite = spectrum.filter((c) => Number.isFinite(c.fluxMjySr));
     const flaggedCount = spectrum.filter((c) => c.flag !== 0).length;
     if (finite.length === 0) {
-      return { coveredCount: 0, flaggedCount: 0, peakWaveUm: null as number | null, meanFlux: null as number | null };
+      return {
+        coveredCount: 0,
+        flaggedCount: 0,
+        peakWaveUm: null as number | null,
+        meanFlux: null as number | null,
+        shortMean: null as number | null,
+        longMean: null as number | null,
+        slopeRatio: null as number | null,
+        ch4DipRatio: null as number | null,
+      };
     }
     let peak = finite[0];
     let sum = 0;
+    const shortVals: number[] = [];
+    const longVals: number[] = [];
+    const ch4Vals: number[] = [];
+    const contVals: number[] = [];
     for (const c of finite) {
       sum += c.fluxMjySr;
       if (c.fluxMjySr > peak.fluxMjySr) peak = c;
+      if (c.wavelengthUm <= 1.5) shortVals.push(c.fluxMjySr);
+      if (c.wavelengthUm >= 3.8) longVals.push(c.fluxMjySr);
+      if (c.wavelengthUm >= 3.2 && c.wavelengthUm <= 3.45) ch4Vals.push(c.fluxMjySr);
+      if (c.wavelengthUm >= 2.15 && c.wavelengthUm <= 2.4) contVals.push(c.fluxMjySr);
     }
+    const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    const shortMean = avg(shortVals);
+    const longMean = avg(longVals);
+    const slopeRatio =
+      shortMean !== null && longMean !== null && Math.abs(shortMean) > 1e-9
+        ? longMean / shortMean
+        : null;
+    const ch4Mean = avg(ch4Vals);
+    const contMean = avg(contVals);
+    const ch4DipRatio =
+      ch4Mean !== null && contMean !== null && Math.abs(contMean) > 1e-9
+        ? ch4Mean / contMean
+        : null;
     return {
       coveredCount: finite.length,
       flaggedCount,
       peakWaveUm: peak.wavelengthUm,
       meanFlux: sum / finite.length,
+      shortMean,
+      longMean,
+      slopeRatio,
+      ch4DipRatio,
     };
   }, [spectrum]);
 
-  const topMatch = similarMatches[0] || null;
+  // Deduplicate noisy synthetic "#1234" clones while keeping real named matches
+  const displayMatches = useMemo(() => {
+    const seen = new Set<string>();
+    const cleaned: Array<{
+      id?: string;
+      rawIndex: number;
+      name: string;
+      spectral_class: string;
+      similarity: number;
+    }> = [];
+    similarMatches.forEach((m, rawIndex) => {
+      const cleanName = formatTemplateDisplayName(m.name);
+      const key = `${cleanName.toLowerCase()}::${m.spectral_class.toLowerCase()}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      cleaned.push({
+        id: m.id,
+        rawIndex,
+        name: cleanName,
+        spectral_class: m.spectral_class,
+        similarity: m.similarity,
+      });
+    });
+    return cleaned;
+  }, [similarMatches]);
+
+  const topMatch = displayMatches[0] || null;
   const looksExtragalactic = useMemo(() => {
     const cls = `${topMatch?.spectral_class || ''} ${topMatch?.name || ''}`.toLowerCase();
     return ['galaxy', 'qso', 'agn', 'starburst', 'spiral', 'elliptical', 'z='].some((k) => cls.includes(k));
   }, [topMatch]);
+
+  const liveChartReading = useMemo(() => {
+    if (spectrumSummary.coveredCount === 0) return null;
+    const ratio = spectrumSummary.slopeRatio;
+    const slopeClue =
+      ratio === null
+        ? 'Limited wavelength span covered here — check which detector bands loaded below.'
+        : ratio > 1.3
+          ? `Rises toward 4–5 µm (${ratio.toFixed(1)}× brighter than 1 µm): Very cold heat glow (<1,000 K) or thick dust cocoon — not a normal warm star.`
+          : ratio < 0.7
+            ? `Drops left-to-right (${Math.round((1 - ratio) * 100)}% dimmer by 4–5 µm): Classic warm star cooling off in deep infrared.`
+            : 'Stays fairly level across 1–5 µm: Warm dusty disk, distant star-forming galaxy, or cool red dwarf.';
+    const detailClue =
+      spectralFidelity === 'broadband_6_interpolated'
+        ? 'Preview mode: Only the 6 hollow dots (D1–D6) are direct cutout measurements; sharp gas dips between dots are smoothed until you extract all 102 colors from IRSA.'
+        : spectrumSummary.ch4DipRatio !== null && spectrumSummary.ch4DipRatio < 0.72
+          ? 'Noticeable notch near 3.3 µm: Matches atmospheric methane gas (CH₄) in cold brown dwarfs.'
+          : spectrumSummary.peakWaveUm !== null
+            ? `Strongest light lands near ${spectrumSummary.peakWaveUm.toFixed(2)} µm across ${spectrumSummary.coveredCount} measured wavelength channels.`
+            : 'Full 102-channel HDU 6 extraction active.';
+    const contrastTip =
+      'Try this: Click a different bright star on the cutout image (left) to watch the line slope flip between hot normal stars (↘) and cold/dusty objects (↗).';
+    return { slopeClue, detailClue, contrastTip };
+  }, [spectrumSummary, spectralFidelity]);
+
+  useEffect(() => {
+    setConfirmedIdentity(null);
+  }, [ra, dec, probedPixel?.x, probedPixel?.y, activeInstalledSection?.section_id]);
 
   // Sync live finding back into Active Case
   useEffect(() => {
@@ -708,15 +828,20 @@ export const SpectrophotometricLab: React.FC = () => {
     const targetKey =
       activeInstalledSection?.section_id || `${position.ra.toFixed(4)},${position.dec.toFixed(4)}`;
     let summary = 'No spectrum loaded';
-    if (topMatch) {
+    if (confirmedIdentity) {
+      summary = `Confirmed: ${confirmedIdentity}`;
+    } else if (topMatch) {
       summary = `${topMatch.name} (${(topMatch.similarity * 100).toFixed(0)}%)`;
     } else if (spectrumSummary.coveredCount > 0 && spectrumSummary.peakWaveUm !== null) {
-      summary = `Peak ${spectrumSummary.peakWaveUm.toFixed(2)} µm · ${spectrumSummary.coveredCount}/102 ch`;
+      summary =
+        spectralFidelity === 'broadband_6_interpolated'
+          ? `6-band preview · peak ${spectrumSummary.peakWaveUm.toFixed(2)} µm`
+          : `Peak ${spectrumSummary.peakWaveUm.toFixed(2)} µm · ${spectrumSummary.coveredCount}/102 ch`;
     }
     setCaseFindings(
       {
         spectralSummary: summary,
-        spectralTopClass: topMatch?.spectral_class || null,
+        spectralTopClass: confirmedIdentity || topMatch?.spectral_class || null,
         spectralFidelity,
       },
       targetKey
@@ -727,6 +852,7 @@ export const SpectrophotometricLab: React.FC = () => {
     probeSkyPosition?.dec,
     ra,
     dec,
+    confirmedIdentity,
     topMatch,
     spectrumSummary.coveredCount,
     spectrumSummary.peakWaveUm,
@@ -817,6 +943,32 @@ export const SpectrophotometricLab: React.FC = () => {
           ctx.fill();
         }
       }
+      if (spectralFidelityRef.current === 'broadband_6_interpolated' && spec.length > 0) {
+        ctx.save();
+        for (const anchorUm of BAND_ANCHOR_UM) {
+          let bestPoint: SpectralChannel | null = null;
+          let bestDist = Infinity;
+          for (const ch of spec) {
+            if (!Number.isFinite(ch.fluxMjySr)) continue;
+            const d = Math.abs(ch.wavelengthUm - anchorUm);
+            if (d < bestDist && d < 0.25) {
+              bestDist = d;
+              bestPoint = ch;
+            }
+          }
+          if (!bestPoint) continue;
+          const ax = u.valToPos(bestPoint.wavelengthUm, 'x', true);
+          const ay = u.valToPos(bestPoint.fluxMjySr, 'y', true);
+          ctx.beginPath();
+          ctx.arc(ax, ay, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(251, 191, 36, 0.22)';
+          ctx.fill();
+          ctx.lineWidth = 1.6;
+          ctx.strokeStyle = '#fbbf24';
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
       ctx.strokeStyle = '#f59e0b';
       ctx.lineWidth = 1.2;
       for (let i = 0; i < spec.length; i++) {
@@ -832,13 +984,29 @@ export const SpectrophotometricLab: React.FC = () => {
         ctx.closePath();
         ctx.stroke();
       }
+      // Subtle CH4 3.32 um callout for cold brown dwarfs
+      const xCh4 = u.valToPos(3.32, 'x', true);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(xCh4, u.bbox.top);
+      ctx.lineTo(xCh4, u.bbox.top + u.bbox.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(125, 211, 252, 0.85)';
+      ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
+      ctx.fillText('CH₄', xCh4 + 3, u.bbox.top + 26);
+      ctx.restore();
+
       const z = zRef.current;
-      for (const line of REST_LINES) {
+      REST_LINES.forEach((line, idx) => {
         const obs = line.lambdaRestUm * (1 + z);
-        if (obs < 0.75 || obs > 5.0) continue;
+        if (obs < 0.75 || obs > 5.0) return;
         const x = u.valToPos(obs, 'x', true);
+        const labelY = u.bbox.top + 24 + (idx % 3) * 14;
         ctx.strokeStyle = line.color;
-        ctx.globalAlpha = 0.65;
+        ctx.globalAlpha = 0.6;
         ctx.setLineDash([4, 3]);
         ctx.beginPath();
         ctx.moveTo(x, u.bbox.top);
@@ -848,8 +1016,8 @@ export const SpectrophotometricLab: React.FC = () => {
         ctx.globalAlpha = 1;
         ctx.fillStyle = line.color;
         ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
-        ctx.fillText(`${line.label}`, x + 3, u.bbox.top + 24);
-      }
+        ctx.fillText(`${line.label}`, x + 3, labelY);
+      });
       ctx.restore();
     };
 
@@ -870,8 +1038,8 @@ export const SpectrophotometricLab: React.FC = () => {
         },
       },
       axes: [
-        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Wavelength λ (µm)' },
-        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Brightness (MJy/sr)' },
+        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Color Wavelength λ (µm) · Hot Light → Cold Glow' },
+        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Glow Brightness (MJy/sr)' },
       ],
       series: [
         {},
@@ -880,7 +1048,7 @@ export const SpectrophotometricLab: React.FC = () => {
           stroke: '#ffffff',
           width: 1.8,
           spanGaps: true,
-          points: { show: true, size: 4, fill: '#ffffff', stroke: '#0a0a0a' },
+          points: { show: true, size: 3.5, fill: '#ffffff', stroke: '#0a0a0a' },
         },
         {
           label: 'Active Epoch',
@@ -911,10 +1079,19 @@ export const SpectrophotometricLab: React.FC = () => {
       const rect = plot.over.getBoundingClientRect();
       const idx = plot.posToIdx(e.clientX - rect.left);
       const c = spectrumRef.current[idx];
-      if (c && c.flag) setFlagTip({ x: e.clientX, y: e.clientY, text: flagTooltip(c.flag) });
-      else setFlagTip(null);
+      if (c && Number.isFinite(c.fluxMjySr)) {
+        setHoverInsight({
+          waveUm: c.wavelengthUm,
+          detector: c.detector,
+          flux: c.fluxMjySr,
+          meaning: describeWavelengthZone(c.wavelengthUm),
+          flagText: c.flag ? flagTooltip(c.flag) : '',
+        });
+      } else {
+        setHoverInsight(null);
+      }
     };
-    const onLeave = () => setFlagTip(null);
+    const onLeave = () => setHoverInsight(null);
     plot.over.addEventListener('mousemove', onMove);
     plot.over.addEventListener('mouseleave', onLeave);
 
@@ -1074,7 +1251,7 @@ export const SpectrophotometricLab: React.FC = () => {
           )}
         </aside>
 
-        {/* CENTER COLUMN: Identity Verdict + Chart */}
+        {/* CENTER COLUMN: Identity Verdict + Chart + Live Translation */}
         <section className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800 p-3 sm:p-4 space-y-3">
           {/* Plain-English Verdict Banner */}
           <div className="rounded-xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/35 via-neutral-900/70 to-neutral-900/70 p-3.5">
@@ -1106,34 +1283,38 @@ export const SpectrophotometricLab: React.FC = () => {
                   </span>
                 </div>
                 <div className="mt-1 text-base font-semibold text-white">
-                  {topMatch
-                    ? `Closest match: ${topMatch.name} (${topMatch.spectral_class})`
-                    : spectrumSummary.coveredCount > 0
-                      ? `Infrared signature of ${displayName}`
-                      : spectrumStatus || 'Select a target or click a star pixel'}
+                  {confirmedIdentity
+                    ? `Confirmed: ${confirmedIdentity}`
+                    : topMatch
+                      ? `${spectralFidelity === 'broadband_6_interpolated' ? 'Rough 6-band hint' : 'Closest match'}: ${topMatch.name} (${topMatch.spectral_class})`
+                      : spectrumSummary.coveredCount > 0
+                        ? `Infrared signature of ${displayName}`
+                        : spectrumStatus || 'Select a target or click a star pixel'}
                 </div>
                 <p className="mt-0.5 text-xs text-neutral-300">
                   {topMatch ? (
                     <>
-                      Template match confidence{' '}
+                      Shape match{' '}
                       <strong className="font-mono text-emerald-300">
                         {(topMatch.similarity * 100).toFixed(1)}%
                       </strong>
                       {spectrumSummary.peakWaveUm !== null && (
                         <>
                           {' '}
-                          · Peak brightness near{' '}
+                          · Strongest light near{' '}
                           <strong className="font-mono text-white">
                             {spectrumSummary.peakWaveUm.toFixed(2)} µm
                           </strong>
                         </>
                       )}
-                      .
+                      {spectralFidelity === 'broadband_6_interpolated'
+                        ? ' (6-band sketch compares overall tilt, not narrow gas dips).'
+                        : '.'}
                     </>
                   ) : (
                     <>
                       {spectralFidelity === 'broadband_6_interpolated'
-                        ? 'Preview draws smooth lines between the 6 detector bands at this pixel.'
+                        ? 'Showing 6 broad detector anchor bands connected by straight segments.'
                         : 'Measured natively across 102 infrared wavelength channels.'}
                     </>
                   )}
@@ -1151,34 +1332,72 @@ export const SpectrophotometricLab: React.FC = () => {
                     className="rounded-lg border border-sky-400/50 bg-sky-500/15 hover:bg-sky-500/25 px-2.5 py-1.5 text-xs font-semibold text-sky-200 transition-colors cursor-pointer"
                     title="Fetch native HDU 6 WCS-WAVE 102-channel spectrum from IRSA instead of 6-band cutout interpolation"
                   >
-                    Extract Full 102-Ch (IRSA)
+                    Sharpen to 102 Colors (IRSA)
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={() => setTab('ice')}
-                  className="rounded-lg border border-cyan-400/50 bg-cyan-500/15 hover:bg-cyan-500/25 px-2.5 py-1.5 text-xs font-semibold text-cyan-200 transition-colors cursor-pointer"
+                  className="rounded-lg border border-cyan-400/40 bg-cyan-500/10 hover:bg-cyan-500/20 px-2.5 py-1.5 text-xs font-medium text-cyan-200 transition-colors cursor-pointer"
+                  title="Check if dust/ice in front of a star could explain a mid-infrared slope"
                 >
-                  Check for Cosmic Ice →
+                  Open Ice Studio →
                 </button>
               </div>
             </div>
 
             {spectrumSummary.flaggedCount > 0 && (
               <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-950/25 px-2.5 py-1 text-[11px] text-amber-200">
-                Note: {spectrumSummary.flaggedCount} channel{spectrumSummary.flaggedCount === 1 ? '' : 's'} have detector quality flags (amber triangles — hover point for details).
+                Note: {spectrumSummary.flaggedCount} channel{spectrumSummary.flaggedCount === 1 ? '' : 's'} carry detector quality flags (amber triangles — hover any point below for its meaning).
               </div>
             )}
+          </div>
+
+          {/* 3-Shape Visual Cheat Sheet */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+            <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
+              <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
+                <path d="M3 5 L18 11 L41 20" fill="none" stroke="#38bdf8" strokeWidth="2" />
+              </svg>
+              <div className="min-w-0 leading-tight">
+                <div className="font-semibold text-sky-200">Warm Star (↘)</div>
+                <div className="text-[10px] text-neutral-400">Bright left, fades out by 4 µm</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
+              <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
+                <path d="M3 12 L18 16 L27 21 L33 13 L41 4" fill="none" stroke="#34d399" strokeWidth="2" />
+              </svg>
+              <div className="min-w-0 leading-tight">
+                <div className="font-semibold text-emerald-200">Cold Brown Dwarf (↗)</div>
+                <div className="text-[10px] text-neutral-400">3.3 µm CH₄ dip + rises at 4–5 µm</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
+              <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
+                <path d="M3 16 L13 9 L19 13 L29 10 L41 12" fill="none" stroke="#f59e0b" strokeWidth="2" />
+              </svg>
+              <div className="min-w-0 leading-tight">
+                <div className="font-semibold text-amber-200">Galaxy / Dusty Star</div>
+                <div className="text-[10px] text-neutral-400">Bumpy peaks shifted across 1–5 µm</div>
+              </div>
+            </div>
           </div>
 
           {/* Chart Legend & uPlot */}
           <div className="rounded-xl border border-neutral-800 bg-black/50 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400">
-              <div className="flex flex-wrap items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3.5">
                 <span className="inline-flex items-center gap-1.5 text-neutral-200">
                   <span className="inline-block h-0.5 w-4 bg-white" />
                   Observed {isSpectralBlinkSynced ? `Epoch ${activeEpochIndex}` : 'Coadd'}
                 </span>
+                {spectralFidelity === 'broadband_6_interpolated' && (
+                  <span className="inline-flex items-center gap-1.5 text-amber-300">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-amber-400 bg-amber-400/20" />
+                    6 measured cutout bands
+                  </span>
+                )}
                 {overlayEpoch && !isSpectralBlinkSynced && (
                   <span className="inline-flex items-center gap-1.5 text-sky-300">
                     <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-sky-400" />
@@ -1188,13 +1407,21 @@ export const SpectrophotometricLab: React.FC = () => {
                 {scaledTemplateOverlay && selectedMatchIdx !== null && similarMatches[selectedMatchIdx] && (
                   <span className="inline-flex items-center gap-1.5 text-emerald-300">
                     <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-emerald-400" />
-                    {similarMatches[selectedMatchIdx].name} template
+                    {formatTemplateDisplayName(similarMatches[selectedMatchIdx].name)}
                   </span>
                 )}
               </div>
               <span className="font-mono text-[10px] text-neutral-400">
-                {spectrumStatus || '0.75–5.00 µm'}
+                {spectralFidelity === 'broadband_6_interpolated'
+                  ? '6 broadband anchor points (D1–D6 sketch)'
+                  : spectrumStatus || '102/102 native HDU 6 channels'}
               </span>
+            </div>
+
+            <div className="mb-1.5 flex items-center justify-between text-[10px] text-neutral-400 px-1">
+              <span>← Hot Starlight (0.75–1.5 µm)</span>
+              <span className="hidden sm:inline">Gas &amp; Ice Fingerprints (1.6–3.6 µm)</span>
+              <span>Cold Heat Glow (3.8–5.0 µm) →</span>
             </div>
 
             <div className="relative">
@@ -1210,13 +1437,27 @@ export const SpectrophotometricLab: React.FC = () => {
                   </div>
                 </div>
               )}
-              {flagTip && (
-                <div
-                  className="pointer-events-none fixed z-50 max-w-xs rounded border border-amber-500/50 bg-neutral-900 px-2 py-1 text-[11px] text-amber-200 shadow"
-                  style={{ left: flagTip.x + 10, top: flagTip.y + 10 }}
-                >
-                  {flagTip.text}
-                </div>
+            </div>
+
+            {/* Live Hover Zone Translator */}
+            <div className="mt-2 min-h-[28px] rounded-lg border border-white/10 bg-neutral-900/70 px-2.5 py-1.5 text-[11px] flex flex-wrap items-center justify-between gap-2">
+              {hoverInsight ? (
+                <>
+                  <span className="text-neutral-200">
+                    <strong className="font-mono text-white">
+                      {hoverInsight.waveUm.toFixed(2)} µm ({hoverInsight.detector})
+                    </strong>{' '}
+                    · {hoverInsight.meaning}
+                  </span>
+                  <span className="font-mono text-[10px] text-sky-300">
+                    {hoverInsight.flux.toFixed(4)} MJy/sr
+                    {hoverInsight.flagText ? ` · ⚠ ${hoverInsight.flagText}` : ''}
+                  </span>
+                </>
+              ) : (
+                <span className="text-neutral-400">
+                  Hover anywhere over the curve to translate what that infrared wavelength detects.
+                </span>
               )}
             </div>
 
@@ -1232,6 +1473,24 @@ export const SpectrophotometricLab: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Live Plain-English Graph Reader */}
+          {liveChartReading && (
+            <div className="rounded-xl border border-white/10 bg-neutral-900/50 p-3 space-y-1.5 text-[11px]">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-emerald-300">
+                What This Graph Is Telling You
+              </div>
+              <p className="text-neutral-200 leading-relaxed">
+                <strong className="text-white">1. Brightness tilt:</strong> {liveChartReading.slopeClue}
+              </p>
+              <p className="text-neutral-300 leading-relaxed">
+                <strong className="text-white">2. Feature check:</strong> {liveChartReading.detailClue}
+              </p>
+              <p className="text-sky-200/90 leading-relaxed">
+                <strong className="text-sky-300">3. Compare dots:</strong> {liveChartReading.contrastTip}
+              </p>
+            </div>
+          )}
 
           {/* Accessible hidden table */}
           <div className="sr-only" aria-live="polite">
@@ -1303,27 +1562,61 @@ export const SpectrophotometricLab: React.FC = () => {
 
           {activeToolTab === 'match' && (
             <div className="space-y-3">
+              {/* Confirm User Decision */}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-3 text-[11px] space-y-2">
+                <div className="font-semibold uppercase tracking-wide text-emerald-200">
+                  Lock In Your Spectral Verdict
+                </div>
+                <p className="text-neutral-300 leading-relaxed">
+                  Based on the curve shape above, what kind of object is at this pixel? This stamps your Case Report.
+                </p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    'Cold Brown Dwarf',
+                    'Variable / Young Star',
+                    'Normal Field Star',
+                    'Distant Galaxy / AGN',
+                  ].map((choice) => {
+                    const active = confirmedIdentity === choice;
+                    return (
+                      <button
+                        key={choice}
+                        type="button"
+                        onClick={() => setConfirmedIdentity(active ? null : choice)}
+                        className={`rounded-lg border px-2 py-1.5 text-left text-[11px] font-medium transition-colors cursor-pointer ${
+                          active
+                            ? 'border-emerald-400 bg-emerald-500/25 text-white'
+                            : 'border-white/10 bg-neutral-950/70 text-neutral-300 hover:border-emerald-400/50 hover:text-white'
+                        }`}
+                      >
+                        {active ? `✓ ${choice}` : choice}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3 text-[11px]">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold uppercase tracking-wide text-neutral-200">
-                    Closest Spectral Matches
+                    Reference Library Matches
                   </span>
                   {isFindingSimilar && (
                     <span className="font-mono text-[10px] text-sky-400">Scanning…</span>
                   )}
                 </div>
                 <p className="mt-1 text-[11px] text-neutral-400">
-                  Click any template below to overlay its shape on your spectrum chart.
+                  Click any reference below to compare its full curve against your measured line.
                 </p>
                 <div className="mt-2.5 space-y-1.5">
-                  {similarMatches.length > 0 ? (
-                    similarMatches.slice(0, 5).map((m, idx) => {
-                      const isOverlayActive = selectedMatchIdx === idx;
+                  {displayMatches.length > 0 ? (
+                    displayMatches.slice(0, 5).map((m) => {
+                      const isOverlayActive = selectedMatchIdx === m.rawIndex;
                       return (
                         <button
-                          key={m.id || idx}
+                          key={`${m.name}-${m.rawIndex}`}
                           type="button"
-                          onClick={() => setSelectedMatchIdx(isOverlayActive ? null : idx)}
+                          onClick={() => setSelectedMatchIdx(isOverlayActive ? null : m.rawIndex)}
                           className={`w-full flex items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors cursor-pointer ${
                             isOverlayActive
                               ? 'border-emerald-400/60 bg-emerald-500/15'
@@ -1350,17 +1643,17 @@ export const SpectrophotometricLab: React.FC = () => {
 
               <div className="rounded-xl border border-cyan-500/25 bg-cyan-950/15 p-3 text-[11px] space-y-2">
                 <div className="font-semibold text-cyan-200">
-                  Next: Could ice be hiding in front of this star?
+                  Optional Tie-Breaker: Dust Ice vs. Cold Star?
                 </div>
                 <p className="text-neutral-300 leading-relaxed">
-                  Cold stars and stars behind dust clouds can look alike in broadband light. Open Ice Studio at this exact pixel to test for frozen H₂O (3.05 µm) and CO₂ (4.27 µm).
+                  Only needed if your object stays bright in mid-IR: open Ice Studio to test whether foreground cloud ice (3.05 µm H₂O / 4.27 µm CO₂) is reddening a background star.
                 </p>
                 <button
                   type="button"
                   onClick={() => setTab('ice')}
                   className="w-full rounded-lg border border-cyan-400/50 bg-cyan-500/15 hover:bg-cyan-500/25 py-1.5 text-xs font-semibold text-cyan-200 cursor-pointer"
                 >
-                  Open in Ice Studio →
+                  Open Ice Studio Tie-Breaker →
                 </button>
               </div>
             </div>
