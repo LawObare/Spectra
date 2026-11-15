@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useTelemetryStore } from '../store/useTelemetryStore';
+import { useWalkthroughStore } from '../store/useWalkthroughStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { queryClient } from '../App';
 import { Button, Badge, Input } from './ui';
@@ -561,9 +562,12 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   const [isBackendLive, setIsBackendLive] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const guideContainerRef = useRef<HTMLDivElement>(null);
+  const { startFullTour, startChapterTour } = useWalkthroughStore();
 
-  // Close autocomplete dropdown on outside click
+  // Close autocomplete / guide popovers on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -571,6 +575,12 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         !searchContainerRef.current.contains(e.target as Node)
       ) {
         setIsSearchFocused(false);
+      }
+      if (
+        guideContainerRef.current &&
+        !guideContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsGuideOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -855,7 +865,11 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
       </div>
 
       {/* 2. Universal Coordinate & Object Name Resolver (SIMBAD / NED / ICRS / Catalog) */}
-      <div ref={searchContainerRef} className="order-2 relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px] sm:max-w-md">
+      <div
+        ref={searchContainerRef}
+        data-tour="header-search-catalog"
+        className="order-2 relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px] sm:max-w-md"
+      >
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -986,8 +1000,11 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
         )}
       </div>
 
-      {/* 3. Workspace Tab Switcher & Share */}
-      <div className="order-3 flex w-full xl:w-auto items-center justify-between xl:justify-end gap-2 min-w-0 border-t border-white/10 pt-1.5 xl:border-t-0 xl:pt-0 xl:shrink-0">
+      {/* 3. Workspace Tab Switcher, Guide & Share */}
+      <div
+        data-tour="header-nav-share"
+        className="order-3 flex w-full xl:w-auto items-center justify-between xl:justify-end gap-2 min-w-0 border-t border-white/10 pt-1.5 xl:border-t-0 xl:pt-0 xl:shrink-0"
+      >
         {/* Compact Tensor Memory Readout */}
         <div
           className={cn(
@@ -1012,10 +1029,21 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           {TABS.map((t) => {
             const isActive = tab === t.id && !isMissionBriefingActive;
             const TabIcon = t.icon;
+            const tabTitle =
+              t.id === 'navigator'
+                ? 'Spin the 3D infrared sky dome and install cutout regions'
+                : t.id === 'comparator'
+                  ? 'Flip through 6-month snapshots to spot moving or flashing stars'
+                  : t.id === 'spectral'
+                    ? 'Inspect 102 infrared color brightness curves to identify what an object is'
+                    : t.id === 'ice'
+                      ? 'Test background stars behind cold dust clouds for frozen water and CO2 ice'
+                      : 'Read and post community sky discoveries with attached snapshots';
             return (
               <button
                 key={t.id}
                 type="button"
+                title={tabTitle}
                 onClick={() => {
                   setTab(t.id);
                   if (isMissionBriefingActive && onToggleMissionBriefing) {
@@ -1042,12 +1070,87 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           })}
         </nav>
 
+        {/* Interactive Walkthrough Guide Trigger */}
+        <div ref={guideContainerRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setIsGuideOpen((v) => !v);
+              setIsShareOpen(false);
+            }}
+            aria-expanded={isGuideOpen}
+            title="Open interactive feature walkthrough cards"
+            className={cn(
+              'h-8 rounded-lg border px-2.5 text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer',
+              isGuideOpen
+                ? 'border-sky-400/50 bg-sky-500/15 text-white'
+                : 'border-white/10 bg-white/[0.04] text-neutral-200 hover:bg-white/[0.08] hover:border-white/20 hover:text-white'
+            )}
+          >
+            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-sky-400/40 bg-sky-500/15 font-mono text-[10px] font-bold text-sky-300">
+              ?
+            </span>
+            <span className="hidden sm:inline">Guide</span>
+          </button>
+
+          {isGuideOpen && (
+            <div
+              style={{ fontFamily: '"Plus Jakarta Sans", "IBM Plex Sans", system-ui, sans-serif' }}
+              className="absolute right-0 top-10 z-50 w-72 rounded-xl border border-white/15 bg-neutral-950/95 backdrop-blur-xl p-2.5 shadow-2xl space-y-1.5"
+            >
+              <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wider text-sky-300">
+                Interactive Walkthrough
+              </div>
+              <button
+                type="button"
+                title="Launch the complete 25-card beginner tour from Explore through /admin"
+                onClick={() => {
+                  setIsGuideOpen(false);
+                  startFullTour();
+                }}
+                className="flex w-full flex-col items-start rounded-lg px-3 py-2.5 text-left hover:bg-sky-500/15 transition-colors cursor-pointer"
+              >
+                <span className="text-sm font-semibold text-white">
+                  Full App Tour (Explore → /admin)
+                </span>
+                <span className="text-xs text-neutral-300 mt-0.5">
+                  Step through all 7 chapters &amp; AI Lab
+                </span>
+              </button>
+              <button
+                type="button"
+                title="Walk through only the controls on your current screen"
+                onClick={() => {
+                  setIsGuideOpen(false);
+                  const activeTab =
+                    tab === 'comparator' ||
+                    tab === 'spectral' ||
+                    tab === 'ice' ||
+                    tab === 'discussions'
+                      ? tab
+                      : 'navigator';
+                  startChapterTour(activeTab);
+                }}
+                className="flex w-full flex-col items-start rounded-lg px-3 py-2.5 text-left hover:bg-white/[0.08] transition-colors cursor-pointer"
+              >
+                <span className="text-sm font-medium text-neutral-100">
+                  Explain This Tab Only
+                </span>
+                <span className="text-xs text-neutral-300 mt-0.5">
+                  Cards focused on the current workspace
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Share & Embed Exporter Dropdown */}
         <div className="relative shrink-0">
           <button
             type="button"
             onClick={() => setIsShareOpen(!isShareOpen)}
             aria-expanded={isShareOpen}
+            title="Copy a direct link or embeddable view of your exact sky coordinates and settings"
             className={cn(
               'h-8 rounded-lg border px-2.5 text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-all',
               isShareOpen
