@@ -1,7 +1,18 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Input, Select } from '../components/ui';
+import { Button, Select } from '../components/ui';
 import { cn } from '../lib/utils';
 import { Link } from 'react-router-dom';
+import {
+  AdminKpiCard,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminStatusPill,
+  IconActivity,
+  IconAlert,
+  IconCheckCircle,
+  IconDatabase,
+  SegmentedProgressBar,
+} from './components/AdminPrimitives';
 
 /**
  * Tab 4: Disagreement Triage & Hard-Negative Queue (/admin/triage)
@@ -396,306 +407,313 @@ export const HardNegativeTriage: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
-      {/* HEADER METRICS DECK */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/60 px-3 sm:px-6 py-3 shrink-0 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <div>
-            <h2 className="text-sm font-semibold tracking-wide text-foreground">
-              Tab 4: Disagreement Triage & Hard-Negative Queue
-            </h2>
-            <p className="text-[11px] text-muted-foreground">
-              SPECIFICATION.md §6.4.5 · Hard-negative mining and raw FITS HDU 1–6 verification
-            </p>
-          </div>
-          <Badge variant="outline" className="font-mono text-[10px] ml-2">
-            Disagreements: {stats.total}
-          </Badge>
-          <Badge variant="amber" className="font-mono text-[10px]">
-            Max Divergence: {stats.maxDiv.toFixed(2)}
-          </Badge>
-          {stats.bufferCount > 0 && (
-            <Badge variant="sky" className="font-mono text-[10px]">
-              Training Buffer: {stats.bufferCount} items
-            </Badge>
-          )}
-          {stats.verifiedCount > 0 && (
-            <Badge variant="emerald" className="font-mono text-[10px]">
-              Verified Discoveries: {stats.verifiedCount}
-            </Badge>
-          )}
-        </div>
+    <div className="h-full w-full overflow-y-auto px-5 py-5 lg:px-7 lg:py-6">
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-5">
+        <AdminPageHeader
+          title="Disagreement Triage"
+          subtitle="Resolve high-divergence AI vs. citizen classifications via raw FITS HDU 1–6 planes and hard-negative curation."
+          actions={
+            <Link to={`/explore?tab=comparator&ra=${currentCandidate.ra}&dec=${currentCandidate.dec}`}>
+              <Button variant="outline" size="sm" className="h-8 rounded-lg px-3.5 text-xs">
+                Inspect in Comparator →
+              </Button>
+            </Link>
+          }
+        />
 
-        {/* Search & Filter Controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            placeholder="Filter subject ID / class..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 w-48 text-xs"
+        {toastMessage && (
+          <div className="rounded-xl border border-primary/35 bg-primary/10 px-4 py-2.5 text-xs text-sky-200 flex items-center justify-between">
+            <span>{toastMessage}</span>
+            <button
+              type="button"
+              onClick={() => setToastMessage(null)}
+              className="text-xs font-medium text-sky-300 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* BAND 2: 4-CARD KPI SUMMARY */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <AdminKpiCard
+            label="Queued Disagreements"
+            value={stats.total}
+            delta="Sorted by |P_AI - P_Comm|"
+            deltaTone="muted"
+            icon={<IconAlert className="h-4 w-4" />}
           />
-          <Select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            className="h-8 text-xs"
-          >
-            <option value="all">All Disagreements</option>
-            <option value="high">High Divergence (&gt; 0.50)</option>
-            <option value="movers">Mover Divergences</option>
-            <option value="ice">Ice Signatures</option>
-            <option value="variable">Variables</option>
-          </Select>
+          <AdminKpiCard
+            label="Peak Divergence"
+            value={`${(stats.maxDiv * 100).toFixed(0)}%`}
+            delta={`Max Δ ${stats.maxDiv.toFixed(2)} across queue`}
+            deltaTone="amber"
+            icon={<IconActivity className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Training Buffer"
+            value={stats.bufferCount}
+            delta="Queued for LoRA retraining"
+            deltaTone="sky"
+            icon={<IconDatabase className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Verified Discoveries"
+            value={stats.verifiedCount}
+            delta="Promoted to community catalog"
+            deltaTone="emerald"
+            icon={<IconCheckCircle className="h-4 w-4" />}
+          />
         </div>
-      </div>
 
-      {/* TOAST ALERT BANNER */}
-      {toastMessage && (
-        <div className="bg-primary/20 border-b border-primary/40 px-6 py-1.5 text-xs text-primary-foreground flex items-center justify-between animate-fadeIn">
-          <span>[OK] {toastMessage}</span>
-          <button onClick={() => setToastMessage(null)} className="text-xs hover:underline">
-            Dismiss
-          </button>
-        </div>
-      )}
+        {/* BAND 3: QUEUE TABLE + RAW FITS HDU 1–6 INSPECTOR */}
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-12 items-start">
+          {/* LEFT: DISAGREEMENT QUEUE TABLE */}
+          <div className="admin-surface rounded-xl overflow-hidden xl:col-span-8 flex flex-col">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-3.5">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">
+                  Disagreement Queue ({filteredCandidates.length})
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Select any candidate to inspect its FITS extensions and adjudicate
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <AdminSearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Filter subject or class..."
+                  className="w-44 sm:w-48"
+                />
+                <Select
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value)}
+                  className="h-8 rounded-lg border-white/[0.1] bg-background/80 text-xs"
+                >
+                  <option value="all">All Disagreements</option>
+                  <option value="high">High Divergence (&gt; 0.50)</option>
+                  <option value="movers">Mover Divergences</option>
+                  <option value="ice">Ice Signatures</option>
+                  <option value="variable">Variables</option>
+                </Select>
+              </div>
+            </div>
 
-      {/* MAIN 2-COLUMN WORKSTATION */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-y-auto lg:overflow-hidden">
-        {/* LEFT COLUMN: DISAGREEMENT QUEUE TABLE (60% = col-span-7) */}
-        <div className="lg:col-span-7 flex flex-col border-b lg:border-b-0 lg:border-r border-border overflow-hidden">
-          <div className="border-b border-border bg-secondary/30 px-4 py-2 flex items-center justify-between shrink-0">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              |P_AI - P_Community| Disagreement Queue ({filteredCandidates.length})
-            </span>
-            <span className="text-[10px] text-muted-foreground">
-              Sorted by Absolute Divergence DESC
-            </span>
-          </div>
-
-          <div className="flex-1 overflow-x-auto overflow-y-auto">
-            <table className="w-full min-w-[620px] text-left text-xs">
-              <thead className="sticky top-0 bg-secondary/80 backdrop-blur-sm border-b border-border text-[11px] font-medium text-muted-foreground">
-                <tr>
-                  <th className="py-2 px-3">Divergence</th>
-                  <th className="py-2 px-3">Subject ID & Target</th>
-                  <th className="py-2 px-3">AI Prediction</th>
-                  <th className="py-2 px-3">Community Consensus</th>
-                  <th className="py-2 px-3">Status</th>
-                  <th className="py-2 px-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40">
-                {filteredCandidates.map((cand) => {
-                  const isSelected = cand.subject_id === selectedId;
-                  const divColor =
-                    cand.divergence >= 0.6
-                      ? 'text-red-400 bg-red-950/30 border-red-500/30'
-                      : cand.divergence >= 0.4
-                      ? 'text-amber-400 bg-amber-950/30 border-amber-500/30'
-                      : 'text-sky-400 bg-sky-950/30 border-sky-500/30';
-
-                  return (
-                    <tr
-                      key={cand.subject_id}
-                      onClick={() => setSelectedId(cand.subject_id)}
-                      className={cn(
-                        'cursor-pointer transition-colors hover:bg-secondary/40',
-                        isSelected ? 'bg-primary/10 border-l-2 border-primary' : ''
-                      )}
-                    >
-                      {/* Divergence Metric Bar */}
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className={cn('px-1.5 py-0.5 rounded font-mono text-[11px] border', divColor)}>
-                            {(cand.divergence * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Subject ID */}
-                      <td className="py-2.5 px-3">
-                        <div className="font-mono text-xs font-semibold text-foreground">
-                          {cand.title}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
-                          {cand.ra.toFixed(4)}°, {cand.dec.toFixed(4)}°
-                        </div>
-                      </td>
-
-                      {/* AI Prediction */}
-                      <td className="py-2.5 px-3">
-                        <div className="font-medium text-foreground">
-                          {cand.ai_prediction}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
-                          P(AI) = {cand.ai_prob.toFixed(2)}
-                        </div>
-                      </td>
-
-                      {/* Community Consensus */}
-                      <td className="py-2.5 px-3">
-                        <div className="font-medium text-primary">
-                          {cand.community_consensus}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground font-mono">
-                          P(Comm) = {cand.community_prob.toFixed(2)} ({cand.votes_count} votes)
-                        </div>
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-2.5 px-3">
-                        {cand.status === 'in_buffer' ? (
-                          <Badge variant="sky" className="text-[10px]">
-                            Buffer
-                          </Badge>
-                        ) : cand.status === 'verified' ? (
-                          <Badge variant="emerald" className="text-[10px]">
-                            Verified
-                          </Badge>
-                        ) : cand.status === 'artifact' ? (
-                          <Badge variant="destructive" className="text-[10px]">
-                            Artifact
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[10px]">
-                            Pending
-                          </Badge>
+            <div className="overflow-x-auto max-h-[640px] overflow-y-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 z-10 border-b border-white/[0.07] bg-card/95 backdrop-blur-sm text-[11px] font-medium text-muted-foreground">
+                  <tr>
+                    <th className="py-2.5 pl-4 pr-2">Subject</th>
+                    <th className="py-2.5 px-2">Divergence</th>
+                    <th className="py-2.5 px-2">AI vs. Community</th>
+                    <th className="py-2.5 px-2">Status</th>
+                    <th className="py-2.5 pl-2 pr-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.06]">
+                  {filteredCandidates.map((cand) => {
+                    const isSelected = cand.subject_id === selectedId;
+                    const divPct = Math.round(cand.divergence * 100);
+                    return (
+                      <tr
+                        key={cand.subject_id}
+                        onClick={() => setSelectedId(cand.subject_id)}
+                        className={cn(
+                          'cursor-pointer transition-colors hover:bg-white/[0.03]',
+                          isSelected ? 'bg-primary/[0.08]' : ''
                         )}
-                      </td>
+                      >
+                        <td className="py-3 pl-4 pr-2">
+                          <div className="font-semibold text-foreground whitespace-nowrap">{cand.title}</div>
+                          <div className="text-[11px] text-muted-foreground font-mono tabular-nums mt-0.5 whitespace-nowrap">
+                            {cand.ra.toFixed(3)}°, {cand.dec.toFixed(3)}°
+                          </div>
+                        </td>
 
-                      {/* Action Triggers */}
-                      <td className="py-2.5 px-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[10px]"
-                            title="Add to Hard-Negative Training Buffer"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAddToBuffer(cand.subject_id);
-                            }}
-                          >
-                            + Buffer
-                          </Button>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            className="h-6 px-1.5 text-[10px]"
-                            title="Verify & Promote to Community Candidate Catalog"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleVerifyDiscovery(cand.subject_id);
-                            }}
-                          >
-                            Promote
-                          </Button>
-                        </div>
+                        <td className="py-3 px-2">
+                          <SegmentedProgressBar
+                            percent={divPct}
+                            tone={cand.divergence >= 0.55 ? 'amber' : 'sky'}
+                          />
+                        </td>
+
+                        <td className="py-3 px-2 max-w-[190px]">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="font-medium text-foreground truncate">{cand.ai_prediction}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                              ({cand.ai_prob.toFixed(2)})
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[11px] mt-0.5 truncate">
+                            <span className="text-sky-300 font-medium truncate">→ {cand.community_consensus}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                              ({cand.community_prob.toFixed(2)} · {cand.votes_count}v)
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-2 whitespace-nowrap">
+                          {cand.status === 'in_buffer' ? (
+                            <AdminStatusPill tone="sky">Buffer</AdminStatusPill>
+                          ) : cand.status === 'verified' ? (
+                            <AdminStatusPill tone="emerald">Verified</AdminStatusPill>
+                          ) : cand.status === 'artifact' ? (
+                            <AdminStatusPill tone="rose">Artifact</AdminStatusPill>
+                          ) : (
+                            <AdminStatusPill tone="muted">Pending</AdminStatusPill>
+                          )}
+                        </td>
+
+                        <td className="py-3 pl-2 pr-4 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 rounded-md px-2 text-[11px]"
+                              title="Add to Hard-Negative Training Buffer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddToBuffer(cand.subject_id);
+                              }}
+                            >
+                              + Buffer
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="h-7 rounded-md px-2 text-[11px]"
+                              title="Verify & Promote to Community Candidate Catalog"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleVerifyDiscovery(cand.subject_id);
+                              }}
+                            >
+                              Promote
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredCandidates.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-10 px-4 text-center text-xs text-muted-foreground">
+                        No disagreement candidates match your current filter.
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
 
-        {/* RIGHT COLUMN: RAW FITS HDU 1–6 INSPECTOR (40% = col-span-5) */}
-        <div className="lg:col-span-5 flex flex-col bg-card lg:overflow-y-auto p-3 sm:p-4 gap-4">
-          <Card className="border-border">
-            <CardHeader className="py-3 px-4 border-b border-border bg-secondary/30">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xs font-semibold text-foreground">
-                    FITS MEF Multi-Extension Inspector
-                  </CardTitle>
-                  <p className="text-[10px] text-muted-foreground font-mono">
-                    Subject: {currentCandidate.subject_id} · Release: SPHEREx QR2
-                  </p>
-                </div>
-                <Badge variant="outline" className="font-mono text-[10px]">
-                  CRVAL: [{currentCandidate.ra.toFixed(4)}, {currentCandidate.dec.toFixed(4)}]
-                </Badge>
+          {/* RIGHT: RAW FITS HDU 1–6 INSPECTOR */}
+          <div className="admin-surface rounded-xl overflow-hidden xl:col-span-4 flex flex-col">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.07] px-5 py-3.5">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">FITS MEF Inspector</h2>
+                <p className="text-xs text-muted-foreground font-mono">
+                  {currentCandidate.subject_id} · SPHEREx QR2
+                </p>
               </div>
-            </CardHeader>
+              <AdminStatusPill tone="muted">
+                CRVAL [{currentCandidate.ra.toFixed(3)}, {currentCandidate.dec.toFixed(3)}]
+              </AdminStatusPill>
+            </div>
 
-            <CardContent className="p-4 flex flex-col gap-3">
+            <div className="p-4 flex flex-col gap-4">
               {/* HDU EXTENSION SELECTOR TABS */}
-              <div className="grid grid-cols-6 gap-1 bg-secondary/50 p-1 rounded border border-border">
+              <div className="grid grid-cols-6 gap-1 rounded-lg border border-white/[0.07] bg-white/[0.03] p-1">
                 {[
                   { num: 1, label: 'FLUX' },
                   { num: 2, label: 'FLAGS' },
-                  { num: 3, label: 'VARIANCE' },
+                  { num: 3, label: 'VAR' },
                   { num: 4, label: 'ZODI' },
                   { num: 5, label: 'PSF' },
-                  { num: 6, label: 'WCS-WAVE' },
+                  { num: 6, label: 'WAVE' },
                 ].map((hdu) => (
                   <button
                     key={hdu.num}
+                    type="button"
                     onClick={() => setActiveHduTab(hdu.num)}
                     className={cn(
-                      'py-1 text-[10px] font-mono rounded transition-colors text-center',
+                      'py-1.5 text-[10px] font-mono rounded-md transition-colors text-center',
                       activeHduTab === hdu.num
                         ? 'bg-primary text-primary-foreground font-semibold'
                         : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
                     HDU {hdu.num}
-                    <div className="text-[9px] truncate">{hdu.label}</div>
+                    <div className="text-[9px] opacity-80 truncate">{hdu.label}</div>
                   </button>
                 ))}
               </div>
 
               {/* CANVAS RENDERER FOR HDU DATA PLANE */}
-              <div className="flex flex-col items-center justify-center bg-black/60 rounded border border-border p-2">
+              <div className="flex flex-col items-center justify-center rounded-xl border border-white/[0.07] bg-black/55 p-4">
                 <canvas
                   ref={canvasRef}
                   width={220}
                   height={220}
-                  className="rounded border border-border/50 shadow-inner"
+                  className="rounded-lg border border-white/[0.08]"
                 />
-                <div className="flex items-center justify-between w-full mt-2 text-[10px] text-muted-foreground font-mono px-2">
-                  <span>HDU {activeHduTab}: {activeHduTab === 1 ? 'IMAGE' : activeHduTab === 2 ? 'FLAGS' : activeHduTab === 3 ? 'VARIANCE' : activeHduTab === 4 ? 'ZODI' : activeHduTab === 5 ? 'PSF_EMP' : 'WCS_WAVE'}</span>
-                  <span>29x29 px · 6.2"/px</span>
+                <div className="flex items-center justify-between w-full mt-3 text-[11px] text-muted-foreground font-mono px-1">
+                  <span>
+                    HDU {activeHduTab}:{' '}
+                    {activeHduTab === 1
+                      ? 'IMAGE'
+                      : activeHduTab === 2
+                      ? 'FLAGS'
+                      : activeHduTab === 3
+                      ? 'VARIANCE'
+                      : activeHduTab === 4
+                      ? 'ZODI'
+                      : activeHduTab === 5
+                      ? 'PSF_EMP'
+                      : 'WCS_WAVE'}
+                  </span>
+                  <span>29×29 px · 6.2&quot;/px</span>
                 </div>
               </div>
 
               {/* HDU TELEMETRY SPECIFICATION DETAILS */}
-              <div className="bg-secondary/20 rounded p-2.5 border border-border text-xs flex flex-col gap-1.5">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Quality Flags (HDU 2):</span>
-                  <span className="font-mono text-foreground font-semibold">
+              <div className="admin-surface-subtle rounded-lg p-3.5 text-xs flex flex-col gap-2">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Quality Flags (HDU 2)</span>
+                  <span className="font-mono text-foreground font-medium text-right">
                     {currentCandidate.flag_mask_hex} ({currentCandidate.flag_bits.join(', ') || 'CLEAN'})
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Zodiacal Light (HDU 4):</span>
-                  <span className="font-mono text-foreground">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Zodiacal Light (HDU 4)</span>
+                  <span className="font-mono text-foreground tabular-nums">
                     {currentCandidate.zodi_level_mjy_sr} MJy/sr
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Local PSF FWHM (HDU 5):</span>
-                  <span className="font-mono text-foreground">
-                    {currentCandidate.psf_fwhm_arcsec}" (~1.2 px)
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Local PSF FWHM (HDU 5)</span>
+                  <span className="font-mono text-foreground tabular-nums">
+                    {currentCandidate.psf_fwhm_arcsec}&quot; (~1.2 px)
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Central Wavelength (HDU 6):</span>
-                  <span className="font-mono text-foreground">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Central Wavelength (HDU 6)</span>
+                  <span className="font-mono text-foreground tabular-nums">
                     {currentCandidate.central_wave_um} µm
                   </span>
                 </div>
-                <div className="mt-1 pt-1 border-t border-border/40 text-[11px] text-muted-foreground leading-relaxed italic">
-                  "{currentCandidate.notes}"
+                <div className="mt-1 pt-2 border-t border-white/[0.07] text-xs text-muted-foreground leading-relaxed">
+                  &ldquo;{currentCandidate.notes}&rdquo;
                 </div>
               </div>
 
               {/* ACTION BUTTONS */}
-              <div className="grid grid-cols-3 gap-2 mt-2">
+              <div className="grid grid-cols-3 gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs"
+                  className="rounded-lg text-xs"
                   onClick={() => handleAddToBuffer(currentCandidate.subject_id)}
                 >
                   + Hard-Negative
@@ -703,7 +721,7 @@ export const HardNegativeTriage: React.FC = () => {
                 <Button
                   variant="default"
                   size="sm"
-                  className="text-xs"
+                  className="rounded-lg text-xs"
                   onClick={() => handleVerifyDiscovery(currentCandidate.subject_id)}
                 >
                   Promote
@@ -711,23 +729,14 @@ export const HardNegativeTriage: React.FC = () => {
                 <Button
                   variant="destructive"
                   size="sm"
-                  className="text-xs"
+                  className="rounded-lg text-xs"
                   onClick={() => handleFlagArtifact(currentCandidate.subject_id)}
                 >
                   Flag Artifact
                 </Button>
               </div>
-
-              <div className="text-center mt-1">
-                <Link to={`/explore?tab=comparator&ra=${currentCandidate.ra}&dec=${currentCandidate.dec}`}>
-                  <Button variant="ghost" size="sm" className="text-xs gap-1 text-primary">
-                    <span>Inspect in Time-Domain Comparator</span>
-                    <span>→</span>
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       </div>
     </div>
