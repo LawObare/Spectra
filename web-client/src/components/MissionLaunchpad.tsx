@@ -9,17 +9,20 @@ import { NasaMeatballSvg } from './GlobalCommandHeader';
 interface MissionLaunchpadProps {
   onLaunchWorkstation: (tab?: string) => void;
   onSelectDiscovery: (discovery: MajorDiscovery) => void;
+  onStartGuidedTour?: () => void;
 }
 
 export const MissionLaunchpad: React.FC<MissionLaunchpadProps> = ({
   onLaunchWorkstation,
   onSelectDiscovery,
+  onStartGuidedTour,
 }) => {
   return (
     <div className="w-full min-h-screen bg-black text-white font-sans overflow-y-auto">
       {/* 1. Official NASA Mission Hero Banner */}
       <MissionHero
         onLaunchWorkstation={() => onLaunchWorkstation('navigator')}
+        onStartGuidedTour={onStartGuidedTour}
       />
 
       {/* 2. Major Discoveries Library (Production Grade) */}
