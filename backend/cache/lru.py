@@ -6,11 +6,24 @@ Async-wrapped cachetools LRU with 1.0 GB byte cap for Float32/tensor buffers.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from cachetools import LRUCache as _LRUCache
 
 ONE_GB_BYTES = 1024 * 1024 * 1024
+
+
+def _default_lru_max_bytes() -> int:
+    raw = os.environ.get("LRU_MAX_BYTES", "").strip()
+    if raw:
+        try:
+            val = int(raw)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return ONE_GB_BYTES
 
 
 def _entry_size(value: Any) -> int:
@@ -24,8 +37,9 @@ def _entry_size(value: Any) -> int:
 class LRUCache:
     """Async-wrapped LRU cache for Float32 tensor buffers and spectra."""
 
-    def __init__(self, maxsize: int = ONE_GB_BYTES):
-        self._cache: _LRUCache[str, Any] = _LRUCache(maxsize=maxsize, getsizeof=_entry_size)
+    def __init__(self, maxsize: int | None = None):
+        effective = maxsize if maxsize is not None else _default_lru_max_bytes()
+        self._cache: _LRUCache[str, Any] = _LRUCache(maxsize=effective, getsizeof=_entry_size)
         self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> tuple[bytes, dict[str, Any]] | None:
