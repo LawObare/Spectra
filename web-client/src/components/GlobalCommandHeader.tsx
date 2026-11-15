@@ -688,15 +688,15 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           const backendCtrl = new AbortController();
           const backendTimer = setTimeout(() => backendCtrl.abort(), 1500);
           try {
-            const res = await fetch(`/api/resolve?q=${encodeURIComponent(value)}`, {
+            const res = await fetch(`/api/resolve?name=${encodeURIComponent(value)}`, {
               signal: backendCtrl.signal,
             });
             if (res.ok) {
               const data = await res.json();
-              if (typeof data.ra === 'number' && typeof data.dec === 'number') {
+              if (typeof data.ra_deg === 'number' && typeof data.dec_deg === 'number') {
                 applyResolvedTarget(
-                  data.ra,
-                  data.dec,
+                  data.ra_deg,
+                  data.dec_deg,
                   data.target_name || value,
                   data.source_badge || '[IRSA Live (spherex_qr2)]'
                 );
