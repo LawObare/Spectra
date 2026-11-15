@@ -1,10 +1,11 @@
 import React, { Suspense, lazy, useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NuqsAdapter } from 'nuqs/adapters/react';
 import { useSpectraUrlState } from './hooks/useSpectraUrlState';
 import { useKeyboardTelemetry } from './hooks/useKeyboardTelemetry';
 import { useTelemetryStore } from './store/useTelemetryStore';
+import { useWalkthroughStore } from './store/useWalkthroughStore';
 import {
   GlobalCommandHeader,
   MANDATORY_BENCHMARKS,
@@ -14,6 +15,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { MissionLaunchpad } from './components/MissionLaunchpad';
 import { MajorDiscovery } from './components/MajorDiscoveriesData';
 import { CandidateCatalogDrawer, CatalogTarget } from './components/CandidateCatalogDrawer';
+import { WalkthroughOverlay } from './components/WalkthroughOverlay';
 
 const CelestialNavigator = lazy(() =>
   import('./tabs/CelestialNavigator').then((module) => ({ default: module.CelestialNavigator }))
@@ -71,6 +73,32 @@ export const PublicExplorerPortal: React.FC = () => {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [isMissionBriefingActive, setIsMissionBriefingActive] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isWalkthroughOpen = useWalkthroughStore((s) => s.isOpen);
+
+  useEffect(() => {
+    if (isWalkthroughOpen) {
+      setCommandPaletteOpen(false);
+      setIsCatalogOpen(false);
+    }
+  }, [isWalkthroughOpen]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('tour') === 'welcome') {
+      params.delete('tour');
+      useWalkthroughStore.getState().startFullTour();
+      navigate(`/explore?${params.toString()}`, { replace: true });
+      return;
+    }
+    if (!isMissionBriefingActive) {
+      const timer = window.setTimeout(() => {
+        useWalkthroughStore.getState().maybeAutoStartExplore(isEmbed);
+      }, 350);
+      return () => window.clearTimeout(timer);
+    }
+  }, [location.search, isEmbed, isMissionBriefingActive, navigate]);
 
   const handleLaunchWorkstationFromBriefing = (targetTab: string = 'navigator') => {
     setTab(targetTab as any);
@@ -196,6 +224,11 @@ export const PublicExplorerPortal: React.FC = () => {
           <MissionLaunchpad
             onLaunchWorkstation={handleLaunchWorkstationFromBriefing}
             onSelectDiscovery={handleSelectDiscoveryFromBriefing}
+            onStartGuidedTour={() => {
+              setIsMissionBriefingActive(false);
+              setTab('navigator');
+              useWalkthroughStore.getState().startFullTour();
+            }}
           />
         ) : (
           <Suspense
@@ -244,6 +277,7 @@ const LandingMissionPage: React.FC = () => {
     <MissionLaunchpad
       onLaunchWorkstation={handleLaunchWorkstation}
       onSelectDiscovery={handleSelectDiscovery}
+      onStartGuidedTour={() => navigate('/explore?tab=navigator&tour=welcome')}
     />
   );
 };
@@ -251,11 +285,48 @@ const LandingMissionPage: React.FC = () => {
 // Lazy-loaded administrative route chunk (SPECIFICATION.md §6.1.1: Physical chunk isolation)
 const AdminMissionControl = lazy(() => import('./admin/AdminLayout'));
 
+/**
+ * Direct keyboard shortcut anywhere in the app to jump straight into /admin:
+ * - Ctrl+Shift+A (Windows/Linux/Mac) or Alt+A
+ */
+const RootAdminShortcut: React.FC = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (isTyping) return;
+
+      const key = event.key.toLowerCase();
+      const isCtrlShiftA = (event.ctrlKey || event.metaKey) && event.shiftKey && key === 'a';
+      const isAltA = event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && key === 'a';
+
+      if (isCtrlShiftA || isAltA) {
+        event.preventDefault();
+        navigate('/admin/dynamics');
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [navigate]);
+
+  return null;
+};
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <NuqsAdapter>
         <BrowserRouter>
+          <RootAdminShortcut />
+          <WalkthroughOverlay />
           <Suspense
             fallback={
               <div className="flex min-h-dvh items-center justify-center bg-background font-sans text-xs text-muted-foreground">
