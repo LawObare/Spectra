@@ -65,6 +65,7 @@ export const ActiveCaseBanner: React.FC<ActiveCaseBannerProps> = ({
 
   return (
     <div
+      data-tour="header-case-banner"
       className="border-b border-white/10 bg-neutral-950/95 px-3 sm:px-4 py-2"
       aria-label="Active sky investigation workflow"
     >
@@ -101,6 +102,11 @@ export const ActiveCaseBanner: React.FC<ActiveCaseBannerProps> = ({
                   type="button"
                   onClick={() => handleSwitchLens(step.id)}
                   aria-current={isActive ? 'step' : undefined}
+                  title={
+                    step.id === 'comparator'
+                      ? 'Step 1 (Track A): Flip through 6-month sky photos to spot moving or flashing objects'
+                      : 'Step 2 (Track A): Read the 102-color infrared spectrum to identify what moved or flashed'
+                  }
                   className={`group flex items-center gap-2 rounded-lg border px-2.5 py-1 text-left transition-all cursor-pointer ${
                     isActive
                       ? activeClass
