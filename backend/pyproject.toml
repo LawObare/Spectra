@@ -10,6 +10,7 @@ dependencies = [
     "cachetools",
     "fastapi>=0.115.0",
     "fsspec>=2024.6.1",
+    "httpx",
     "numpy>=2.1.1",
     "pillow>=10.4.0",
     "pyvo>=1.5.2",
@@ -26,7 +27,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx",
     "pytest",
     "pytest-asyncio",
     "ruff",
