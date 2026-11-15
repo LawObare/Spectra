@@ -1768,6 +1768,7 @@ export const CelestialNavigator: React.FC = () => {
           <div className="flex flex-nowrap lg:flex-wrap items-center gap-2 min-w-0 overflow-x-auto py-0.5">
             {/* Layer Toggles Pod */}
             <div
+              data-tour="navigator-layer-toggles"
               className="inline-flex flex-nowrap items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 shrink-0"
               role="group"
               aria-label="Sky overlay layers"
@@ -2189,7 +2190,11 @@ export const CelestialNavigator: React.FC = () => {
           </div>
 
           {/* Direct Coordinate & Cutout Size Form */}
-          <form onSubmit={handleManualCoordSubmit} className="mt-2.5 grid grid-cols-12 gap-1.5">
+          <form
+            data-tour="navigator-cutout-controls"
+            onSubmit={handleManualCoordSubmit}
+            className="mt-2.5 grid grid-cols-12 gap-1.5"
+          >
             <div className="col-span-4">
               <label htmlFor="inspector-ra" className="block text-[10px] text-muted-foreground">
                 RA (J2000 deg)
@@ -2597,7 +2602,7 @@ export const CelestialNavigator: React.FC = () => {
         </div>
 
         {/* 3. Explicit User-Initiated Workspace Actions (Zero Auto-Redirects) */}
-        <div className="border-t border-border bg-card p-3">
+        <div data-tour="navigator-open-comparator" className="border-t border-border bg-card p-3">
           <div className="flex flex-col gap-2">
             <Button
               variant={matchedInstalledSection ? 'default' : 'secondary'}
