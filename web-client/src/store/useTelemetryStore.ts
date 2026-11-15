@@ -39,6 +39,28 @@ export interface AiCandidate {
   confidence: number;
 }
 
+export interface CaseFindings {
+  targetKey: string | null;
+  timeDomainSummary: string | null;
+  spectralSummary: string | null;
+  spectralTopClass: string | null;
+  spectralFidelity: 'true_102_ch' | 'broadband_6_interpolated' | null;
+  iceSummary: string | null;
+  iceDetected: boolean | null;
+  iceRatioPercent: number | null;
+}
+
+const EMPTY_CASE_FINDINGS: CaseFindings = {
+  targetKey: null,
+  timeDomainSummary: null,
+  spectralSummary: null,
+  spectralTopClass: null,
+  spectralFidelity: null,
+  iceSummary: null,
+  iceDetected: null,
+  iceRatioPercent: null,
+};
+
 export interface LoadedCutoutData {
   gridSize: number;
   pixelScaleArcsec: number;
@@ -92,6 +114,7 @@ export interface TelemetryState {
   isCutoutLoading: boolean;
   cutoutError: string | null;
   currentSelectedSection: InstalledSection | null;
+  caseFindings: CaseFindings;
 
   // Actions
   setCoordinates: (ra: number, dec: number, targetName?: string, sourceBadge?: string) => void;
@@ -116,6 +139,8 @@ export interface TelemetryState {
   setLoadedCutout: (cutout: LoadedCutoutData | null) => void;
   setCutoutLoading: (loading: boolean, error?: string | null) => void;
   setCurrentSelectedSection: (section: InstalledSection | null) => void;
+  setCaseFindings: (patch: Partial<CaseFindings>, targetKey?: string | null) => void;
+  resetCaseFindings: () => void;
   setActiveSpectrum: (spectrum: SpectralChannel[]) => void;
   setSpectrumLoading: (loading: boolean) => void;
   setSpectralBlinkSynced: (synced: boolean) => void;
@@ -168,6 +193,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   isCutoutLoading: false,
   cutoutError: null,
   currentSelectedSection: null,
+  caseFindings: EMPTY_CASE_FINDINGS,
 
   // Actions
   setCoordinates: (ra, dec, targetName, sourceBadge) =>
@@ -257,6 +283,24 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
     set({ isCutoutLoading, cutoutError }),
 
   setCurrentSelectedSection: (currentSelectedSection) => set({ currentSelectedSection }),
+
+  setCaseFindings: (patch, targetKey) =>
+    set((state) => {
+      const nextKey = targetKey !== undefined ? targetKey : state.caseFindings.targetKey;
+      const base =
+        targetKey !== undefined && targetKey !== state.caseFindings.targetKey
+          ? { ...EMPTY_CASE_FINDINGS, targetKey }
+          : state.caseFindings;
+      return {
+        caseFindings: {
+          ...base,
+          ...patch,
+          targetKey: nextKey,
+        },
+      };
+    }),
+
+  resetCaseFindings: () => set({ caseFindings: EMPTY_CASE_FINDINGS }),
 
   setActiveSpectrum: (activeSpectrum) => set({ activeSpectrum }),
 
