@@ -842,33 +842,106 @@ async def ensure_benchmarks_preinstalled(
         return len(to_install)
 
 
+def _filter_disk_sections(
+    sections: list[dict[str, Any]],
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    filtered = sections
+    if status:
+        filtered = [s for s in filtered if str(s.get("status")) == status]
+    if q:
+        needle = q.strip().lower()
+        if needle:
+            filtered = [
+                s
+                for s in filtered
+                if needle in str(s.get("label", "")).lower()
+                or needle in str(s.get("section_id", "")).lower()
+                or needle in str(s.get("source_badge", "")).lower()
+            ]
+    total = len(filtered)
+    sliced = filtered[offset:] if offset > 0 else filtered
+    if limit is not None:
+        sliced = sliced[:limit]
+    return sliced, total
+
+
 @router.get("/sections")
-async def list_installed_sections(request: Request) -> dict[str, Any]:
-    """Return all user-installed sky sections stored in PostgreSQL or bundled on disk."""
+async def list_installed_sections(
+    request: Request,
+    q: str | None = Query(default=None, max_length=120),
+    status: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Return user-installed sky sections with optional filtering and pagination."""
     pool = await _get_pool(request)
     if pool is None:
         disk_sections = await asyncio.to_thread(_load_disk_benchmark_sections)
+        paged, total = _filter_disk_sections(
+            disk_sections, q=q, status=status, limit=limit, offset=offset
+        )
         return {
-            "sections": disk_sections,
+            "sections": paged,
+            "total": total,
+            "has_more": (offset + len(paged)) < total,
             "status": "ready" if disk_sections else "offline",
         }
     try:
         if "pytest" not in sys.modules and not _BENCHMARKS_SEEDED_MARKER.exists():
             await ensure_benchmarks_preinstalled(pool)
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT section_id, label, ra, dec, fov_arcsec, status, epochs, bands,
-                       height, width, source_badge, size_bytes, error_message, created_at, updated_at
-                FROM installed_sections
-                ORDER BY updated_at DESC
-                """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            params.append(status)
+            clauses.append(f"status = ${len(params)}")
+        if q and q.strip():
+            params.append(f"%{q.strip()}%")
+            idx = len(params)
+            clauses.append(
+                f"(label ILIKE ${idx} OR section_id ILIKE ${idx} OR source_badge ILIKE ${idx})"
             )
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        base_select = (
+            "SELECT section_id, label, ra, dec, fov_arcsec, status, epochs, bands, "
+            "height, width, source_badge, size_bytes, error_message, created_at, updated_at "
+            f"FROM installed_sections {where_sql} ORDER BY updated_at DESC"
+        )
+        async with pool.acquire() as conn:
+            if limit is None and not clauses and offset == 0:
+                rows = await conn.fetch(base_select)
+                total = len(rows)
+            else:
+                fetch_params = list(params)
+                paginated_sql = base_select
+                if limit is not None:
+                    fetch_params.append(limit)
+                    paginated_sql += f" LIMIT ${len(fetch_params)}"
+                if offset > 0:
+                    fetch_params.append(offset)
+                    paginated_sql += f" OFFSET ${len(fetch_params)}"
+                rows = await conn.fetch(paginated_sql, *fetch_params)
+                if hasattr(conn, "fetchval"):
+                    total_val = await conn.fetchval(
+                        f"SELECT COUNT(*) FROM installed_sections {where_sql}", *params
+                    )
+                    total = int(total_val) if total_val is not None else len(rows)
+                else:
+                    total = len(rows)
     except Exception:
         logger.exception("Failed listing installed sections from PostgreSQL; using bundled sections")
         disk_sections = await asyncio.to_thread(_load_disk_benchmark_sections)
+        paged, total = _filter_disk_sections(
+            disk_sections, q=q, status=status, limit=limit, offset=offset
+        )
         return {
-            "sections": disk_sections,
+            "sections": paged,
+            "total": total,
+            "has_more": (offset + len(paged)) < total,
             "status": "ready" if disk_sections else "offline",
         }
     sections = [
@@ -892,7 +965,12 @@ async def list_installed_sections(request: Request) -> dict[str, Any]:
         }
         for r in rows
     ]
-    return {"sections": sections, "status": "ready"}
+    return {
+        "sections": sections,
+        "total": total,
+        "has_more": (offset + len(sections)) < total,
+        "status": "ready",
+    }
 
 
 @router.post("/sections/install", status_code=202)
