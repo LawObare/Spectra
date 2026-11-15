@@ -21,7 +21,7 @@ function clamp01(val: number): number {
   return Math.max(0, Math.min(1, val));
 }
 
-function sampleThumbnailPaletteRgb(
+export function sampleThumbnailPaletteRgb(
   val: number,
   palette: ComparatorColorPalette
 ): [number, number, number] {
