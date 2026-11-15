@@ -1207,6 +1207,7 @@ export const SpectrophotometricLab: React.FC = () => {
             <button
               type="button"
               onClick={() => setSpectralBlinkSynced(!isSpectralBlinkSynced)}
+              title="Toggle between showing the stacked average of all dates vs. just the single pass active in Time-Domain"
               className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all cursor-pointer ${
                 isSpectralBlinkSynced
                   ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
@@ -1229,6 +1230,7 @@ export const SpectrophotometricLab: React.FC = () => {
             <button
               type="button"
               onClick={() => setTab('comparator')}
+              title="Go back to Time-Domain with this exact pixel selected to blink its brightness across dates"
               className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-[11px] font-medium text-neutral-300 hover:bg-white/[0.08] cursor-pointer"
             >
               ← Blink This Pixel in Time-Domain
@@ -1254,7 +1256,10 @@ export const SpectrophotometricLab: React.FC = () => {
         {/* CENTER COLUMN: Identity Verdict + Chart + Live Translation */}
         <section className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800 p-3 sm:p-4 space-y-3">
           {/* Plain-English Verdict Banner */}
-          <div className="rounded-xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/35 via-neutral-900/70 to-neutral-900/70 p-3.5">
+          <div
+            data-tour="spectral-hero-sharpen"
+            className="rounded-xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/35 via-neutral-900/70 to-neutral-900/70 p-3.5"
+          >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1354,7 +1359,10 @@ export const SpectrophotometricLab: React.FC = () => {
           </div>
 
           {/* 3-Shape Visual Cheat Sheet */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+          <div
+            data-tour="spectral-cheat-sheet"
+            className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]"
+          >
             <div className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-neutral-900/60 px-2.5 py-2">
               <svg viewBox="0 0 44 24" className="h-6 w-11 shrink-0" aria-hidden="true">
                 <path d="M3 5 L18 11 L41 20" fill="none" stroke="#38bdf8" strokeWidth="2" />
@@ -1385,7 +1393,10 @@ export const SpectrophotometricLab: React.FC = () => {
           </div>
 
           {/* Chart Legend & uPlot */}
-          <div className="rounded-xl border border-neutral-800 bg-black/50 p-3">
+          <div
+            data-tour="spectral-lab-chart"
+            className="rounded-xl border border-neutral-800 bg-black/50 p-3"
+          >
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400">
               <div className="flex flex-wrap items-center gap-3.5">
                 <span className="inline-flex items-center gap-1.5 text-neutral-200">
@@ -1528,6 +1539,7 @@ export const SpectrophotometricLab: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveToolTab('match')}
+              title="Compare this curve against verified NASA objects to identify what kind of object it is"
               className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
                 activeToolTab === 'match'
                   ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
@@ -1539,6 +1551,7 @@ export const SpectrophotometricLab: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveToolTab('redshift')}
+              title="Estimate cosmic distance & lookback time if inspecting a distant galaxy (stars stay near z = 0)"
               className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
                 activeToolTab === 'redshift'
                   ? 'bg-sky-500/20 text-sky-200 border border-sky-500/40'
@@ -1550,6 +1563,7 @@ export const SpectrophotometricLab: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveToolTab('binary')}
+              title="Test whether one pixel actually blends two orbiting stars (e.g. cold brown dwarf binary pairs)"
               className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
                 activeToolTab === 'binary'
                   ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40'
@@ -1561,7 +1575,7 @@ export const SpectrophotometricLab: React.FC = () => {
           </div>
 
           {activeToolTab === 'match' && (
-            <div className="space-y-3">
+            <div data-tour="spectral-verdict-matches" className="space-y-3">
               {/* Confirm User Decision */}
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-3 text-[11px] space-y-2">
                 <div className="font-semibold uppercase tracking-wide text-emerald-200">
@@ -1582,6 +1596,7 @@ export const SpectrophotometricLab: React.FC = () => {
                       <button
                         key={choice}
                         type="button"
+                        title={`Lock in "${choice}" as your Case Report finding for this sky target`}
                         onClick={() => setConfirmedIdentity(active ? null : choice)}
                         className={`rounded-lg border px-2 py-1.5 text-left text-[11px] font-medium transition-colors cursor-pointer ${
                           active
