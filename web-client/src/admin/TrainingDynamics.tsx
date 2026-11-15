@@ -831,7 +831,7 @@ trainer.train()`,
                 : statusMessage
         }`}
         actions={
-          <>
+          <div data-tour="admin-dynamics-actions" className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -868,7 +868,7 @@ trainer.train()`,
             >
               {isTrainingLive ? 'Training on CPU...' : '+ Train New Model'}
             </Button>
-          </>
+          </div>
         }
       />
 
