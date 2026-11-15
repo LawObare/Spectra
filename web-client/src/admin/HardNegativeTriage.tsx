@@ -413,11 +413,13 @@ export const HardNegativeTriage: React.FC = () => {
           title="Disagreement Triage"
           subtitle="Resolve high-divergence AI vs. citizen classifications via raw FITS HDU 1–6 planes and hard-negative curation."
           actions={
-            <Link to={`/explore?tab=comparator&ra=${currentCandidate.ra}&dec=${currentCandidate.dec}`}>
-              <Button variant="outline" size="sm" className="h-8 rounded-lg px-3.5 text-xs">
-                Inspect in Comparator →
-              </Button>
-            </Link>
+            <div data-tour="admin-triage-actions" className="flex flex-wrap items-center gap-2">
+              <Link to={`/explore?tab=comparator&ra=${currentCandidate.ra}&dec=${currentCandidate.dec}`}>
+                <Button variant="outline" size="sm" className="h-8 rounded-lg px-3.5 text-xs">
+                  Inspect in Comparator →
+                </Button>
+              </Link>
+            </div>
           }
         />
 
