@@ -101,10 +101,14 @@ async def get_spectrum(
     ra: float = Query(..., ge=0.0, le=360.0, description="Right Ascension in J2000 decimal degrees [0, 360]"),
     dec: float = Query(..., ge=-90.0, le=90.0, description="Declination in J2000 decimal degrees [-90, +90]"),
     normalize: bool = Query(False, description="Apply 3σ-clipped 4th-order Chebyshev polynomial continuum normalization"),
+    full_resolution: bool = Query(
+        False,
+        description="Force live HDU 6 WCS-WAVE 102-channel extraction even if coordinate matches an installed section",
+    ),
 ) -> SpectrumResponse:
     """Synchronously extract an archive-backed spectrum from installed sections or live IRSA."""
     pool = await _get_pool(request)
-    if pool is not None:
+    if pool is not None and not full_resolution:
         installed = await find_installed_section_for_coord(pool, ra, dec)
         if installed is not None:
             section_spec = await get_installed_section_spectrum(
@@ -138,6 +142,7 @@ def _live_provenance(releases: list[str], exposure_ids: list[str], coverage: lis
         "exposure_count": len(exposure_ids),
         "covered_channels": sum(coverage),
         "channel_count": TOTAL_SPHEREX_CHANNELS,
+        "spectral_fidelity": "true_102_ch",
         "method": "HDU 5 PSF photometry + HDU 6 WCS-WAVE",
     }
 
