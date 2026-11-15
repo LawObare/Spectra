@@ -272,3 +272,74 @@ def test_list_sections_pagination_and_search(monkeypatch):
     searched = search_res.json()
     assert searched["total"] == 1
     assert searched["sections"][0]["section_id"] == "sec_1"
+
+
+def test_section_spectrum_aperture_and_sky_annulus():
+    """Aperture photometry subtracts sky annulus and sample_mode='sky' isolates background."""
+    n_epochs, n_bands, h, w = 1, 6, 11, 11
+    header = {
+        "shape": [n_epochs, n_bands, h, w],
+        "crval": [69.91125, 26.19028],
+        "cdelt": [-0.00172222, 0.00172222],
+        "mjd_ranges": [[[60800.0, 60801.0] for _ in range(n_bands)]],
+        "exposure_ids": ["exp_ap"],
+        "release": "spherex_qr2",
+        "source_badge": "[IRSA Live (spherex_qr2)]",
+        "compression": "none",
+    }
+    header_bytes = json.dumps(header).encode("utf-8")
+    # Uniform sky background of 2.0 MJy/sr + bright central star 20.0 at center
+    flux = np.full((n_epochs, n_bands, h, w), 2.0, dtype="<f4")
+    flux[:, :, 4:7, 4:7] = 10.0
+    flux[:, :, 5, 5] = 22.0
+    var = np.full((n_epochs, n_bands, h, w), 0.05, dtype="<f4")
+    flags = np.zeros((n_epochs, n_bands, h, w), dtype="<u4")
+    n_exp = np.ones((n_epochs, n_bands, h, w), dtype="<u2")
+    payload = (
+        struct.pack("<I", len(header_bytes))
+        + header_bytes
+        + flux.tobytes()
+        + var.tobytes()
+        + flags.tobytes()
+        + n_exp.tobytes()
+    )
+
+    sky_out = sections._extract_spectrum_from_tensor_payload(
+        payload,
+        ra=69.91125,
+        dec=26.19028,
+        label="Elias 16",
+        px=5,
+        py=5,
+        annulus_inner=3.0,
+        annulus_outer=5.0,
+        sample_mode="sky",
+    )
+    assert sky_out["provenance"]["spectral_fidelity"] == "broadband_6_interpolated"
+    assert sky_out["provenance"]["sample_mode"] == "sky"
+
+    tight_out = sections._extract_spectrum_from_tensor_payload(
+        payload,
+        ra=69.91125,
+        dec=26.19028,
+        label="Elias 16",
+        px=5,
+        py=5,
+        aperture_radius=0.5,
+        annulus_inner=3.0,
+        annulus_outer=5.0,
+        sample_mode="primary",
+    )
+    wide_out = sections._extract_spectrum_from_tensor_payload(
+        payload,
+        ra=69.91125,
+        dec=26.19028,
+        label="Elias 16",
+        px=5,
+        py=5,
+        aperture_radius=2.0,
+        annulus_inner=3.0,
+        annulus_outer=5.0,
+        sample_mode="primary",
+    )
+    assert tight_out["flux_jy"][0] > wide_out["flux_jy"][0] > sky_out["flux_jy"][0]
