@@ -17,9 +17,26 @@ interface TargetSummary {
   trained_entropy: number;
   confidence_gain: number;
   predicted_binary: string;
+  base_predicted_domain?: string;
   predicted_domain: string;
+  top_domain_prob?: number;
   top_cosine_sim: number;
   has_real_cutout: boolean;
+}
+
+interface ClassProbabilityRow {
+  class_name: string;
+  base_prob: number;
+  trained_prob: number;
+}
+
+interface SourceCentroid {
+  x: number;
+  y: number;
+  radius_px: number;
+  peak_snr: number;
+  gradcam_peak_x: number;
+  gradcam_peak_y: number;
 }
 
 interface SimilarityMatch {
@@ -38,6 +55,8 @@ interface SelectedTargetDetail extends TargetSummary {
   stamp_32x32: number[][];
   gradcam_32x32: number[][];
   channel_saliency_102: number[];
+  class_probabilities?: ClassProbabilityRow[];
+  source_centroid?: SourceCentroid;
   similarity_matches: SimilarityMatch[];
   reasoning_trace: string;
 }
@@ -50,13 +69,12 @@ interface IdentifyPayload {
 }
 
 const DOMAIN_CLASS_OPTIONS = [
-  'Y4 Brown Dwarf',
-  'T1+T6 Brown Dwarf Binary',
-  'M4V High-PM Star',
-  'T Tauri Variable Disk',
-  'Mira AGB Pulsating Variable',
+  'Brown Dwarf (Y/T/L)',
+  'M-Dwarf / High-PM Star',
+  'Pulsating / T-Tauri Variable',
   'Ice-Absorbed Protostar',
-  'Extragalactic / AGN',
+  'Solar System / Moving',
+  'Galaxy / AGN / Field',
   'Detector / Cosmic-Ray Artifact',
 ];
 
@@ -79,6 +97,7 @@ export const ActivationInspector: React.FC = () => {
   const [overlayAlpha, setOverlayAlpha] = useState<number>(0.65);
 
   const [overrideClass, setOverrideClass] = useState<string>(DOMAIN_CLASS_OPTIONS[0]);
+  const [manualCentroid, setManualCentroid] = useState<{ x: number; y: number } | null>(null);
   const [feedbackNote, setFeedbackNote] = useState<string>('');
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [submittingFeedback, setSubmittingFeedback] = useState<boolean>(false);
@@ -118,7 +137,23 @@ export const ActivationInspector: React.FC = () => {
 
   const selected = data?.selected || null;
 
-  // Render Real 32x32 Cutout Stamp + PyTorch Grad-CAM Saliency Canvas (ZERO Math.random)
+  useEffect(() => {
+    setManualCentroid(null);
+  }, [selected?.target_id]);
+
+  const handleStampClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = gradCamCanvasRef.current;
+    if (!canvas || !selected) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const rows = selected.stamp_32x32.length || 32;
+    const cols = selected.stamp_32x32[0]?.length || 32;
+    const gx = Math.max(0.5, Math.min(cols - 0.5, ((e.clientX - rect.left) / rect.width) * cols - 0.5));
+    const gy = Math.max(0.5, Math.min(rows - 0.5, ((e.clientY - rect.top) / rect.height) * rows - 0.5));
+    setManualCentroid({ x: Number(gx.toFixed(2)), y: Number(gy.toFixed(2)) });
+  };
+
+  // Render Real 32x32 Cutout Stamp + Source Centroid Circle + PyTorch Grad-CAM Saliency Canvas
   useEffect(() => {
     const canvas = gradCamCanvasRef.current;
     if (!canvas || !selected) return;
@@ -163,15 +198,49 @@ export const ActivationInspector: React.FC = () => {
       }
     }
 
-    // Peak Grad-CAM attribution reticle
-    const rx = (peakX + 0.5) * cellW;
-    const ry = (peakY + 0.5) * cellH;
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
-    ctx.lineWidth = 1.5;
+    // 1. Flux-weighted (or operator-adjusted) Source Centroid Circle + Crosshair
+    const centX = manualCentroid?.x ?? selected.source_centroid?.x ?? cols / 2;
+    const centY = manualCentroid?.y ?? selected.source_centroid?.y ?? rows / 2;
+    const centRadius = (selected.source_centroid?.radius_px ?? 3.2) * cellW;
+    const cxPx = (centX + 0.5) * cellW;
+    const cyPx = (centY + 0.5) * cellH;
+
+    ctx.save();
+    ctx.strokeStyle = manualCentroid ? '#f59e0b' : '#10b981';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([4, 3]);
     ctx.beginPath();
-    ctx.arc(rx, ry, cellW * 2.2, 0, Math.PI * 2);
+    ctx.arc(cxPx, cyPx, centRadius, 0, Math.PI * 2);
     ctx.stroke();
-  }, [selected, overlayAlpha]);
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cxPx - 5, cyPx);
+    ctx.lineTo(cxPx + 5, cyPx);
+    ctx.moveTo(cxPx, cyPx - 5);
+    ctx.lineTo(cxPx, cyPx + 5);
+    ctx.stroke();
+    ctx.restore();
+
+    // 2. Peak Grad-CAM attribution diamond marker (separate from photometric centroid)
+    const camPeakX = selected.source_centroid?.gradcam_peak_x ?? peakX;
+    const camPeakY = selected.source_centroid?.gradcam_peak_y ?? peakY;
+    const rx = (camPeakX + 0.5) * cellW;
+    const ry = (camPeakY + 0.5) * cellH;
+    const dSize = cellW * 1.35;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(rx, ry - dSize);
+    ctx.lineTo(rx + dSize, ry);
+    ctx.lineTo(rx, ry + dSize);
+    ctx.lineTo(rx - dSize, ry);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }, [selected, overlayAlpha, manualCentroid]);
 
   // Render 102-Channel SPHEREx Spectrum + PyTorch Gradient Saliency Bars
   useEffect(() => {
@@ -198,7 +267,7 @@ export const ActivationInspector: React.FC = () => {
 
     const padL = 46;
     const padR = 14;
-    const padT = 18;
+    const padT = 34;
     const padB = 26;
     const cw = width - padL - padR;
     const ch = height - padT - padB;
@@ -221,22 +290,27 @@ export const ActivationInspector: React.FC = () => {
       ctx.fillRect(xForW(w) - bw * 0.4, padT + ch * (1 - s), Math.max(2, bw * 0.8), ch * s);
     });
 
-    // 2. Molecular band markers
-    MOLECULAR_LINES.forEach((line) => {
+    // 2. Staggered molecular band markers (2-tier header prevents 3.05µm vs 3.32µm overlap)
+    MOLECULAR_LINES.forEach((line, idx) => {
       const x = xForW(line.wave);
+      const labelY = idx % 2 === 0 ? 11 : 24;
       ctx.strokeStyle = line.color;
       ctx.globalAlpha = 0.45;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
-      ctx.moveTo(x, padT);
+      ctx.moveTo(x, padT - 4);
       ctx.lineTo(x, padT + ch);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
-      ctx.fillStyle = line.color;
       ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(line.label, x, padT + 9);
+      const tw = ctx.measureText(line.label).width;
+      const boxX = Math.max(padL, Math.min(width - padR - tw - 6, x - tw / 2 - 3));
+      ctx.fillStyle = 'rgba(7, 11, 19, 0.88)';
+      ctx.fillRect(boxX, labelY - 9, tw + 6, 12);
+      ctx.fillStyle = line.color;
+      ctx.textAlign = 'left';
+      ctx.fillText(line.label, boxX + 3, labelY);
     });
 
     // 3. Real 102-channel SPHEREx SED curve
@@ -291,13 +365,15 @@ export const ActivationInspector: React.FC = () => {
           metrics: {
             trained_prob: selected.trained_anomaly_prob,
             top_cosine_sim: selected.top_cosine_sim,
+            centroid_x: manualCentroid?.x ?? selected.source_centroid?.x ?? 16,
+            centroid_y: manualCentroid?.y ?? selected.source_centroid?.y ?? 16,
             ...selected.spectral_features,
           },
         }),
       });
       const out = await res.json();
       if (!res.ok) throw new Error(out.detail || `HTTP ${res.status}`);
-      setFeedbackStatus(`Saved "${chosenClass}" to Tab 4 SFT Training Dataset (${out.total_feedback} operator examples).`);
+      setFeedbackStatus(`Saved "${chosenClass}" to Datasets & Class Buckets (${out.total_feedback} operator examples).`);
     } catch (err) {
       setFeedbackStatus(err instanceof Error ? err.message : 'Failed saving feedback');
     } finally {
@@ -430,9 +506,11 @@ export const ActivationInspector: React.FC = () => {
                 </Card>
 
                 <Card className="border-border p-3 bg-card/60">
-                  <div className="text-[10px] font-mono text-muted-foreground">AI Identification</div>
+                  <div className="text-[10px] font-mono text-muted-foreground">AI Identification (6-Class)</div>
                   <div className="text-sm font-semibold text-sky-300 truncate mt-0.5">{selected.predicted_domain}</div>
-                  <div className="text-[10px] font-mono text-muted-foreground mt-1">{selected.predicted_binary}</div>
+                  <div className="text-[10px] font-mono text-muted-foreground truncate mt-1">
+                    Base: {selected.base_predicted_domain || 'Field'} → FT {((selected.top_domain_prob ?? selected.trained_anomaly_prob) * 100).toFixed(1)}%
+                  </div>
                 </Card>
 
                 <Card className="border-border p-3 bg-card/60">
@@ -446,12 +524,78 @@ export const ActivationInspector: React.FC = () => {
                 </Card>
               </div>
 
+              {/* BASE MODEL VS FINE-TUNED LORA 6-CLASS PROBABILITIES */}
+              {selected.class_probabilities && selected.class_probabilities.length > 0 && (
+                <Card className="border-border bg-card/60">
+                  <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30 flex flex-row items-center justify-between gap-2">
+                    <CardTitle className="text-xs font-semibold">
+                      Base Model vs. Fine-Tuned LoRA Multi-Class Identification Probabilities
+                    </CardTitle>
+                    <div className="flex items-center gap-3 text-[10px] font-mono">
+                      <span className="text-slate-400">■ Base Prior</span>
+                      <span className="text-emerald-400">■ Fine-Tuned Post-LoRA</span>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    {selected.class_probabilities.map((cp) => {
+                      const basePct = Math.round(cp.base_prob * 100);
+                      const trainedPct = Math.round(cp.trained_prob * 100);
+                      const delta = trainedPct - basePct;
+                      const isWinner = cp.class_name === selected.predicted_domain;
+                      return (
+                        <div
+                          key={cp.class_name}
+                          className={cn(
+                            'rounded border p-2 flex flex-col gap-1',
+                            isWinner ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border/70 bg-secondary/15'
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-1.5 text-[11px]">
+                            <span className={cn('truncate font-medium', isWinner ? 'text-emerald-300 font-semibold' : 'text-foreground')}>
+                              {cp.class_name}
+                            </span>
+                            <span className="font-mono text-[10px] shrink-0">
+                              <span className="text-slate-400">{basePct}%</span>
+                              <span className="text-muted-foreground mx-1">→</span>
+                              <span className={isWinner ? 'text-emerald-300 font-bold' : 'text-sky-300'}>{trainedPct}%</span>
+                              <span className={cn('ml-1', delta >= 0 ? 'text-emerald-400' : 'text-amber-400')}>
+                                ({delta >= 0 ? '+' : ''}{delta})
+                              </span>
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="h-1 w-full rounded bg-secondary overflow-hidden">
+                              <div className="h-full bg-slate-400/75" style={{ width: `${Math.min(100, basePct)}%` }} />
+                            </div>
+                            <div className="h-1.5 w-full rounded bg-secondary overflow-hidden">
+                              <div
+                                className={cn('h-full', isWinner ? 'bg-emerald-400' : 'bg-sky-400')}
+                                style={{ width: `${Math.min(100, trainedPct)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* VISUAL EVIDENCE: GRAD-CAM STAMP + 102-BAND SALIENCY */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                 <Card className="lg:col-span-5 border-border">
                   <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30 flex flex-row items-center justify-between gap-2">
-                    <CardTitle className="text-xs font-semibold">32×32 Stamp + PyTorch Grad-CAM</CardTitle>
-                    <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                    <CardTitle className="text-xs font-semibold">32×32 Stamp + Centroid &amp; Grad-CAM</CardTitle>
+                    <div className="flex items-center gap-2 text-[10px] font-mono">
+                      {manualCentroid && (
+                        <button
+                          type="button"
+                          onClick={() => setManualCentroid(null)}
+                          className="text-amber-300 hover:text-amber-200 underline"
+                        >
+                          Reset Centroid
+                        </button>
+                      )}
                       <span className="text-muted-foreground">CAM</span>
                       <input
                         type="range"
@@ -469,12 +613,23 @@ export const ActivationInspector: React.FC = () => {
                       ref={gradCamCanvasRef}
                       width={224}
                       height={224}
-                      className="rounded border border-border w-56 h-56"
+                      onClick={handleStampClick}
+                      title="Click stamp to reposition source centroid aperture"
+                      className="rounded border border-border w-56 h-56 cursor-crosshair"
                     />
+                    <div className="flex flex-wrap items-center justify-center gap-2 text-[10px] font-mono text-muted-foreground">
+                      <span className={manualCentroid ? 'text-amber-300' : 'text-emerald-400'}>
+                        ◯ {manualCentroid ? 'Manual' : 'Flux'} Centroid ({(manualCentroid?.x ?? selected.source_centroid?.x ?? 16).toFixed(1)},{' '}
+                        {(manualCentroid?.y ?? selected.source_centroid?.y ?? 16).toFixed(1)} · r={(selected.source_centroid?.radius_px ?? 3.2).toFixed(1)}px)
+                      </span>
+                      <span className="text-sky-400">
+                        ◇ CAM Peak ({selected.source_centroid?.gradcam_peak_x ?? 16}, {selected.source_centroid?.gradcam_peak_y ?? 16})
+                      </span>
+                    </div>
                     <div className="text-[10px] font-mono text-muted-foreground text-center">
                       {selected.has_real_cutout
-                        ? 'Decoded from installed multi-epoch SPHEREx cutout + DipoleConvNet3D.act2 Grad-CAM'
-                        : 'Deterministic PSF reconstruction + DipoleConvNet3D.act2 Grad-CAM'}
+                        ? 'Decoded from installed multi-epoch SPHEREx cutout · Click canvas to refine centroid'
+                        : 'Deterministic PSF reconstruction · Click canvas to refine centroid'}
                     </div>
                   </CardContent>
                 </Card>
