@@ -199,6 +199,12 @@ export const HardNegativeTriage: React.FC = () => {
     ctx.fillStyle = '#05070B';
     ctx.fillRect(0, 0, w, h);
 
+    const seedPhase = currentCandidate.ra * 0.17 + currentCandidate.dec * 0.23;
+    const detNoise = (px: number, py: number) => {
+      const s = Math.sin(px * 12.9898 + py * 78.233 + seedPhase) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
     if (activeHduTab === 1) {
       // HDU 1: IMAGE (FLUX) with Asinh stretch
       const imgData = ctx.createImageData(w, h);
@@ -208,7 +214,7 @@ export const HardNegativeTriage: React.FC = () => {
         for (let x = 0; x < w; x++) {
           const idx = (y * w + x) * 4;
           const r2 = (x - cx) ** 2 + (y - cy) ** 2;
-          const flux = Math.exp(-r2 / (2 * (w / 10) ** 2)) * 1.5 + Math.random() * 0.15;
+          const flux = Math.exp(-r2 / (2 * (w / 10) ** 2)) * 1.5 + detNoise(x, y) * 0.15;
           const val = Math.min(255, Math.floor(Math.asinh(flux * 5) * 45));
           imgData.data[idx] = Math.min(255, val + 15);
           imgData.data[idx + 1] = Math.min(255, Math.floor(val * 1.2));
@@ -228,14 +234,17 @@ export const HardNegativeTriage: React.FC = () => {
       ctx.fillRect(w / 4, h / 3, 6, 6);
       ctx.fillRect((w * 3) / 4, (h * 2) / 3, 6, 6);
     } else if (activeHduTab === 3) {
-      // HDU 3: VARIANCE
+      // HDU 3: VARIANCE (deterministic detector read-noise map seeded by RA/Dec)
       const imgData = ctx.createImageData(w, h);
-      for (let i = 0; i < w * h * 4; i += 4) {
-        const noise = Math.floor(Math.random() * 40 + 20);
-        imgData.data[i] = noise;
-        imgData.data[i + 1] = noise;
-        imgData.data[i + 2] = noise;
-        imgData.data[i + 3] = 255;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4;
+          const noise = Math.floor(detNoise(x + 7, y + 13) * 40 + 20);
+          imgData.data[idx] = noise;
+          imgData.data[idx + 1] = noise;
+          imgData.data[idx + 2] = noise;
+          imgData.data[idx + 3] = 255;
+        }
       }
       ctx.putImageData(imgData, 0, 0);
     } else if (activeHduTab === 4) {
@@ -304,6 +313,19 @@ export const HardNegativeTriage: React.FC = () => {
           primary_class: target?.ai_prediction || 'hard_negative',
           confidence: 0.85,
           feature_tags: ['hard_negative_buffer', 'active_learning_weight_3.5x'],
+        }),
+      }).catch(() => {});
+      fetch('/api/admin/sft-dataset/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_id: id,
+          label: target?.title || target?.subject_id || id,
+          predicted_class: target?.ai_prediction || 'hard_negative',
+          human_class: target?.community_consensus || 'Galaxy / AGN / Field',
+          action: 'overridden',
+          reasoning: target?.notes || 'Promoted from Hard-Negative Triage (3.5x weight)',
+          metrics: { divergence: target?.divergence ?? 0 },
         }),
       }).catch(() => {});
     } catch {
