@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: spectra-mission-engine
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: main
+    healthCheckPath: /api/health/live
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: ADMIN_MUTATIONS_ENABLED
+        value: "false"
+      - key: ALLOWED_ORIGINS
+        value: https://spectra.pages.dev
+      - key: LRU_MAX_BYTES
+        value: "134217728"
+      - key: MAX_REPROJECT_WORKERS
+        value: "0"
+      - key: IRSA_COLLECTIONS
+        value: spherex_dr1,spherex_qr3
