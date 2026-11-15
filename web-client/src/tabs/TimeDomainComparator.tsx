@@ -1265,7 +1265,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       <div className="flex w-full lg:w-[62%] xl:w-[65%] shrink-0 lg:shrink lg:min-h-0 flex-col border-b lg:border-b-0 lg:border-r border-neutral-800 bg-black">
         {/* Top Control Header */}
         <div className="flex min-h-11 flex-wrap items-center justify-between gap-2.5 border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-3 sm:px-4 py-1.5">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div data-tour="comparator-target-switch" className="flex flex-wrap items-center gap-2 text-xs">
             <div className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5">
               <svg
                 className="h-3.5 w-3.5 shrink-0 text-sky-400"
@@ -1392,6 +1392,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                   key={z}
                   type="button"
                   onClick={() => setCanvasZoom(z)}
+                  title={
+                    z === 'fit'
+                      ? 'Fit the entire cutout stamp cleanly inside your screen'
+                      : `View the cutout image at ${z.toUpperCase()} pixel zoom`
+                  }
                   className={`h-6 px-2 rounded-lg font-mono text-[11px] transition-all cursor-pointer ${
                     canvasZoom === z
                       ? 'bg-primary text-white font-semibold shadow-sm ring-1 ring-white/15'
@@ -1421,6 +1426,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               <button
                 type="button"
                 onClick={() => setRawVsRectified(rawVsRectified === 'rectified' ? 'raw_sensor' : 'rectified')}
+                title="Switch between North-Up aligned sky images and the raw angled camera sensor view"
                 className={`h-6 rounded-lg border px-2.5 text-xs font-medium transition-all cursor-pointer ${
                   rawVsRectified === 'raw_sensor'
                     ? 'border-amber-500/50 bg-amber-500/15 text-amber-300'
@@ -1477,6 +1483,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         {/* Central WebGL2 Canvas Viewport (Expansive & Fluid) */}
         <div className="relative flex flex-1 min-h-[300px] sm:min-h-[380px] lg:min-h-0 items-center justify-center overflow-auto bg-black p-3 sm:p-4">
           <div
+            data-tour="comparator-canvas-player"
             className={`relative rounded-xl border border-neutral-800 bg-black shadow-2xl overflow-hidden flex items-center justify-center transition-all ${
               canvasZoom === 'fit'
                 ? 'h-full w-full max-h-[55vh] sm:max-h-[65vh] lg:max-h-[calc(100vh-220px)] max-w-[min(100%,55vh)] sm:max-w-[min(100%,65vh)] lg:max-w-[calc(100vh-220px)] aspect-square'
@@ -1705,7 +1712,10 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
         </div>
 
         {/* Discrete Survey Epoch Scrubber Bar */}
-        <div className="border-t border-neutral-800 bg-neutral-950 px-4 py-3">
+        <div
+          data-tour="comparator-playback-modes"
+          className="border-t border-neutral-800 bg-neutral-950 px-4 py-3"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Play / Step Transport */}
             <div className="flex items-center space-x-1.5">
@@ -1871,22 +1881,44 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       {/* ========================================================================= */}
       <div className="flex w-full lg:w-[38%] xl:w-[35%] shrink-0 lg:shrink lg:min-h-0 flex-col lg:overflow-y-auto border-t lg:border-t-0 lg:border-l border-neutral-800 bg-neutral-950 p-3 sm:p-4 text-xs space-y-4">
         {/* Render Mode Switcher */}
-        <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur">
+        <section
+          data-tour="comparator-rgb-stretch"
+          className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-sm backdrop-blur"
+        >
           <div className="mb-2.5 flex items-center justify-between">
             <h3 className="font-semibold text-white text-xs tracking-wide uppercase">Render Mode</h3>
             <span className="font-mono text-[10px] text-neutral-500">WebGL2 Float32 Pipeline</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { id: 'blink', title: 'Temporal Blink', subtitle: 'Cycle 6-mo passes', keyHint: '1' },
-              { id: 'difference', title: 'Motion Diff', subtitle: 'Signed diff (t_N - t_0)', keyHint: '2' },
-              { id: 'coadd', title: 'Deep Co-Add', subtitle: 'Stack 1/σ² passes', keyHint: '3' },
+              {
+                id: 'blink',
+                title: 'Temporal Blink',
+                subtitle: 'Cycle 6-mo passes',
+                keyHint: '1',
+                hint: 'Flip between 6-month survey dates like a cartoon to spot objects hopping or flashing',
+              },
+              {
+                id: 'difference',
+                title: 'Motion Diff',
+                subtitle: 'Signed diff (t_N - t_0)',
+                keyHint: '2',
+                hint: 'Subtract the first photo from the active date: steady stars fade to gray while movers leave a dark/bright shadow pair',
+              },
+              {
+                id: 'coadd',
+                title: 'Deep Co-Add',
+                subtitle: 'Stack 1/σ² passes',
+                keyHint: '3',
+                hint: 'Combine every survey pass together so faint hidden targets shine above background static',
+              },
             ].map((m) => {
               const active = renderMode === m.id;
               return (
                 <button
                   key={m.id}
                   type="button"
+                  title={m.hint}
                   onClick={() => {
                     setRenderMode(m.id as any);
                     setUrlMode(m.id);
@@ -1935,14 +1967,15 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             <span className="text-neutral-300">Colormap:</span>
             <div className="flex flex-wrap gap-1">
               {[
-                { id: 'standard_rgb', label: 'Grayscale' },
-                { id: 'viridis', label: 'Viridis' },
-                { id: 'cividis', label: 'Cividis' },
-                { id: 'inverted_grayscale', label: 'Inverted' },
+                { id: 'standard_rgb', label: 'Grayscale', hint: 'Classic black-and-white astronomy intensity view' },
+                { id: 'viridis', label: 'Viridis', hint: 'Colorblind-friendly purple-to-yellow brightness scale' },
+                { id: 'cividis', label: 'Cividis', hint: 'High-contrast blue-to-yellow scientific color scale' },
+                { id: 'inverted_grayscale', label: 'Inverted', hint: 'Dark stars on white background—often easier for spotting faint blobs' },
               ].map((pal) => (
                 <button
                   key={pal.id}
                   type="button"
+                  title={pal.hint}
                   onClick={() => setColorPalette(pal.id as any)}
                   className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
                     colorPalette === pal.id
@@ -2312,6 +2345,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               <div className="flex items-center gap-3">
                 <button
                   type="button"
+                  title="Inspect the 102-infrared-color spectrum of this dot to see what kind of star, dwarf, or galaxy it is"
                   onClick={() => setTab('spectral')}
                   className="font-sans text-[11px] font-semibold text-sky-400 hover:text-sky-300 cursor-pointer"
                 >
@@ -2319,6 +2353,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 </button>
                 <button
                   type="button"
+                  title="Send this coordinate into Ice Studio to test for frozen water or dry ice clouds"
                   onClick={() => setTab('ice')}
                   className="font-sans text-[11px] font-semibold text-cyan-300 hover:text-cyan-200 cursor-pointer"
                 >
