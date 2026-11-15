@@ -3,6 +3,7 @@ import { NasaMeatballSvg } from './GlobalCommandHeader';
 
 interface MissionHeroProps {
   onLaunchWorkstation: () => void;
+  onStartGuidedTour?: () => void;
   onSelectDiscovery?: (discoveryId: string) => void;
 }
 
@@ -51,7 +52,10 @@ function buildStarfield(count: number, seed = 20250311): TwinkleStar[] {
 
 const HERO_STARS = buildStarfield(120);
 
-export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation }) => {
+export const MissionHero: React.FC<MissionHeroProps> = ({
+  onLaunchWorkstation,
+  onStartGuidedTour,
+}) => {
   return (
     <section
       id="mission-hero"
@@ -158,6 +162,16 @@ export const MissionHero: React.FC<MissionHeroProps> = ({ onLaunchWorkstation })
                 </svg>
               </span>
             </button>
+
+            {onStartGuidedTour && (
+              <button
+                type="button"
+                onClick={onStartGuidedTour}
+                className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-500/10 hover:bg-sky-500/20 text-sky-200 px-5 py-3.5 text-sm font-medium transition-colors cursor-pointer"
+              >
+                <span>Take Guided Tour</span>
+              </button>
+            )}
 
             <a
               href="#discoveries"
