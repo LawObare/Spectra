@@ -46,6 +46,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import struct
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -447,11 +448,22 @@ def reproject_single_exposure(
 _CPU_POOL: ProcessPoolExecutor | None = None
 
 
+def _configured_reproject_workers(requested: int = 2) -> int:
+    raw = os.environ.get("MAX_REPROJECT_WORKERS", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return requested
+
+
 def get_cpu_pool(max_workers: int = 2) -> ProcessPoolExecutor:
     """Get or instantiate the singleton ProcessPoolExecutor(max_workers=2)."""
     global _CPU_POOL
     if _CPU_POOL is None:
-        _CPU_POOL = ProcessPoolExecutor(max_workers=max_workers)
+        workers = max(1, _configured_reproject_workers(max_workers))
+        _CPU_POOL = ProcessPoolExecutor(max_workers=workers)
     return _CPU_POOL
 
 
@@ -492,7 +504,7 @@ def reproject_exposures_parallel(
     Parallel reproject exposures using ProcessPoolExecutor to bypass the GIL
     (SPECIFICATION.md §4.2.5 Item 1).
     """
-    if len(exposures) <= 1:
+    if len(exposures) <= 1 or (pool is None and _configured_reproject_workers(max_workers) == 0):
         return reproject_exposures_sync(exposures, master_wcs, shape_out)
 
     master_hdr = master_wcs.to_header()
@@ -523,8 +535,15 @@ async def reproject_exposures_async(
 ) -> list[ReprojectedExposure]:
     """
     Async non-blocking reprojection offloaded to ProcessPoolExecutor
-    (SPECIFICATION.md §4.2.5 Item 1).
+    (SPECIFICATION.md §4.2.5 Item 1), or a thread when MAX_REPROJECT_WORKERS=0.
     """
+    if pool is None and _configured_reproject_workers(2) == 0:
+        return await asyncio.to_thread(
+            reproject_exposures_sync,
+            exposures,
+            master_wcs,
+            shape_out,
+        )
     loop = asyncio.get_running_loop()
     executor = pool or get_cpu_pool()
     return await loop.run_in_executor(
