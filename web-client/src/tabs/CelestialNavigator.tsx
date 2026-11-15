@@ -1,6 +1,7 @@
 import React, { startTransition, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import A from 'aladin-lite';
 import { useTelemetryStore } from '../store/useTelemetryStore';
+import { useWalkthroughStore } from '../store/useWalkthroughStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import {
   MANDATORY_BENCHMARKS,
@@ -190,7 +191,7 @@ function parseIrsaSiaResponse(payload: unknown): IrsaExposure[] {
 }
 
 function parseStcsPolygon(sRegion: string): { ra: number[]; dec: number[] } | null {
-  if (!/^\s*POLYGON\s+ICRS\b/i.test(sRegion)) return null;
+  if (!/^\s*POLYGON(?:\s+ICRS)?\b/i.test(sRegion)) return null;
   const values = sRegion.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi)?.map(Number);
   if (!values || values.length < 6 || values.length % 2 !== 0) return null;
   const ra = values.filter((_, index) => index % 2 === 0);
@@ -537,6 +538,20 @@ export const CelestialNavigator: React.FC = () => {
   const [showAvailableCoverage, setShowAvailableCoverage] = useState<boolean>(false);
   const [showInstalledSections, setShowInstalledSections] = useState<boolean>(true);
   const [showCoverageCard, setShowCoverageCard] = useState<boolean>(false);
+  const activeWalkthroughStepId = useWalkthroughStore((s) =>
+    s.isOpen ? s.steps[s.stepIndex]?.id ?? null : null
+  );
+
+  useEffect(() => {
+    if (activeWalkthroughStepId === 'navigator-sidebar-toggle') {
+      setShowCoverageCard(false);
+    } else if (
+      activeWalkthroughStepId === 'navigator-cutout-controls' ||
+      activeWalkthroughStepId === 'navigator-open-comparator'
+    ) {
+      setShowCoverageCard(true);
+    }
+  }, [activeWalkthroughStepId]);
   const [showWcsGrid, setShowWcsGrid] = useState<boolean>(false);
   const [showCutoutBox, setShowCutoutBox] = useState<boolean>(true);
   const [activeSurvey, setActiveSurvey] = useState<PhotographicSurveyId>('allwise-color');
@@ -634,10 +649,10 @@ export const CelestialNavigator: React.FC = () => {
     };
   }, []);
 
-  // Defer 198 KB all-sky SPHEREx mission coverage fetch until idle (or immediately when coverage layer is enabled)
+  // Defer 198 KB all-sky SPHEREx mission coverage fetch until idle (or immediately when coverage/footprints layer is enabled)
   useEffect(() => {
     if (coverageLoadedRef.current || coverageInFlightRef.current) return;
-    if (!showAvailableCoverage && !aladinReady) return;
+    if (!showAvailableCoverage && !showLvfFootprints && !aladinReady) return;
 
     let idleId: number | null = null;
     let timerId: number | null = null;
@@ -680,7 +695,7 @@ export const CelestialNavigator: React.FC = () => {
           })
         : null;
 
-    if (showAvailableCoverage) {
+    if (showAvailableCoverage || showLvfFootprints) {
       loadCoverage();
     } else if (idleWin && typeof idleWin.requestIdleCallback === 'function') {
       timerId = window.setTimeout(() => {
@@ -696,7 +711,7 @@ export const CelestialNavigator: React.FC = () => {
         idleWin.cancelIdleCallback(idleId);
       }
     };
-  }, [aladinReady, showAvailableCoverage]);
+  }, [aladinReady, showAvailableCoverage, showLvfFootprints]);
 
   // Reset target-level exposure table when user selects a new coordinate (no auto-querying on pan)
   useEffect(() => {
@@ -832,6 +847,13 @@ export const CelestialNavigator: React.FC = () => {
     [uninstallSectionById]
   );
 
+  // Automatically fetch target-level archive exposures when the user enables LVF Footprints
+  useEffect(() => {
+    if (showLvfFootprints && archiveStatus === 'idle' && archiveExposures.length === 0) {
+      void checkSelectedCoverage();
+    }
+  }, [showLvfFootprints, archiveStatus, archiveExposures.length, checkSelectedCoverage]);
+
   const filteredExposures = useMemo(() => {
     if (selectedBandFilter === 'ALL') return allExposures;
     return allExposures.filter((e) => e.detector.id === selectedBandFilter);
@@ -846,9 +868,31 @@ export const CelestialNavigator: React.FC = () => {
     );
   }, [archiveExposures, selectedBandFilter]);
 
+  // Combined deduplicated archive footprint pool (target query + preloaded wide-field DB footprints)
+  const allLvfArchiveExposures = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: IrsaExposure[] = [];
+    for (const exp of [...archiveExposures, ...fullCoverageExposures]) {
+      if (seen.has(exp.obsId)) continue;
+      if (!parseStcsPolygon(exp.sRegion)) continue;
+      seen.add(exp.obsId);
+      merged.push(exp);
+    }
+    return merged;
+  }, [archiveExposures, fullCoverageExposures]);
+
+  const filteredLvfArchiveExposures = useMemo(() => {
+    if (selectedBandFilter === 'ALL') return allLvfArchiveExposures;
+    return allLvfArchiveExposures.filter(
+      (exp) =>
+        exp.detector.toUpperCase().includes(selectedBandFilter) ||
+        exp.wavelength.toUpperCase().includes(selectedBandFilter)
+    );
+  }, [allLvfArchiveExposures, selectedBandFilter]);
+
   const detectorCounts = useMemo(() => {
     const counts: Record<string, number> = { D1: 0, D2: 0, D3: 0, D4: 0, D5: 0, D6: 0 };
-    archiveExposures.forEach((exp) => {
+    allLvfArchiveExposures.forEach((exp) => {
       const detText = `${exp.detector} ${exp.wavelength}`.toUpperCase();
       SPHEREX_DETECTORS.forEach((det) => {
         if (detText.includes(det.id)) {
@@ -857,7 +901,7 @@ export const CelestialNavigator: React.FC = () => {
       });
     });
     return counts;
-  }, [archiveExposures]);
+  }, [allLvfArchiveExposures]);
 
   const activeExposure = useMemo(() => {
     const id = hoveredObsId || selectedObsId;
@@ -1615,23 +1659,27 @@ export const CelestialNavigator: React.FC = () => {
     }
   }, [ra, dec]);
 
-  // Toggle native WCS Coordinate Grid
+  // Toggle native WCS Coordinate Grid (Aladin Lite v3 uses setCooGrid({ enabled }) / hideCooGrid())
   useEffect(() => {
     const aladin = aladinInstanceRef.current;
-    if (!aladin) return;
+    if (!aladin || !aladinReady) return;
     try {
-      if (typeof aladin.showCooGrid === 'function') {
-        aladin.showCooGrid(showWcsGrid);
+      if (typeof aladin.setCooGrid === 'function') {
+        aladin.setCooGrid({ enabled: showWcsGrid });
+      } else if (showWcsGrid && typeof aladin.showCooGrid === 'function') {
+        aladin.showCooGrid();
+      } else if (!showWcsGrid && typeof aladin.hideCooGrid === 'function') {
+        aladin.hideCooGrid();
       }
     } catch (e) {
       console.warn('Error toggling WCS grid:', e);
     }
-  }, [showWcsGrid]);
+  }, [showWcsGrid, aladinReady]);
 
   // Synchronize SPHEREx LVF Footprints Overlay (real archive s_region + wide-field DB footprints + optional synthetic)
   useEffect(() => {
     const overlay = footprintOverlayRef.current;
-    if (!overlay) return;
+    if (!aladinReady || !overlay) return;
     try {
       overlay.removeAll();
       if (showLvfFootprints && typeof A.polygon === 'function') {
@@ -1652,7 +1700,7 @@ export const CelestialNavigator: React.FC = () => {
           overlay.add(poly);
         };
 
-        filteredArchiveExposures.forEach(drawArchiveExp);
+        filteredLvfArchiveExposures.forEach(drawArchiveExp);
 
         filteredExposures.forEach((exp) => {
           const corners = getFootprintCorners(
@@ -1672,7 +1720,7 @@ export const CelestialNavigator: React.FC = () => {
     } catch (e) {
       console.warn('Error updating footprints overlay:', e);
     }
-  }, [showLvfFootprints, filteredArchiveExposures, filteredExposures]);
+  }, [aladinReady, showLvfFootprints, filteredLvfArchiveExposures, filteredExposures]);
 
   const isMatchingDownloading = Boolean(matchingDownloadingSection);
 
@@ -1782,7 +1830,7 @@ export const CelestialNavigator: React.FC = () => {
                     ? 'bg-primary/20 text-white ring-1 ring-primary/50 shadow-sm'
                     : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                 }`}
-                title="Toggle SPHEREx Level-2 Linear Variable Filter (LVF) detector footprints"
+                title="Show or hide camera snapshot rectangles from SPHEREx's 6 infrared detectors"
               >
                 <svg
                   className="h-3.5 w-3.5 shrink-0"
@@ -1798,7 +1846,15 @@ export const CelestialNavigator: React.FC = () => {
                   <polyline points="2 17 12 22 22 17" />
                   <polyline points="2 12 12 17 22 12" />
                 </svg>
-                <span>LVF Footprints ({filteredArchiveExposures.length + filteredExposures.length})</span>
+                <span>
+                  LVF Footprints (
+                  {showLvfFootprints &&
+                  archiveStatus === 'loading' &&
+                  filteredLvfArchiveExposures.length + filteredExposures.length === 0
+                    ? 'Loading…'
+                    : filteredLvfArchiveExposures.length + filteredExposures.length}
+                  )
+                </span>
               </button>
               <button
                 type="button"
@@ -1808,7 +1864,7 @@ export const CelestialNavigator: React.FC = () => {
                     ? 'bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/40'
                     : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                 }`}
-                title="Database-backed SPHEREx DR1 (cyan) & QR3 (gold) HEALPix coverage MOCs with NEP/SEP Deep Field rings"
+                title="Show or hide where NASA SPHEREx public sky data is released (cyan = DR1, gold = QR3, plus Deep Fields)"
                 aria-pressed={showAvailableCoverage}
               >
                 <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)] shrink-0" />
@@ -1822,7 +1878,7 @@ export const CelestialNavigator: React.FC = () => {
                     ? 'bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/40'
                     : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                 }`}
-                title="Show installed sky cutout sections stored for instant use across Comparator, Spectral Lab, and Ice Studio"
+                title="Show or hide green sky stamps already saved locally for instant offline playback across Tabs 2, 3, and 4"
                 aria-pressed={showInstalledSections}
               >
                 <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)] shrink-0" />
@@ -1841,6 +1897,7 @@ export const CelestialNavigator: React.FC = () => {
                 type="button"
                 onClick={() => setShowWcsGrid((v) => !v)}
                 aria-pressed={showWcsGrid}
+                title="Show or hide sky latitude & longitude grid lines (Right Ascension & Declination, J2000)"
                 className={`h-7 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
                   showWcsGrid
                     ? 'bg-primary/20 text-white ring-1 ring-primary/50'
@@ -1872,7 +1929,7 @@ export const CelestialNavigator: React.FC = () => {
                     ? 'bg-primary/20 text-white ring-1 ring-primary/50'
                     : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                 }`}
-                title="Show true-scale cutout bounding box at target coordinate"
+                title="Show or hide the blue square marking the exact sky patch captured into Time-Domain"
               >
                 <svg
                   className="h-3.5 w-3.5 shrink-0"
@@ -1924,13 +1981,14 @@ export const CelestialNavigator: React.FC = () => {
                 type="button"
                 onClick={() => setSelectedBandFilter('ALL')}
                 aria-pressed={selectedBandFilter === 'ALL'}
+                title="Show snapshots from all 6 SPHEREx infrared color bands together (0.75–5.0 µm)"
                 className={`h-7 px-2 rounded-lg font-mono text-[11px] inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
                   selectedBandFilter === 'ALL'
                     ? 'bg-primary text-white font-semibold shadow-sm ring-1 ring-white/15'
                     : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                 }`}
               >
-                All ({archiveExposures.length})
+                All ({allLvfArchiveExposures.length})
               </button>
               {SPHEREX_DETECTORS.map((det) => {
                 const count = detectorCounts[det.id] || 0;
@@ -1944,7 +2002,7 @@ export const CelestialNavigator: React.FC = () => {
                       setShowLvfFootprints(true);
                     }}
                     aria-pressed={isSelected}
-                    title={`${det.label} · R=${det.resolvingPower} · ${count} exposures`}
+                    title={`Show only ${det.label} snapshots (${count} available) — ${det.id === 'D1' || det.id === 'D2' ? 'best for warm starlight' : det.id === 'D3' || det.id === 'D4' ? 'best for gas & methane dips' : 'best for cold heat & ice'}`}
                     className={`h-7 px-2 rounded-lg font-mono text-[11px] inline-flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
                       isSelected
                         ? 'bg-primary text-white font-semibold shadow-sm ring-1 ring-white/15'
@@ -2024,6 +2082,7 @@ export const CelestialNavigator: React.FC = () => {
           <div className="flex shrink-0 items-center">
             <button
               type="button"
+              data-tour="navigator-sidebar-toggle"
               onClick={() => setShowCoverageCard((open) => !open)}
               className={`h-8 w-8 rounded-lg border inline-flex items-center justify-center transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${
                 showCoverageCard
@@ -2189,9 +2248,9 @@ export const CelestialNavigator: React.FC = () => {
             </div>
           </div>
 
-          {/* Direct Coordinate & Cutout Size Form */}
+          {/* Direct Coordinate, Cutout Size & Explicit Query/Install Controls */}
+          <div data-tour="navigator-cutout-controls">
           <form
-            data-tour="navigator-cutout-controls"
             onSubmit={handleManualCoordSubmit}
             className="mt-2.5 grid grid-cols-12 gap-1.5"
           >
@@ -2265,6 +2324,7 @@ export const CelestialNavigator: React.FC = () => {
                 size="xs"
                 onClick={checkSelectedCoverage}
                 disabled={archiveStatus === 'loading'}
+                title="Query NASA IRSA servers live right now for telescope snapshots touching this sky box"
                 className="flex-1 h-7 text-[11px]"
               >
                 {archiveStatus === 'loading' ? 'Querying IRSA…' : 'Query Selected Coverage'}
@@ -2332,8 +2392,8 @@ export const CelestialNavigator: React.FC = () => {
                   className="flex-1 h-7 text-[11px]"
                   title={
                     activeDownloadingSections.length > 0
-                      ? 'Add this sky section to the install queue'
-                      : 'Download and persist this sky section locally'
+                      ? 'Add this sky patch to your background download queue for instant offline viewing'
+                      : 'Save this sky patch locally once so Time-Domain, Spectrum, and Ice Studio open instantaneously without waiting on live NASA queries'
                   }
                 >
                   {activeDownloadingSections.length > 0
@@ -2355,6 +2415,7 @@ export const CelestialNavigator: React.FC = () => {
                 {installError}
               </div>
             )}
+          </div>
           </div>
         </div>
 
@@ -2608,6 +2669,7 @@ export const CelestialNavigator: React.FC = () => {
               variant={matchedInstalledSection ? 'default' : 'secondary'}
               size="default"
               disabled={!matchedInstalledSection && Boolean(matchingDownloadingSection)}
+              title="Launch this sky patch in Time-Domain to flip across 6-month passes and spot moving or flashing stars"
               onClick={() => {
                 setRa(ra);
                 setDec(dec);
@@ -2623,6 +2685,7 @@ export const CelestialNavigator: React.FC = () => {
             <Button
               variant="outline"
               size="default"
+              title="Jump straight to the 102-Color Spectrum view to inspect what molecules or stars are at this coordinate"
               onClick={() => setTab('spectral')}
               className="w-full text-xs text-muted-foreground hover:text-foreground"
             >
