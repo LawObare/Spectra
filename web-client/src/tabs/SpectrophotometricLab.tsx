@@ -4,10 +4,15 @@ import 'uplot/dist/uPlot.min.css';
 import { useTelemetryStore, type SpectralChannel } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import {
+  InstalledCutoutsModal,
+  UseCurrentSelectedButton,
+} from '../components/InstalledCutoutsModal';
+import {
   fetchInstalledSections,
   fetchStaticSectionSpectrum,
   findMatchingSection,
   useInstalledSectionState,
+  type InstalledSection,
 } from '../lib/installedSections';
 
 /**
@@ -191,13 +196,14 @@ export const SpectrophotometricLab: React.FC = () => {
   const {
     ra, dec, activeTargetName, probedPixel, probeSkyPosition, activeSpectrum, activeEpochIndex,
     isSpectralBlinkSynced, setSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
-    setActiveSpectrum, setSpectrumLoading,
+    setActiveSpectrum, setSpectrumLoading, colorPalette, currentSelectedSection,
   } = useTelemetryStore();
   const { setZ, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
   const { installedSections } = useInstalledSectionState();
   const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Loading Archive Spectrum…]');
   const [spectrumStatus, setSpectrumStatus] = useState('');
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
+  const [isCutoutBrowserOpen, setIsCutoutBrowserOpen] = useState(false);
 
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
@@ -211,6 +217,24 @@ export const SpectrophotometricLab: React.FC = () => {
     const position = probeSkyPosition ?? { ra, dec };
     return findMatchingSection(readyInstalledSections, position.ra, position.dec);
   }, [readyInstalledSections, probeSkyPosition, ra, dec]);
+
+  const handleSelectInstalledSection = useCallback(
+    (chosen: InstalledSection) => {
+      setForceLiveCoordKey(null);
+      setUrlRa(Number(chosen.ra.toFixed(5)));
+      setUrlDec(Number(chosen.dec.toFixed(5)));
+      setUrlFov(Math.round(chosen.fov_arcsec || 300));
+      useTelemetryStore.setState({
+        ra: chosen.ra,
+        dec: chosen.dec,
+        activeTargetName: chosen.label,
+        probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
+      });
+    },
+    [setUrlRa, setUrlDec, setUrlFov]
+  );
+
+  const handleCloseCutoutBrowser = useCallback(() => setIsCutoutBrowserOpen(false), []);
 
   useEffect(() => {
     if (installedSections.length === 0) {
@@ -713,36 +737,31 @@ export const SpectrophotometricLab: React.FC = () => {
             >
               {spectrumSourceBadge}
             </span>
+            {currentSelectedSection && (
+              <UseCurrentSelectedButton
+                section={currentSelectedSection}
+                isActive={activeInstalledSection?.section_id === currentSelectedSection.section_id}
+                colorPalette={colorPalette}
+                onSelect={handleSelectInstalledSection}
+              />
+            )}
             {readyInstalledSections.length > 0 && (
-              <select
-                aria-label="Installed section for spectrum"
-                value={activeInstalledSection?.section_id || ''}
-                onChange={(e) => {
-                  const chosen = readyInstalledSections.find((s) => s.section_id === e.target.value);
-                  if (!chosen) return;
-                  setForceLiveCoordKey(null);
-                  setUrlRa(Number(chosen.ra.toFixed(5)));
-                  setUrlDec(Number(chosen.dec.toFixed(5)));
-                  setUrlFov(Math.round(chosen.fov_arcsec || 300));
-                  useTelemetryStore.setState({
-                    ra: chosen.ra,
-                    dec: chosen.dec,
-                    activeTargetName: chosen.label,
-                    probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
-                  });
-                }}
-                className="h-7 max-w-[210px] rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
-                title="Use an installed section for 102-channel extraction"
+              <button
+                type="button"
+                onClick={() => setIsCutoutBrowserOpen(true)}
+                aria-label="Browse installed sections for spectrum"
+                className="inline-flex h-7 max-w-[230px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 hover:bg-emerald-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
+                title="Browse installed cutouts with previews for 102-channel extraction"
               >
-                {!activeInstalledSection && (
-                  <option value="">Installed ({readyInstalledSections.length})</option>
-                )}
-                {readyInstalledSections.map((sec) => (
-                  <option key={sec.section_id} value={sec.section_id}>
-                    {sec.label}
-                  </option>
-                ))}
-              </select>
+                <span className="truncate">
+                  {activeInstalledSection
+                    ? `${activeInstalledSection.label}`
+                    : 'Browse Installed'}
+                </span>
+                <span className="shrink-0 font-mono text-[10px] text-emerald-300/90">
+                  ({readyInstalledSections.length})
+                </span>
+              </button>
             )}
             {!activeInstalledSection && (
               <button
@@ -959,6 +978,16 @@ export const SpectrophotometricLab: React.FC = () => {
           <div className="mt-1">Reads <span className="font-mono">useTelemetryStore.probedPixel</span> / <span className="font-mono">activeSpectrum</span> (set by Tab 2 on pixel click) and extracts directly from installed SPHEREx sections or live IRSA HDU 5/6 exposures.</div>
         </div>
       </aside>
+      <InstalledCutoutsModal
+        isOpen={isCutoutBrowserOpen}
+        onClose={handleCloseCutoutBrowser}
+        sections={readyInstalledSections}
+        activeSectionId={activeInstalledSection?.section_id || null}
+        currentComparatorSectionId={currentSelectedSection?.section_id || null}
+        colorPalette={colorPalette}
+        subtitle="Preview calibrated SPHEREx cutout stamps and select one for 102-channel spectral extraction."
+        onSelect={handleSelectInstalledSection}
+      />
     </div>
   );
 };
