@@ -289,9 +289,23 @@ class StudioTrainRequest(BaseModel):
 
 @router.get("/models")
 async def list_models():
-    """Return all Base Models + Trained LoRA/SFT Model Checkpoints."""
+    """Return all Base Models + Trained LoRA/SFT Model Checkpoints with full architecture specs."""
     registry = await asyncio.to_thread(_ml_trainer().list_models_registry)
     return {**registry, "training_active": _training_lock.locked()}
+
+
+class PromoteModelRequest(BaseModel):
+    model_id: str = Field(..., min_length=3, max_length=120)
+
+
+@router.post("/models/promote")
+async def promote_model(req: PromoteModelRequest):
+    """Promote a trained LoRA/SFT checkpoint in run history as the active identification endpoint."""
+    try:
+        registry = await asyncio.to_thread(_ml_trainer().promote_checkpoint, req.model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**registry, "promoted_model_id": req.model_id, "training_active": _training_lock.locked()}
 
 
 @router.post("/studio/train", status_code=202)
