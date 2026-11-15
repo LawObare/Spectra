@@ -1483,6 +1483,7 @@ export const ObservationDiscussions: React.FC = () => {
             <button
               type="button"
               onClick={() => setScopeFilter('ALL')}
+              title="Show community sky observations across the whole survey"
               className={`flex items-center justify-between gap-2 shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                 scopeFilter === 'ALL'
                   ? 'bg-secondary text-foreground'
@@ -1503,6 +1504,7 @@ export const ObservationDiscussions: React.FC = () => {
             <button
               type="button"
               onClick={() => setScopeFilter('TARGET')}
+              title="Filter notes posted near your currently selected sky coordinates"
               className={`flex items-center justify-between gap-2 shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                 scopeFilter === 'TARGET'
                   ? 'bg-secondary text-foreground'
@@ -1523,6 +1525,7 @@ export const ObservationDiscussions: React.FC = () => {
             <button
               type="button"
               onClick={() => setScopeFilter('VERIFIED')}
+              title="Show only observations confirmed by science team moderators"
               className={`flex items-center justify-between gap-2 shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
                 scopeFilter === 'VERIFIED'
                   ? 'bg-secondary text-foreground'
@@ -1598,6 +1601,7 @@ export const ObservationDiscussions: React.FC = () => {
           <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4 pb-8">
             {/* New Post / Observation Note Composer (modeled on design.webp New Post card) */}
             <form
+              data-tour="forum-feed-composer"
               onSubmit={handleCreateThread}
               className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md shadow-sm overflow-hidden"
             >
@@ -2109,6 +2113,7 @@ export const ObservationDiscussions: React.FC = () => {
               <Button
                 type="button"
                 size="xs"
+                title="Jump back to Time-Domain to visually blink this field"
                 onClick={() => setTab('comparator')}
                 className="rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold"
               >
@@ -2118,6 +2123,7 @@ export const ObservationDiscussions: React.FC = () => {
                 type="button"
                 variant="secondary"
                 size="xs"
+                title="Start a new observation report pre-pinned to these sky coordinates"
                 onClick={() => composerTitleRef.current?.focus()}
                 className="rounded-lg"
               >
