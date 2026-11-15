@@ -415,7 +415,7 @@ export const DataProductExports: React.FC = () => {
         title="Datasets & Class Buckets"
         subtitle={`${sftData?.total_records ?? 0} curated examples (${sftData?.split_summary?.train ?? 0} train · ${sftData?.split_summary?.val ?? 0} val) · HF TRL JSONL corpora & citizen-science catalogs`}
         actions={
-          <>
+          <div data-tour="admin-exports-actions" className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center rounded-lg border border-white/[0.08] bg-card p-0.5">
               {(
                 [
@@ -461,7 +461,7 @@ export const DataProductExports: React.FC = () => {
                 </Button>
               </>
             )}
-          </>
+          </div>
         }
       />
 
