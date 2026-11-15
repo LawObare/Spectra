@@ -4,6 +4,7 @@ import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { WebGLComparatorCanvas, HoverPixelInfo } from '../components/WebGLComparatorCanvas';
 import { MANDATORY_BENCHMARKS } from '../components/GlobalCommandHeader';
 import { InstalledCutoutsModal } from '../components/InstalledCutoutsModal';
+import { ActiveCaseBanner } from '../components/ActiveCaseBanner';
 import {
   fetchInstalledSections,
   findMatchingSection,
@@ -240,8 +241,11 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
     setRawVsRectified,
     activeRgbPreset,
     setRgbPreset,
+    probedPixel,
     setProbedPixel,
     setProbeSkyPosition,
+    caseFindings,
+    setCaseFindings,
   } = store;
 
   const [activeBandIndex, setActiveBandIndex] = useState<number>(4); // Default to Band D5 (index 4)
@@ -473,6 +477,8 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             renderMode,
             epochIndex: activeMarkPayload?.epochIndex ?? activeEpochIndex,
             targetName: activeBenchmark?.name || store.activeTargetName,
+            spectralSummary: caseFindings.spectralSummary,
+            iceSummary: caseFindings.iceSummary,
             selected_mark: activeMarkPayload,
             marked_objects: updatedMarks,
           },
@@ -560,6 +566,39 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
       if (renderMode !== urlMode) setRenderMode(urlMode);
     }
   }, [urlMode, renderMode, setRenderMode]);
+
+  useEffect(() => {
+    const targetKey = activeInstalledSection?.section_id || `${urlRa.toFixed(4)},${urlDec.toFixed(4)}`;
+    let summary = `${surveyPasses.length} epoch${surveyPasses.length === 1 ? '' : 's'} · ${renderMode}`;
+    if (motionResult) {
+      summary = `${motionResult.totalMotionArcsecYr.toFixed(2)}"/yr @ ${motionResult.positionAngleDeg.toFixed(0)}°`;
+    } else if (triageSubmitted) {
+      summary = `${triageClass.replace(/_/g, ' ')} (${triageConfidence}%)`;
+    } else if (activeBenchmark?.id === 'barnard') {
+      summary = '+10.39"/yr North mover';
+    } else if (activeBenchmark?.id === 'wise0855') {
+      summary = '8.15"/yr West (mid-IR)';
+    } else if (activeBenchmark?.id === 'eps_indi_b') {
+      summary = '4.68"/yr SE blended pair';
+    } else if (activeBenchmark?.id === 'rw_aur') {
+      summary = 'Flashing monopole (>1.5 mag)';
+    } else if (activeBenchmark?.id === 'r_dra') {
+      summary = '245d pulsing Mira giant';
+    }
+    setCaseFindings({ timeDomainSummary: summary }, targetKey);
+  }, [
+    activeInstalledSection?.section_id,
+    urlRa,
+    urlDec,
+    surveyPasses.length,
+    renderMode,
+    motionResult,
+    triageSubmitted,
+    triageClass,
+    triageConfidence,
+    activeBenchmark?.id,
+    setCaseFindings,
+  ]);
 
   // 2. Playback animation timer
   useEffect(() => {
@@ -1214,7 +1253,12 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
   }
 
   return (
-    <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-black font-sans text-white">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-black font-sans text-white">
+      <ActiveCaseBanner
+        activeLens="comparator"
+        sectionLabel={activeBenchmark?.name || activeInstalledSection?.label || store.activeTargetName}
+      />
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
       {/* ========================================================================= */}
       {/* LEFT PANEL (65%): Multi-Epoch Playback Canvas & Transport Deck            */}
       {/* ========================================================================= */}
@@ -2224,26 +2268,81 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             </div>
           )}
 
-          {selectedMark && (
+          {selectedMark ? (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-2.5 py-2 text-[11px]">
               <div className="min-w-0 font-mono text-[10px] text-emerald-200">
                 Classifying <strong className="text-white">#{selectedMark.id}</strong> ({selectedMark.ra.toFixed(4)}°,{' '}
                 {selectedMark.dec >= 0 ? '+' : ''}
                 {selectedMark.dec.toFixed(4)}°)
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setProbedPixel({ x: selectedMark.x, y: selectedMark.y });
-                  setProbeSkyPosition({ ra: selectedMark.ra, dec: selectedMark.dec });
-                  setUrlProbeX(selectedMark.x);
-                  setUrlProbeY(selectedMark.y);
-                  setTab('lab');
-                }}
-                className="shrink-0 font-sans text-[11px] font-medium text-sky-400 hover:text-sky-300 transition-colors"
-              >
-                Inspect in Spectral Lab →
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProbedPixel({ x: selectedMark.x, y: selectedMark.y });
+                    setProbeSkyPosition({ ra: selectedMark.ra, dec: selectedMark.dec });
+                    setUrlProbeX(selectedMark.x);
+                    setUrlProbeY(selectedMark.y);
+                    setTab('spectral');
+                  }}
+                  className="shrink-0 font-sans text-[11px] font-semibold text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
+                >
+                  Identify in Spectrum →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProbedPixel({ x: selectedMark.x, y: selectedMark.y });
+                    setProbeSkyPosition({ ra: selectedMark.ra, dec: selectedMark.dec });
+                    setUrlProbeX(selectedMark.x);
+                    setUrlProbeY(selectedMark.y);
+                    setTab('ice');
+                  }}
+                  className="shrink-0 font-sans text-[11px] font-semibold text-cyan-300 hover:text-cyan-200 transition-colors cursor-pointer"
+                >
+                  Check Ice Studio →
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[11px]">
+              <span className="font-mono text-[10px] text-neutral-300">
+                Probing px ({probedPixel?.x ?? urlPx}, {probedPixel?.y ?? urlPy})
+              </span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setTab('spectral')}
+                  className="font-sans text-[11px] font-semibold text-sky-400 hover:text-sky-300 cursor-pointer"
+                >
+                  Identify Spectrum →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('ice')}
+                  className="font-sans text-[11px] font-semibold text-cyan-300 hover:text-cyan-200 cursor-pointer"
+                >
+                  Measure Ice →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(caseFindings.spectralSummary || caseFindings.iceSummary) && (
+            <div className="rounded-lg border border-sky-500/25 bg-sky-950/20 px-2.5 py-2 text-[11px] space-y-1">
+              <div className="font-mono text-[10px] uppercase tracking-wide text-sky-300">
+                Linked Case Evidence (Included in Submission)
+              </div>
+              {caseFindings.spectralSummary && (
+                <div className="text-neutral-200">
+                  • Spectrum: <span className="text-emerald-300 font-medium">{caseFindings.spectralSummary}</span>
+                </div>
+              )}
+              {caseFindings.iceSummary && (
+                <div className="text-neutral-200">
+                  • Ice Studio: <span className="text-cyan-300 font-medium">{caseFindings.iceSummary}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -2332,6 +2431,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
             </div>
           )}
         </section>
+      </div>
       </div>
       <InstalledCutoutsModal
         isOpen={isCutoutBrowserOpen}
