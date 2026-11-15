@@ -1,8 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
+import { Button } from '../components/ui';
 import { ModelArchitecture } from './hooks/useAdminTelemetry';
 import { cn } from '../lib/utils';
+import {
+  AdminKpiCard,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminStatusPill,
+  IconActivity,
+  IconCheckCircle,
+  IconCompass,
+  IconScan,
+  SegmentedProgressBar,
+} from './components/AdminPrimitives';
 
 interface TargetSummary {
   target_id: string;
@@ -95,12 +106,25 @@ export const ActivationInspector: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [overlayAlpha, setOverlayAlpha] = useState<number>(0.65);
+  const [targetSearch, setTargetSearch] = useState<string>('');
 
   const [overrideClass, setOverrideClass] = useState<string>(DOMAIN_CLASS_OPTIONS[0]);
   const [manualCentroid, setManualCentroid] = useState<{ x: number; y: number } | null>(null);
   const [feedbackNote, setFeedbackNote] = useState<string>('');
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [submittingFeedback, setSubmittingFeedback] = useState<boolean>(false);
+
+  const filteredTargets = useMemo(() => {
+    const q = targetSearch.trim().toLowerCase();
+    const list = data?.targets || [];
+    if (!q) return list;
+    return list.filter(
+      (t) =>
+        t.label.toLowerCase().includes(q) ||
+        t.predicted_domain.toLowerCase().includes(q) ||
+        t.target_id.toLowerCase().includes(q)
+    );
+  }, [data?.targets, targetSearch]);
 
   const gradCamCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const specCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -382,377 +406,433 @@ export const ActivationInspector: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
-      {/* TOP BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/70 px-5 py-2.5 shrink-0">
-        <div className="flex items-center gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">
-              Live AI Identification Co-Pilot
-            </h2>
-            <p className="text-[11px] text-muted-foreground">
-              PyTorch Base vs. Trained inference over installed SPHEREx sections, Grad-CAM stamps, and 102-band spectra
-            </p>
-          </div>
-          {data?.checkpoint_meta && (
-            <Badge variant="sky" className="font-mono text-[10px]">
-              Checkpoint: {data.checkpoint_meta.source === 'studio_train' ? 'Studio Run' : 'Warmstart'} · LoRA r=
-              {data.checkpoint_meta.lora_r} · {Math.round((data.checkpoint_meta.val_acc || 0) * 100)}% val acc
-            </Badge>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <select
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value as ModelArchitecture)}
-            className="bg-background border border-border rounded px-2.5 py-1 text-xs font-mono"
-          >
-            <option value="SpectralResNet102">SpectralResNet102</option>
-            <option value="DipoleConvNet3D">DipoleConvNet3D</option>
-            <option value="AstroFeatureSVM">AstroFeatureSVM</option>
-          </select>
-          <Button size="sm" onClick={() => runScan(selectedTargetId)} disabled={loading} className="text-xs">
-            {loading ? 'Scanning Targets...' : '↻ Run Batch Scan'}
-          </Button>
-        </div>
-      </div>
-
-      {/* MAIN BODY */}
-      <div className="flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-        {/* LEFT ROSTER: INSTALLED TARGETS */}
-        <aside className="w-full lg:w-[320px] xl:w-[340px] max-h-64 lg:max-h-none shrink-0 border-b lg:border-b-0 lg:border-r border-border bg-card/30 overflow-y-auto p-3 flex flex-col gap-2">
-          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-1">
-            Installed Sky Targets ({data?.targets.length || 0})
-          </div>
-          {(data?.targets || []).map((t) => {
-            const isSel = selected?.target_id === t.target_id;
-            const gainPct = Math.round(t.confidence_gain * 100);
-            return (
-              <button
-                key={t.target_id}
-                onClick={() => {
-                  setSelectedTargetId(t.target_id);
-                  setSearchParams({ target: t.target_id });
-                  runScan(t.target_id);
-                }}
-                className={cn(
-                  'text-left p-2.5 rounded-md border transition-colors flex flex-col gap-1.5',
-                  isSel ? 'border-primary bg-primary/10' : 'border-border/70 bg-card/60 hover:border-border'
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold truncate">{t.label}</span>
-                  <Badge variant={t.trained_anomaly_prob >= 0.5 ? 'sky' : 'outline'} className="font-mono text-[9px] shrink-0">
-                    {(t.trained_anomaly_prob * 100).toFixed(0)}%
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
-                  <span className="truncate">{t.predicted_domain}</span>
-                  <span className={cn(gainPct >= 0 ? 'text-emerald-400' : 'text-amber-400')}>
-                    Base {(t.base_anomaly_prob * 100).toFixed(0)}% → {(t.trained_anomaly_prob * 100).toFixed(0)}%
-                  </span>
-                </div>
-                <div className="w-full h-1.5 rounded bg-secondary overflow-hidden flex">
-                  <div className="bg-amber-400/70 h-full" style={{ width: `${Math.round(t.base_anomaly_prob * 100)}%` }} />
-                  {t.trained_anomaly_prob > t.base_anomaly_prob && (
-                    <div
-                      className="bg-emerald-400 h-full"
-                      style={{ width: `${Math.round((t.trained_anomaly_prob - t.base_anomaly_prob) * 100)}%` }}
-                    />
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </aside>
-
-        {/* RIGHT INSPECTOR */}
-        <section className="flex-1 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-4">
-          {error && (
-            <div className="rounded border border-rose-500/40 bg-rose-950/60 px-3 py-2 text-xs text-rose-200">{error}</div>
-          )}
-
-          {selected ? (
+    <div className="h-full w-full overflow-y-auto px-5 py-5 lg:px-7 lg:py-6">
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-5">
+        <AdminPageHeader
+          title="AI Identification Co-Pilot"
+          subtitle="Compare base vs. fine-tuned SPHEREx predictions, Grad-CAM centroid apertures, and 102-channel attributions."
+          actions={
             <>
-              {/* SELECTED TARGET KPI STRIP */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <Card className="border-border p-3 bg-card/60">
-                  <div className="text-[10px] font-mono text-muted-foreground">Target & Coords</div>
-                  <div className="text-sm font-semibold truncate mt-0.5">{selected.label}</div>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-[10px] font-mono text-muted-foreground">
-                      {selected.ra.toFixed(3)}°, {selected.dec.toFixed(3)}°
-                    </span>
-                    <Link
-                      to={`/explore?tab=navigator&ra=${selected.ra}&dec=${selected.dec}`}
-                      className="text-[10px] text-sky-400 hover:underline font-mono"
-                    >
-                      Sky View →
-                    </Link>
-                  </div>
-                </Card>
-
-                <Card className="border-border p-3 bg-card/60">
-                  <div className="text-[10px] font-mono text-muted-foreground">Untrained Base vs. Trained</div>
-                  <div className="text-sm font-mono font-bold mt-0.5">
-                    <span className="text-amber-300">{(selected.base_anomaly_prob * 100).toFixed(1)}%</span>
-                    <span className="text-muted-foreground mx-1.5">→</span>
-                    <span className="text-emerald-400">{(selected.trained_anomaly_prob * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="text-[10px] font-mono text-muted-foreground mt-1">
-                    Entropy: {selected.base_entropy.toFixed(2)}b → {selected.trained_entropy.toFixed(2)}b
-                  </div>
-                </Card>
-
-                <Card className="border-border p-3 bg-card/60">
-                  <div className="text-[10px] font-mono text-muted-foreground">AI Identification (6-Class)</div>
-                  <div className="text-sm font-semibold text-sky-300 truncate mt-0.5">{selected.predicted_domain}</div>
-                  <div className="text-[10px] font-mono text-muted-foreground truncate mt-1">
-                    Base: {selected.base_predicted_domain || 'Field'} → FT {((selected.top_domain_prob ?? selected.trained_anomaly_prob) * 100).toFixed(1)}%
-                  </div>
-                </Card>
-
-                <Card className="border-border p-3 bg-card/60">
-                  <div className="text-[10px] font-mono text-muted-foreground">Archive Similarity Match</div>
-                  <div className="text-sm font-mono font-bold text-emerald-400 mt-0.5">
-                    cos = {selected.top_cosine_sim.toFixed(4)}
-                  </div>
-                  <div className="text-[10px] font-mono text-muted-foreground truncate mt-1">
-                    {selected.has_real_cutout ? 'Real .spx.zst Cutout' : 'Band-Derived PSF'} · {selected.source_badge}
-                  </div>
-                </Card>
-              </div>
-
-              {/* BASE MODEL VS FINE-TUNED LORA 6-CLASS PROBABILITIES */}
-              {selected.class_probabilities && selected.class_probabilities.length > 0 && (
-                <Card className="border-border bg-card/60">
-                  <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30 flex flex-row items-center justify-between gap-2">
-                    <CardTitle className="text-xs font-semibold">
-                      Base Model vs. Fine-Tuned LoRA Multi-Class Identification Probabilities
-                    </CardTitle>
-                    <div className="flex items-center gap-3 text-[10px] font-mono">
-                      <span className="text-slate-400">■ Base Prior</span>
-                      <span className="text-emerald-400">■ Fine-Tuned Post-LoRA</span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                    {selected.class_probabilities.map((cp) => {
-                      const basePct = Math.round(cp.base_prob * 100);
-                      const trainedPct = Math.round(cp.trained_prob * 100);
-                      const delta = trainedPct - basePct;
-                      const isWinner = cp.class_name === selected.predicted_domain;
-                      return (
-                        <div
-                          key={cp.class_name}
-                          className={cn(
-                            'rounded border p-2 flex flex-col gap-1',
-                            isWinner ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border/70 bg-secondary/15'
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-1.5 text-[11px]">
-                            <span className={cn('truncate font-medium', isWinner ? 'text-emerald-300 font-semibold' : 'text-foreground')}>
-                              {cp.class_name}
-                            </span>
-                            <span className="font-mono text-[10px] shrink-0">
-                              <span className="text-slate-400">{basePct}%</span>
-                              <span className="text-muted-foreground mx-1">→</span>
-                              <span className={isWinner ? 'text-emerald-300 font-bold' : 'text-sky-300'}>{trainedPct}%</span>
-                              <span className={cn('ml-1', delta >= 0 ? 'text-emerald-400' : 'text-amber-400')}>
-                                ({delta >= 0 ? '+' : ''}{delta})
-                              </span>
-                            </span>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <div className="h-1 w-full rounded bg-secondary overflow-hidden">
-                              <div className="h-full bg-slate-400/75" style={{ width: `${Math.min(100, basePct)}%` }} />
-                            </div>
-                            <div className="h-1.5 w-full rounded bg-secondary overflow-hidden">
-                              <div
-                                className={cn('h-full', isWinner ? 'bg-emerald-400' : 'bg-sky-400')}
-                                style={{ width: `${Math.min(100, trainedPct)}%` }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
+              {data?.checkpoint_meta && (
+                <AdminStatusPill tone="sky">
+                  {data.checkpoint_meta.source === 'studio_train' ? 'Studio Run' : 'Warmstart'} · LoRA r=
+                  {data.checkpoint_meta.lora_r} · {Math.round((data.checkpoint_meta.val_acc || 0) * 100)}% acc
+                </AdminStatusPill>
               )}
+              <select
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value as ModelArchitecture)}
+                className="h-8 rounded-lg border border-white/[0.1] bg-background/80 px-3 text-xs font-medium text-foreground focus:border-primary focus:outline-none"
+              >
+                <option value="SpectralResNet102">SpectralResNet102</option>
+                <option value="DipoleConvNet3D">DipoleConvNet3D</option>
+                <option value="AstroFeatureSVM">AstroFeatureSVM</option>
+              </select>
+              <Button
+                size="sm"
+                onClick={() => runScan(selectedTargetId)}
+                disabled={loading}
+                className="h-8 rounded-lg px-3.5 text-xs font-medium"
+              >
+                {loading ? 'Scanning Targets...' : '↻ Run Batch Scan'}
+              </Button>
+            </>
+          }
+        />
 
-              {/* VISUAL EVIDENCE: GRAD-CAM STAMP + 102-BAND SALIENCY */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                <Card className="lg:col-span-5 border-border">
-                  <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30 flex flex-row items-center justify-between gap-2">
-                    <CardTitle className="text-xs font-semibold">32×32 Stamp + Centroid &amp; Grad-CAM</CardTitle>
-                    <div className="flex items-center gap-2 text-[10px] font-mono">
-                      {manualCentroid && (
-                        <button
-                          type="button"
-                          onClick={() => setManualCentroid(null)}
-                          className="text-amber-300 hover:text-amber-200 underline"
-                        >
-                          Reset Centroid
-                        </button>
-                      )}
-                      <span className="text-muted-foreground">CAM</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        value={overlayAlpha}
-                        onChange={(e) => setOverlayAlpha(Number(e.target.value))}
-                        className="w-16 accent-primary"
-                      />
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-3 flex flex-col items-center gap-2">
-                    <canvas
-                      ref={gradCamCanvasRef}
-                      width={224}
-                      height={224}
-                      onClick={handleStampClick}
-                      title="Click stamp to reposition source centroid aperture"
-                      className="rounded border border-border w-56 h-56 cursor-crosshair"
-                    />
-                    <div className="flex flex-wrap items-center justify-center gap-2 text-[10px] font-mono text-muted-foreground">
-                      <span className={manualCentroid ? 'text-amber-300' : 'text-emerald-400'}>
-                        ◯ {manualCentroid ? 'Manual' : 'Flux'} Centroid ({(manualCentroid?.x ?? selected.source_centroid?.x ?? 16).toFixed(1)},{' '}
-                        {(manualCentroid?.y ?? selected.source_centroid?.y ?? 16).toFixed(1)} · r={(selected.source_centroid?.radius_px ?? 3.2).toFixed(1)}px)
-                      </span>
-                      <span className="text-sky-400">
-                        ◇ CAM Peak ({selected.source_centroid?.gradcam_peak_x ?? 16}, {selected.source_centroid?.gradcam_peak_y ?? 16})
-                      </span>
-                    </div>
-                    <div className="text-[10px] font-mono text-muted-foreground text-center">
-                      {selected.has_real_cutout
-                        ? 'Decoded from installed multi-epoch SPHEREx cutout · Click canvas to refine centroid'
-                        : 'Deterministic PSF reconstruction · Click canvas to refine centroid'}
-                    </div>
-                  </CardContent>
-                </Card>
+        {error && (
+          <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-200">
+            {error}
+          </div>
+        )}
 
-                <Card className="lg:col-span-7 border-border flex flex-col">
-                  <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30 flex flex-row items-center justify-between">
-                    <CardTitle className="text-xs font-semibold">102-Channel Spectrum + Gradient Attribution</CardTitle>
-                    <span className="text-[10px] font-mono text-amber-300">Amber bars = d(logit)/d(flux)</span>
-                  </CardHeader>
-                  <CardContent className="p-3 flex-1 flex flex-col justify-between gap-2">
-                    <canvas ref={specCanvasRef} className="w-full h-48 rounded border border-border/60" />
-                    <div className="grid grid-cols-4 gap-2 text-[10px] font-mono">
-                      <div className="bg-secondary/30 p-1.5 rounded">
-                        <span className="text-muted-foreground block">H2O 3.05µm</span>
-                        <span className="font-bold text-sky-300">{selected.spectral_features.h2o_305_depth}</span>
-                      </div>
-                      <div className="bg-secondary/30 p-1.5 rounded">
-                        <span className="text-muted-foreground block">CH4 3.32µm</span>
-                        <span className="font-bold text-amber-300">{selected.spectral_features.ch4_332_depth}</span>
-                      </div>
-                      <div className="bg-secondary/30 p-1.5 rounded">
-                        <span className="text-muted-foreground block">CO2 4.27µm</span>
-                        <span className="font-bold text-violet-300">{selected.spectral_features.co2_427_depth}</span>
-                      </div>
-                      <div className="bg-secondary/30 p-1.5 rounded">
-                        <span className="text-muted-foreground block">D5/D2 Color</span>
-                        <span className="font-bold text-emerald-300">{selected.spectral_features.ir_color_d5_d2}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+        {/* BAND 2: 4-CARD KPI SUMMARY */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <AdminKpiCard
+            label="Selected Target"
+            value={selected ? selected.label : 'Loading...'}
+            delta={selected ? `${selected.ra.toFixed(3)}°, ${selected.dec.toFixed(3)}°` : 'Awaiting scan'}
+            deltaTone="muted"
+            icon={<IconCompass className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Trained Confidence"
+            value={selected ? `${(selected.trained_anomaly_prob * 100).toFixed(1)}%` : '—'}
+            delta={
+              selected
+                ? `Base ${(selected.base_anomaly_prob * 100).toFixed(1)}% · H=${selected.trained_entropy.toFixed(2)}b`
+                : 'Base vs. LoRA'
+            }
+            deltaTone="emerald"
+            icon={<IconActivity className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="6-Class Prediction"
+            value={selected ? selected.predicted_domain : '—'}
+            delta={selected ? `Prior: ${selected.base_predicted_domain || 'Field'}` : 'Multi-class head'}
+            deltaTone="sky"
+            icon={<IconScan className="h-4 w-4" />}
+          />
+          <AdminKpiCard
+            label="Archive Similarity"
+            value={selected ? `cos ${selected.top_cosine_sim.toFixed(4)}` : '—'}
+            delta={
+              selected
+                ? `${selected.has_real_cutout ? 'Real .spx.zst Cutout' : 'Band-Derived PSF'} · ${selected.source_badge}`
+                : 'Reference bank'
+            }
+            deltaTone="muted"
+            icon={<IconCheckCircle className="h-4 w-4" />}
+          />
+        </div>
+
+        {/* BAND 3: TARGET ROSTER + INSPECTOR WORKSPACE */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 items-start">
+          {/* LEFT ROSTER */}
+          <aside className="admin-surface rounded-xl flex flex-col overflow-hidden lg:col-span-4">
+            <div className="flex flex-col gap-3 border-b border-white/[0.07] px-4 py-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">Installed Sky Targets</h2>
+                  <p className="text-xs text-muted-foreground">Select a field to inspect model attribution</p>
+                </div>
+                <AdminStatusPill tone="muted">{filteredTargets.length}</AdminStatusPill>
               </div>
+              <AdminSearchInput
+                value={targetSearch}
+                onChange={setTargetSearch}
+                placeholder="Search target or class..."
+              />
+            </div>
 
-              {/* CO-PILOT <think> REASONING + SIMILARITY MATCHES + ACTIVE LEARNING */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                <Card className="lg:col-span-7 border-border">
-                  <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30">
-                    <CardTitle className="text-xs font-semibold">TRL &lt;think&gt; Co-Pilot Reasoning & Top Matches</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-3.5 flex flex-col gap-3 text-xs">
-                    {parsedThink.think && (
-                      <pre className="p-2.5 rounded bg-violet-950/30 border border-violet-500/30 font-mono text-[11px] text-violet-200 whitespace-pre-wrap leading-relaxed">
-                        {parsedThink.think}
-                      </pre>
+            <div className="max-h-[420px] lg:max-h-[780px] overflow-y-auto divide-y divide-white/[0.06]">
+              {filteredTargets.map((t) => {
+                const isSel = selected?.target_id === t.target_id;
+                const gainPct = Math.round(t.confidence_gain * 100);
+                const trainedPct = Math.round(t.trained_anomaly_prob * 100);
+                return (
+                  <button
+                    key={t.target_id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedTargetId(t.target_id);
+                      setSearchParams({ target: t.target_id });
+                      runScan(t.target_id);
+                    }}
+                    className={cn(
+                      'w-full text-left px-4 py-3 transition-colors flex flex-col gap-2',
+                      isSel
+                        ? 'bg-primary/[0.09] border-l-2 border-l-primary'
+                        : 'hover:bg-white/[0.03]'
                     )}
-                    <div className="font-mono text-xs text-emerald-300 font-semibold">{parsedThink.answer}</div>
-                    <div className="flex flex-col gap-1.5">
-                      {(selected.similarity_matches || []).map((m, idx) => (
-                        <div
-                          key={`${m.id}-${idx}`}
-                          className="flex items-center justify-between px-2.5 py-1.5 rounded bg-secondary/30 border border-border/50 text-[11px]"
-                        >
-                          <div>
-                            <span className="font-semibold">{m.name}</span>
-                            <span className="text-muted-foreground ml-2 font-mono text-[10px]">[{m.spectral_class}]</span>
-                          </div>
-                          <Badge variant="outline" className="font-mono text-[10px]">
-                            cos {m.cosine_similarity.toFixed(4)}
-                          </Badge>
-                        </div>
-                      ))}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-foreground truncate">{t.label}</span>
+                      <AdminStatusPill tone={t.trained_anomaly_prob >= 0.5 ? 'sky' : 'muted'}>
+                        {trainedPct}%
+                      </AdminStatusPill>
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span className="truncate">{t.predicted_domain}</span>
+                      <span className={cn('font-mono tabular-nums', gainPct >= 0 ? 'text-emerald-400' : 'text-amber-400')}>
+                        {(t.base_anomaly_prob * 100).toFixed(0)}% → {trainedPct}%
+                      </span>
+                    </div>
+                    <SegmentedProgressBar
+                      percent={trainedPct}
+                      tone={t.trained_anomaly_prob >= 0.5 ? 'emerald' : 'sky'}
+                      showLabel={false}
+                    />
+                  </button>
+                );
+              })}
+              {filteredTargets.length === 0 && (
+                <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                  No targets match &ldquo;{targetSearch}&rdquo;.
+                </div>
+              )}
+            </div>
+          </aside>
 
-                <Card className="lg:col-span-5 border-border">
-                  <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30">
-                    <CardTitle className="text-xs font-semibold">Human-in-the-Loop SFT Feedback</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-3.5 flex flex-col gap-2.5 text-xs">
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Confirm the Co-Pilot verdict or supply an override class to append this spectrum into Tab 4&apos;s TRL fine-tuning JSONL dataset.
-                    </p>
-                    <Button
-                      size="sm"
-                      disabled={submittingFeedback}
-                      onClick={() => submitFeedback('confirmed')}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
-                    >
-                      ✓ Confirm AI Identification ({selected.predicted_domain})
-                    </Button>
+          {/* RIGHT INSPECTOR */}
+          <section className="lg:col-span-8 flex flex-col gap-5">
+            {selected ? (
+              <>
+                {/* 6-CLASS PROBABILITY COMPARISON */}
+                {selected.class_probabilities && selected.class_probabilities.length > 0 && (
+                  <div className="admin-surface rounded-xl overflow-hidden">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.07] px-5 py-3.5">
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground">
+                          Base vs. Fine-Tuned Class Probabilities
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          6-class spectral distribution shift after LoRA adaptation
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-sm bg-slate-400/75" /> Base Prior
+                        </span>
+                        <span className="flex items-center gap-1.5 text-emerald-300">
+                          <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Post-LoRA
+                        </span>
+                        <Link
+                          to={`/explore?tab=navigator&ra=${selected.ra}&dec=${selected.dec}`}
+                          className="text-xs font-medium text-primary hover:underline"
+                        >
+                          Open in Sky View →
+                        </Link>
+                      </div>
+                    </div>
 
-                    <div className="border-t border-border/60 pt-2.5 flex flex-col gap-2">
-                      <label className="text-[10px] font-mono uppercase text-muted-foreground">Or Override Class:</label>
-                      <select
-                        value={overrideClass}
-                        onChange={(e) => setOverrideClass(e.target.value)}
-                        className="bg-background border border-border rounded px-2 py-1.5 text-xs font-mono"
-                      >
-                        {DOMAIN_CLASS_OPTIONS.map((opt) => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        value={feedbackNote}
-                        onChange={(e) => setFeedbackNote(e.target.value)}
-                        placeholder="Optional diagnostic note for <think> trace..."
-                        className="bg-background border border-border rounded px-2.5 py-1.5 text-xs"
+                    <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {selected.class_probabilities.map((cp) => {
+                        const basePct = Math.round(cp.base_prob * 100);
+                        const trainedPct = Math.round(cp.trained_prob * 100);
+                        const delta = trainedPct - basePct;
+                        const isWinner = cp.class_name === selected.predicted_domain;
+                        return (
+                          <div
+                            key={cp.class_name}
+                            className={cn(
+                              'rounded-lg border p-3 flex flex-col gap-2',
+                              isWinner
+                                ? 'border-emerald-500/40 bg-emerald-500/[0.06]'
+                                : 'border-white/[0.07] bg-white/[0.02]'
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-1.5 text-xs">
+                              <span
+                                className={cn(
+                                  'truncate font-medium',
+                                  isWinner ? 'text-emerald-300 font-semibold' : 'text-foreground'
+                                )}
+                              >
+                                {cp.class_name}
+                              </span>
+                              <span className="font-mono text-[11px] tabular-nums shrink-0">
+                                <span className="text-muted-foreground">{basePct}%</span>
+                                <span className="text-muted-foreground mx-1">→</span>
+                                <span className={isWinner ? 'text-emerald-300 font-semibold' : 'text-sky-300'}>
+                                  {trainedPct}%
+                                </span>
+                                <span className={cn('ml-1', delta >= 0 ? 'text-emerald-400' : 'text-amber-400')}>
+                                  ({delta >= 0 ? '+' : ''}
+                                  {delta})
+                                </span>
+                              </span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <div className="h-1 w-full rounded-full bg-white/[0.06] overflow-hidden">
+                                <div className="h-full bg-slate-400/70" style={{ width: `${Math.min(100, basePct)}%` }} />
+                              </div>
+                              <div className="h-1.5 w-full rounded-full bg-white/[0.06] overflow-hidden">
+                                <div
+                                  className={cn('h-full rounded-full', isWinner ? 'bg-emerald-400' : 'bg-sky-400')}
+                                  style={{ width: `${Math.min(100, trainedPct)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* VISUAL EVIDENCE: GRAD-CAM STAMP + 102-BAND SALIENCY */}
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                  <div className="admin-surface rounded-xl xl:col-span-5 flex flex-col overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 border-b border-white/[0.07] px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">32×32 Stamp &amp; Grad-CAM</h3>
+                      <div className="flex items-center gap-2 text-[11px]">
+                        {manualCentroid && (
+                          <button
+                            type="button"
+                            onClick={() => setManualCentroid(null)}
+                            className="text-amber-300 hover:text-amber-200 underline"
+                          >
+                            Reset
+                          </button>
+                        )}
+                        <span className="text-muted-foreground">CAM</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={overlayAlpha}
+                          onChange={(e) => setOverlayAlpha(Number(e.target.value))}
+                          className="w-16 accent-primary"
+                        />
+                      </div>
+                    </div>
+                    <div className="p-4 flex flex-col items-center gap-3">
+                      <canvas
+                        ref={gradCamCanvasRef}
+                        width={224}
+                        height={224}
+                        onClick={handleStampClick}
+                        title="Click stamp to reposition source centroid aperture"
+                        className="rounded-lg border border-white/[0.08] w-56 h-56 cursor-crosshair"
                       />
+                      <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] font-mono text-muted-foreground">
+                        <span className={manualCentroid ? 'text-amber-300' : 'text-emerald-400'}>
+                          ◯ {manualCentroid ? 'Manual' : 'Flux'} ({(manualCentroid?.x ?? selected.source_centroid?.x ?? 16).toFixed(1)},{' '}
+                          {(manualCentroid?.y ?? selected.source_centroid?.y ?? 16).toFixed(1)} · r=
+                          {(selected.source_centroid?.radius_px ?? 3.2).toFixed(1)}px)
+                        </span>
+                        <span className="text-sky-400">
+                          ◇ Peak ({selected.source_centroid?.gradcam_peak_x ?? 16},{' '}
+                          {selected.source_centroid?.gradcam_peak_y ?? 16})
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground text-center">
+                        {selected.has_real_cutout
+                          ? 'Decoded from installed multi-epoch cutout · Click stamp to refine centroid'
+                          : 'Deterministic PSF reconstruction · Click stamp to refine centroid'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="admin-surface rounded-xl xl:col-span-7 flex flex-col overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 border-b border-white/[0.07] px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">102-Channel Spectrum Attribution</h3>
+                      <span className="text-[11px] font-mono text-amber-300">Amber = d(logit)/d(flux)</span>
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                      <canvas
+                        ref={specCanvasRef}
+                        className="w-full h-48 rounded-lg border border-white/[0.07]"
+                      />
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                        <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                          <span className="text-[11px] text-muted-foreground block">H2O 3.05µm</span>
+                          <span className="font-mono font-semibold text-sky-300 tabular-nums">
+                            {selected.spectral_features.h2o_305_depth}
+                          </span>
+                        </div>
+                        <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                          <span className="text-[11px] text-muted-foreground block">CH4 3.32µm</span>
+                          <span className="font-mono font-semibold text-amber-300 tabular-nums">
+                            {selected.spectral_features.ch4_332_depth}
+                          </span>
+                        </div>
+                        <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                          <span className="text-[11px] text-muted-foreground block">CO2 4.27µm</span>
+                          <span className="font-mono font-semibold text-violet-300 tabular-nums">
+                            {selected.spectral_features.co2_427_depth}
+                          </span>
+                        </div>
+                        <div className="admin-surface-subtle rounded-lg px-3 py-2">
+                          <span className="text-[11px] text-muted-foreground block">D5/D2 Color</span>
+                          <span className="font-mono font-semibold text-emerald-300 tabular-nums">
+                            {selected.spectral_features.ir_color_d5_d2}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CO-PILOT <think> REASONING + SIMILARITY MATCHES + ACTIVE LEARNING */}
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                  <div className="admin-surface rounded-xl xl:col-span-7 flex flex-col overflow-hidden">
+                    <div className="border-b border-white/[0.07] px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">Co-Pilot Reasoning &amp; Top Matches</h3>
+                    </div>
+                    <div className="p-4 flex flex-col gap-3 text-xs">
+                      {parsedThink.think && (
+                        <pre className="p-3 rounded-lg bg-violet-500/[0.08] border border-violet-500/25 font-mono text-[11px] text-violet-200 whitespace-pre-wrap leading-relaxed">
+                          {parsedThink.think}
+                        </pre>
+                      )}
+                      <div className="font-mono text-xs text-emerald-300 font-semibold">{parsedThink.answer}</div>
+                      <div className="flex flex-col gap-2">
+                        {(selected.similarity_matches || []).map((m, idx) => (
+                          <div
+                            key={`${m.id}-${idx}`}
+                            className="flex items-center justify-between px-3 py-2 rounded-lg admin-surface-subtle"
+                          >
+                            <div>
+                              <span className="font-medium text-foreground">{m.name}</span>
+                              <span className="text-muted-foreground ml-2 font-mono text-[11px]">
+                                [{m.spectral_class}]
+                              </span>
+                            </div>
+                            <AdminStatusPill tone="sky">cos {m.cosine_similarity.toFixed(4)}</AdminStatusPill>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="admin-surface rounded-xl xl:col-span-5 flex flex-col overflow-hidden">
+                    <div className="border-b border-white/[0.07] px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">Human-in-the-Loop SFT Feedback</h3>
+                    </div>
+                    <div className="p-4 flex flex-col gap-3 text-xs">
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Confirm the Co-Pilot verdict or supply an override class to append this spectrum into Datasets &amp;
+                        Class Buckets.
+                      </p>
                       <Button
                         size="sm"
-                        variant="outline"
                         disabled={submittingFeedback}
-                        onClick={() => submitFeedback('overridden')}
+                        onClick={() => submitFeedback('confirmed')}
+                        className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
                       >
-                        Save Override to SFT Dataset
+                        ✓ Confirm AI Identification ({selected.predicted_domain})
                       </Button>
-                    </div>
 
-                    {feedbackStatus && (
-                      <div className="rounded border border-emerald-500/40 bg-emerald-950/40 px-2.5 py-1.5 text-[11px] text-emerald-200 font-mono">
-                        {feedbackStatus}
+                      <div className="border-t border-white/[0.07] pt-3 flex flex-col gap-2.5">
+                        <label className="text-xs font-medium text-muted-foreground">Or Override Class</label>
+                        <select
+                          value={overrideClass}
+                          onChange={(e) => setOverrideClass(e.target.value)}
+                          className="h-9 rounded-lg border border-white/[0.1] bg-background/80 px-3 text-xs text-foreground focus:border-primary focus:outline-none"
+                        >
+                          {DOMAIN_CLASS_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={feedbackNote}
+                          onChange={(e) => setFeedbackNote(e.target.value)}
+                          placeholder="Optional diagnostic note for reasoning trace..."
+                          className="h-9 rounded-lg border border-white/[0.1] bg-background/80 px-3 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={submittingFeedback}
+                          onClick={() => submitFeedback('overridden')}
+                          className="rounded-lg"
+                        >
+                          Save Override to SFT Dataset
+                        </Button>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+
+                      {feedbackStatus && (
+                        <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                          {feedbackStatus}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="admin-surface rounded-xl p-8 text-center text-xs text-muted-foreground">
+                Loading SPHEREx targets for AI inspection...
               </div>
-            </>
-          ) : (
-            <div className="text-xs text-muted-foreground p-6">Loading SPHEREx targets for AI inspection...</div>
-          )}
-        </section>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );
