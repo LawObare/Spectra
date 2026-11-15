@@ -6,6 +6,7 @@ import { DecisionBoundaries } from './DecisionBoundaries';
 import { HardNegativeTriage } from './HardNegativeTriage';
 import { DataProductExports } from './DataProductExports';
 import { cn } from '../lib/utils';
+import { useWalkthroughStore } from '../store/useWalkthroughStore';
 import './admin.css';
 import {
   IconSliders,
@@ -45,7 +46,7 @@ export const AdminLayout: React.FC = () => {
 
   const utilityLinks = [
     { label: 'Sky Explorer', to: '/explore?tab=navigator', icon: <IconCompass className="w-4 h-4" /> },
-    { label: 'Spectra Lab', to: '/explore?tab=spectra', icon: <IconScan className="w-4 h-4" /> },
+    { label: 'Spectra Lab', to: '/explore?tab=spectral', icon: <IconScan className="w-4 h-4" /> },
   ];
 
   const navItems = [
@@ -167,7 +168,10 @@ export const AdminLayout: React.FC = () => {
   return (
     <div className="admin-workstation flex h-dvh w-screen overflow-hidden bg-background font-sans text-foreground">
       {/* DESKTOP SIDEBAR */}
-      <aside className="hidden lg:block w-60 shrink-0 border-r border-white/[0.07] bg-[#0B0C0E]">
+      <aside
+        data-tour="admin-sidebar-nav"
+        className="hidden lg:block w-60 shrink-0 border-r border-white/[0.07] bg-[#0B0C0E]"
+      >
         {sidebarContent}
       </aside>
 
@@ -208,6 +212,17 @@ export const AdminLayout: React.FC = () => {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               PyTorch SFT Active
             </span>
+            <button
+              type="button"
+              onClick={() => useWalkthroughStore.getState().startChapterTour('admin')}
+              title="Launch interactive guide for all 5 /admin Mission Control stations"
+              className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-sky-400/35 bg-sky-500/10 hover:bg-sky-500/20 text-xs font-medium text-sky-200 transition-colors cursor-pointer"
+            >
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-sky-400/40 bg-sky-500/20 font-mono text-[10px] font-bold text-sky-300">
+                ?
+              </span>
+              <span className="hidden sm:inline">Admin Guide</span>
+            </button>
             <Link
               to="/explore?tab=navigator"
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-white/[0.09] bg-white/[0.03] hover:bg-white/[0.07] text-xs font-medium text-foreground transition-colors"
