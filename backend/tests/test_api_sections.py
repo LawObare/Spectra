@@ -225,3 +225,50 @@ def test_section_spectrum_masked_core_falls_back_to_psf_wings():
     assert out["provenance"]["covered_channels"] == 102
     assert out["provenance"]["aperture_fallback_bands"] == ["D1", "D2", "D3", "D4", "D5", "D6"]
     assert all(f > 0 for f in out["flux_jy"])
+
+
+def test_list_sections_pagination_and_search(monkeypatch):
+    """GET /api/sections supports status/q filtering and limit/offset pagination."""
+    sample = [
+        {
+            "section_id": "sec_1",
+            "label": "Barnard's Star",
+            "status": "ready",
+            "source_badge": "[NASA Benchmark (Pre-cached)]",
+        },
+        {
+            "section_id": "sec_2",
+            "label": "WISE 0855-0714",
+            "status": "ready",
+            "source_badge": "[NASA Benchmark (Pre-cached)]",
+        },
+        {
+            "section_id": "sec_3",
+            "label": "RW Aurigae",
+            "status": "installing",
+            "source_badge": "[IRSA Live]",
+        },
+    ]
+    monkeypatch.setattr(sections, "_load_disk_benchmark_sections", lambda: sample)
+
+    app = FastAPI()
+    app.include_router(sections.router)
+    client = TestClient(app)
+
+    all_res = client.get("/api/sections")
+    assert all_res.status_code == 200
+    assert all_res.json()["total"] == 3
+    assert all_res.json()["has_more"] is False
+
+    paged_res = client.get("/api/sections?status=ready&limit=1&offset=1")
+    assert paged_res.status_code == 200
+    paged = paged_res.json()
+    assert paged["total"] == 2
+    assert paged["has_more"] is False
+    assert [s["section_id"] for s in paged["sections"]] == ["sec_2"]
+
+    search_res = client.get("/api/sections?q=barnard")
+    assert search_res.status_code == 200
+    searched = search_res.json()
+    assert searched["total"] == 1
+    assert searched["sections"][0]["section_id"] == "sec_1"
