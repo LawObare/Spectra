@@ -1,0 +1,966 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import uPlot from 'uplot';
+import 'uplot/dist/uPlot.min.css';
+import { useTelemetryStore, type SpectralChannel } from '../store/useTelemetryStore';
+import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
+import {
+  fetchInstalledSections,
+  fetchStaticSectionSpectrum,
+  findMatchingSection,
+  useInstalledSectionState,
+} from '../lib/installedSections';
+
+/**
+ * Spectra Tab 3: Spectrophotometric Lab
+ * SPECIFICATION.md §6.3.3 — 102-channel WCS-WAVE workbench (0.75–5.00 µm).
+ * Capabilities: 60 FPS uPlot chart, D1–D6 super-bands, ±1σ variance bars,
+ * FLAGS-as-amber-hollow-triangles, MJD coloring (R Draconis), accessible table,
+ * 2-component NNLS spectral unmixing (Epsilon Indi B), galaxy photo-z χ²(z)
+ * solver with Planck 2018 cosmology and interactive rest-frame line rulers.
+ */
+
+const DETECTORS: Array<{ id: string; min: number; max: number; color: string }> = [
+  { id: 'D1', min: 0.75, max: 1.11, color: 'rgba(96,165,250,0.10)' },
+  { id: 'D2', min: 1.11, max: 1.63, color: 'rgba(52,211,153,0.10)' },
+  { id: 'D3', min: 1.63, max: 2.42, color: 'rgba(250,204,21,0.10)' },
+  { id: 'D4', min: 2.42, max: 3.82, color: 'rgba(251,146,60,0.10)' },
+  { id: 'D5', min: 3.82, max: 4.42, color: 'rgba(244,114,182,0.10)' },
+  { id: 'D6', min: 4.42, max: 5.0, color: 'rgba(167,139,250,0.10)' },
+];
+
+const FLAG_DEFS: Record<number, string> = {
+  0: 'TRANSIENT (cosmic ray/glitch)',
+  1: 'OVERFLOW (saturation)',
+  2: 'SUR_ERROR',
+  4: 'PHANTOM',
+  5: 'REFERENCE',
+  6: 'NONFUNC',
+  7: 'DICHROIC',
+  9: 'MISSING_DATA',
+  10: 'HOT',
+  11: 'COLD',
+  17: 'PERSISTENCE',
+  22: 'GHOST',
+};
+
+const REST_LINES: Array<{ key: string; label: string; lambdaRestUm: number; color: string }> = [
+  { key: 'Ha', label: 'Hα', lambdaRestUm: 0.6563, color: '#ef4444' },
+  { key: 'OIII', label: '[O III]', lambdaRestUm: 0.5007, color: '#22c55e' },
+  { key: 'PaB', label: 'Paβ', lambdaRestUm: 1.282, color: '#38bdf8' },
+  { key: 'HBump', label: '1.6µm H-bump', lambdaRestUm: 1.6, color: '#a78bfa' },
+  { key: 'BrG', label: 'Brγ', lambdaRestUm: 2.166, color: '#f59e0b' },
+];
+
+function detectorFor(lambdaUm: number): string {
+  for (const d of DETECTORS) if (lambdaUm >= d.min && lambdaUm < d.max) return d.id;
+  return 'D6';
+}
+
+function flagTooltip(flag: number): string {
+  if (!flag) return '';
+  const names = Object.entries(FLAG_DEFS)
+    .filter(([bit]) => (flag & (1 << Number(bit))) !== 0)
+    .map(([bit, name]) => `Bit ${bit}: ${name}`);
+  return names.length ? names.join(' | ') : `FLAGS=0x${flag.toString(16)}`;
+}
+
+/** Solve 2-component NNLS: min_{a,b>=0} sum(((y - a*t1 - b*t2)/s)^2). */
+function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: number; b: number; chi2Red: number } {
+  let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0;
+  let validCount = 0;
+  const n = y.length;
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(y[i]) || !Number.isFinite(s[i])) continue;
+    validCount += 1;
+    const w = 1 / Math.max(s[i] * s[i], 1e-12);
+    s11 += w * t1[i] * t1[i];
+    s22 += w * t2[i] * t2[i];
+    s12 += w * t1[i] * t2[i];
+    sy1 += w * y[i] * t1[i];
+    sy2 += w * y[i] * t2[i];
+  }
+  if (validCount < 2) return { a: 0, b: 0, chi2Red: 0 };
+  const det = s11 * s22 - s12 * s12;
+  let a = det !== 0 ? (s22 * sy1 - s12 * sy2) / det : 0;
+  let b = det !== 0 ? (s11 * sy2 - s12 * sy1) / det : 0;
+  // enforce non-negativity by projecting to feasible candidates
+  const candidates: Array<[number, number]> = [[Math.max(0, a), Math.max(0, b)], [0, 0]];
+  const a0 = sy1 / Math.max(s11, 1e-12); candidates.push([Math.max(0, a0), 0]);
+  const b0 = sy2 / Math.max(s22, 1e-12); candidates.push([0, Math.max(0, b0)]);
+  let best = { a: 0, b: 0, chi2: Infinity };
+  for (const [ca, cb] of candidates) {
+    let chi2 = 0;
+    for (let i = 0; i < n; i++) {
+      if (!Number.isFinite(y[i]) || !Number.isFinite(s[i])) continue;
+      const r = (y[i] - ca * t1[i] - cb * t2[i]) / Math.max(s[i], 1e-12);
+      chi2 += r * r;
+    }
+    if (chi2 < best.chi2) best = { a: ca, b: cb, chi2 };
+  }
+  a = best.a; b = best.b;
+  const dof = Math.max(1, validCount - 2);
+  return { a, b, chi2Red: best.chi2 / dof };
+}
+
+type PzPoint = { z: number; chi2: number; p: number; lookbackGyr: number; dCMpc: number };
+type PhotoZResult = { grid: PzPoint[]; bestZ: number | null };
+
+interface CachedExtractedSpectrum {
+  channels: SpectralChannel[];
+  badge: string;
+  status: string;
+}
+
+const MAX_SPECTRUM_CACHE_ENTRIES = 16;
+const SPECTRUM_MEM_CACHE = new Map<string, CachedExtractedSpectrum>();
+
+function getCachedSpectrum(key: string): CachedExtractedSpectrum | null {
+  const hit = SPECTRUM_MEM_CACHE.get(key);
+  if (!hit) return null;
+  SPECTRUM_MEM_CACHE.delete(key);
+  SPECTRUM_MEM_CACHE.set(key, hit);
+  return hit;
+}
+
+function setCachedSpectrum(key: string, entry: CachedExtractedSpectrum): void {
+  if (SPECTRUM_MEM_CACHE.has(key)) {
+    SPECTRUM_MEM_CACHE.delete(key);
+  } else if (SPECTRUM_MEM_CACHE.size >= MAX_SPECTRUM_CACHE_ENTRIES) {
+    const oldestKey = SPECTRUM_MEM_CACHE.keys().next().value;
+    if (oldestKey !== undefined) {
+      SPECTRUM_MEM_CACHE.delete(oldestKey);
+    }
+  }
+  SPECTRUM_MEM_CACHE.set(key, entry);
+}
+
+function planckCosmo(z: number): { lookbackGyr: number; dCMpc: number } {
+  // Planck 2018: H0=67.4, Ωm=0.315, ΩΛ=0.685 (flat)
+  const H0 = 67.4, Om = 0.315, Ol = 0.685;
+  const c = 299792.458; // km/s
+  const Ez = (zp: number) => Math.sqrt(Om * Math.pow(1 + zp, 3) + Ol);
+  const steps = Math.max(8, Math.ceil(z * 80));
+  let dc = 0, tl = 0;
+  const dz = z / steps;
+  for (let i = 0; i < steps; i++) {
+    const z1 = (i + 0.5) * dz;
+    const invE = 1 / Ez(z1);
+    dc += (c / H0) * invE * dz;
+    tl += invE * dz / (1 + z1);
+  }
+  const tH = 9.778 / (H0 / 100); // Gyr*h? use 977.8/H0 Gyr
+  const lookbackGyr = (977.8 / H0) * tl;
+  return { lookbackGyr, dCMpc: dc };
+}
+
+function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { grid: PzPoint[]; bestZ: number | null } {
+  const valid = lambdas.map((wave, i) => ({ wave, flux: flux[i], sigma: sigma[i] }))
+    .filter((point) => Number.isFinite(point.wave) && Number.isFinite(point.flux) && Number.isFinite(point.sigma));
+  if (valid.length < 5) {
+    return { grid: [], bestZ: null };
+  }
+  const grid: PzPoint[] = [];
+  let best: PzPoint | null = null;
+  for (let zi = 0; zi <= 250; zi++) {
+    const z = zi * 0.01;
+    let chi2 = 0;
+    for (const point of valid) {
+      const rest = point.wave / (1 + z);
+      // simple emission-line + continuum template proxy
+      let model = 8 * Math.exp(-0.3 * Math.max(0, rest - 0.8));
+      model += 10 * Math.exp(-Math.pow((rest - 0.6563) / 0.03, 2)); // Hα
+      model += 7 * Math.exp(-Math.pow((rest - 0.5007) / 0.025, 2)); // [O III]
+      model += 4 * Math.exp(-Math.pow((rest - 1.282) / 0.04, 2)); // Paβ
+      model += 3 * Math.exp(-Math.pow((rest - 1.6) / 0.08, 2)); // H-bump
+      const r = (point.flux - model) / Math.max(point.sigma, 1e-6);
+      chi2 += r * r;
+    }
+    const cos = planckCosmo(z);
+    const pt = { z, chi2, p: 0, lookbackGyr: cos.lookbackGyr, dCMpc: cos.dCMpc };
+    grid.push(pt);
+    if (!best || chi2 < best.chi2) best = pt;
+  }
+  const minChi2 = best ? best.chi2 : grid[0].chi2;
+  let sumP = 0;
+  for (const p of grid) { p.p = Math.exp(-0.5 * (p.chi2 - minChi2)); sumP += p.p; }
+  for (const p of grid) p.p /= Math.max(sumP, 1e-12);
+  return { grid, bestZ: best ? best.z : 0 };
+}
+
+export const SpectrophotometricLab: React.FC = () => {
+  const {
+    ra, dec, activeTargetName, probedPixel, probeSkyPosition, activeSpectrum, activeEpochIndex,
+    isSpectralBlinkSynced, setSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
+    setActiveSpectrum, setSpectrumLoading,
+  } = useTelemetryStore();
+  const { setZ, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
+  const { installedSections } = useInstalledSectionState();
+  const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Loading Archive Spectrum…]');
+  const [spectrumStatus, setSpectrumStatus] = useState('');
+  const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
+
+  const readyInstalledSections = useMemo(
+    () => installedSections.filter((s) => s.status === 'ready'),
+    [installedSections]
+  );
+  const readySectionsKey = useMemo(
+    () => readyInstalledSections.map((s) => `${s.section_id}:${s.updated_at || ''}`).join('|'),
+    [readyInstalledSections]
+  );
+  const activeInstalledSection = useMemo(() => {
+    const position = probeSkyPosition ?? { ra, dec };
+    return findMatchingSection(readyInstalledSections, position.ra, position.dec);
+  }, [readyInstalledSections, probeSkyPosition, ra, dec]);
+
+  useEffect(() => {
+    if (installedSections.length === 0) {
+      void fetchInstalledSections();
+    }
+  }, [installedSections.length]);
+
+  // Live / Installed 102-Channel WCS-WAVE Hyperspectral Fetch (SPECIFICATION.md §4.1 Pipeline 2, §5.3.1)
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const fetchLiveSpectrum = async () => {
+      const position = probeSkyPosition ?? { ra, dec };
+      const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
+      const quickMatch = findMatchingSection(readyInstalledSections, position.ra, position.dec);
+      const buildCacheKey = (sec: { section_id: string; updated_at?: string | null; size_bytes?: number }) =>
+        `${sec.section_id}:${sec.updated_at || sec.size_bytes || ''}:${probedPixel?.x ?? ''}:${probedPixel?.y ?? ''}:${isSpectralBlinkSynced ? activeEpochIndex : ''}`;
+
+      if (quickMatch) {
+        const cached = getCachedSpectrum(buildCacheKey(quickMatch));
+        if (cached) {
+          setActiveSpectrum(cached.channels);
+          setSpectrumSourceBadge(cached.badge);
+          setSpectrumStatus(cached.status);
+          setSpectrumLoading(false);
+          return;
+        }
+      }
+
+      setSpectrumLoading(true);
+      setActiveSpectrum([]);
+      setSpectrumSourceBadge('[Loading Archive Spectrum…]');
+      try {
+        let sections = readyInstalledSections;
+        if (sections.length === 0) {
+          sections = (await fetchInstalledSections()).filter((s) => s.status === 'ready');
+        }
+        if (cancelled) return;
+
+        const matched = findMatchingSection(sections, position.ra, position.dec);
+        const matchedKey = matched ? buildCacheKey(matched) : null;
+        if (matched && matchedKey) {
+          const cached = getCachedSpectrum(matchedKey);
+          if (cached) {
+            setActiveSpectrum(cached.channels);
+            setSpectrumSourceBadge(cached.badge);
+            setSpectrumStatus(cached.status);
+            setSpectrumLoading(false);
+            return;
+          }
+        }
+
+        let data: any;
+        if (matched) {
+          setSpectrumStatus(`Extracting 102-ch spectrum from installed "${matched.label}"…`);
+          const qs = new URLSearchParams({ normalize: 'false' });
+          if (probedPixel) {
+            qs.set('px', String(probedPixel.x));
+            qs.set('py', String(probedPixel.y));
+          }
+          if (isSpectralBlinkSynced) {
+            qs.set('epoch', String(activeEpochIndex));
+          }
+          try {
+            const secRes = await fetch(`/api/sections/${matched.section_id}/spectrum?${qs.toString()}`, {
+              signal: controller.signal,
+            });
+            const secType = (secRes.headers.get('content-type') || '').toLowerCase();
+            if (secRes.ok && !secType.includes('text/html')) {
+              data = await secRes.json();
+            }
+          } catch (err) {
+            if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          }
+          if (!data) {
+            data = await fetchStaticSectionSpectrum(matched.section_id, controller.signal);
+          }
+          if (!data) throw new Error('Installed spectrum unavailable');
+        } else {
+          if (forceLiveCoordKey !== coordKey) {
+            setSpectrumSourceBadge('[No Archive Data]');
+            setSpectrumStatus('No installed section at this coordinate — pick an installed section or click Query Live');
+            return;
+          }
+          setSpectrumStatus('Querying live IRSA HDU 6 spectrum (sampling D1–D6 exposures)…');
+          const queued = await fetch('/api/spectrum/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ ...position, normalize: false }),
+          });
+          if (!queued.ok) throw new Error(`HTTP ${queued.status}`);
+          const { task_id: taskId } = await queued.json();
+          while (!cancelled) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1500));
+            const poll = await fetch(`/api/spectrum/tasks/${taskId}`, { signal: controller.signal });
+            if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
+            const task = await poll.json();
+            setSpectrumStatus(task.message || 'Extracting archive spectrum');
+            if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
+            if (task.status === 'complete') { data = task.result; break; }
+          }
+        }
+        if (cancelled || !data) return;
+        const sourceBadge = data.provenance?.source_badge;
+        const hasHonestSource =
+          typeof sourceBadge === 'string' &&
+          (/^\[Installed\]/.test(sourceBadge) ||
+            /^\[IRSA Live \(.+\)\]$/.test(sourceBadge) ||
+            /^\[NASA Benchmark/.test(sourceBadge));
+        if (!cancelled && hasHonestSource && Array.isArray(data.wavelengths_um) && data.wavelengths_um.length >= 102 && Array.isArray(data.flux_jy) && data.flux_jy.length >= 102) {
+          const convFactor = 9.0229788e-4; // Jy per (MJy/sr) for 6.2" pixel
+          const channels: SpectralChannel[] = data.wavelengths_um.map((lam: number, i: number) => ({
+            channel: i + 1,
+            detector: detectorFor(lam),
+            wavelengthUm: lam,
+            uncertainty: Number((Math.sqrt(Math.max(0, data.variance_jy2?.[i] ?? 0)) / convFactor).toFixed(5)),
+            flag: data.flags?.[i] ?? 0,
+            mjd: data.mjd_per_channel?.[i],
+            fluxMjySr: data.channel_coverage?.[i] ? Number((data.flux_jy[i] / convFactor).toFixed(5)) : Number.NaN,
+          }));
+          const statusText = `${data.provenance.covered_channels}/${data.provenance.channel_count} channels covered`;
+          if (matchedKey) {
+            setCachedSpectrum(matchedKey, {
+              channels,
+              badge: sourceBadge as string,
+              status: statusText,
+            });
+          }
+          setActiveSpectrum(channels);
+          setSpectrumSourceBadge(sourceBadge as string);
+          setSpectrumStatus(statusText);
+        }
+      } catch (err) {
+        if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
+          setSpectrumSourceBadge('[Spectrum Unavailable]');
+          setSpectrumStatus(err instanceof Error ? err.message : 'Archive spectrum extraction unavailable');
+        }
+      } finally {
+        if (!cancelled) setSpectrumLoading(false);
+      }
+    };
+    fetchLiveSpectrum();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    ra,
+    dec,
+    probeSkyPosition?.ra,
+    probeSkyPosition?.dec,
+    probedPixel?.x,
+    probedPixel?.y,
+    isSpectralBlinkSynced,
+    activeEpochIndex,
+    forceLiveCoordKey,
+    readySectionsKey,
+    setActiveSpectrum,
+    setSpectrumLoading,
+  ]);
+
+  const [colorByMjd, setColorByMjd] = useState(false);
+  const [flagTip, setFlagTip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [similarMatches, setSimilarMatches] = useState<
+    Array<{ id?: string; name: string; spectral_class: string; similarity: number; flux_curve: number[] }>
+  >([]);
+  const [isFindingSimilar, setIsFindingSimilar] = useState(false);
+  const [similarStatus, setSimilarStatus] = useState('Awaiting archive spectrum for SIMD matching');
+
+  const zRef = useRef(manualRedshiftZ);
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const plotRef = useRef<uPlot | null>(null);
+  const spectrumRef = useRef<SpectralChannel[]>([]);
+  const colorByMjdRef = useRef(false);
+  const specMjdRef = useRef<number[]>([]);
+  const mjdRangeRef = useRef<[number, number] | null>(null);
+
+  useEffect(() => { zRef.current = manualRedshiftZ; }, [manualRedshiftZ]);
+
+  const epochIndex = isSpectralBlinkSynced ? activeEpochIndex : 0;
+  const mjd = useMemo(() => {
+    const ep = loadedCutout?.epochs?.[epochIndex] as { mjd?: number } | undefined;
+    return typeof ep?.mjd === 'number' && ep.mjd > 0 ? ep.mjd : null;
+  }, [loadedCutout, epochIndex]);
+
+  const spectrum = useMemo(
+    () => (activeSpectrum && activeSpectrum.length >= 102 ? activeSpectrum.slice(0, 102) : []),
+    [activeSpectrum]
+  );
+  useEffect(() => { spectrumRef.current = spectrum; }, [spectrum]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSimilar = async () => {
+      if (!spectrum || spectrum.length < 102) {
+        setSimilarMatches([]);
+        setSimilarStatus('Install a section or query live spectrum for SIMD matching');
+        return;
+      }
+      const finiteIdx: number[] = [];
+      for (let i = 0; i < spectrum.length; i++) {
+        if (Number.isFinite(spectrum[i].fluxMjySr)) finiteIdx.push(i);
+      }
+      if (finiteIdx.length < 17) {
+        setSimilarMatches([]);
+        setSimilarStatus(`Only ${finiteIdx.length}/102 channels covered at px (${probedPixel?.x ?? 24},${probedPixel?.y ?? 24}) — need ≥17 for SIMD match`);
+        return;
+      }
+      const fluxArr = spectrum.map((c, idx) => {
+        if (Number.isFinite(c.fluxMjySr)) return c.fluxMjySr;
+        // Linearly interpolate / clamp missing bands so sparse gaps don't break 102-pt cosine similarity
+        let left = -1;
+        let right = -1;
+        for (const fi of finiteIdx) {
+          if (fi < idx) left = fi;
+          else if (fi > idx) { right = fi; break; }
+        }
+        if (left >= 0 && right >= 0) {
+          const t = (idx - left) / (right - left);
+          return spectrum[left].fluxMjySr * (1 - t) + spectrum[right].fluxMjySr * t;
+        }
+        return spectrum[left >= 0 ? left : right].fluxMjySr;
+      });
+      setIsFindingSimilar(true);
+      setSimilarStatus('Evaluating SIMD cosine similarity...');
+      try {
+        const res = await fetch('/api/subjects/similar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spectrum: fluxArr }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled && Array.isArray(data.matches)) {
+            setSimilarMatches(data.matches);
+            if (data.matches.length === 0) setSimilarStatus('No template matches returned');
+          }
+        } else if (!cancelled) {
+          setSimilarStatus(`Similarity service unavailable (HTTP ${res.status})`);
+        }
+      } catch {
+        if (!cancelled) setSimilarStatus('Similarity service unreachable');
+      } finally {
+        if (!cancelled) setIsFindingSimilar(false);
+      }
+    };
+    fetchSimilar();
+    return () => {
+      cancelled = true;
+    };
+  }, [spectrum, spectrumSourceBadge, probedPixel?.x, probedPixel?.y]);
+
+  const isRDraconis = (activeTargetName || '').toLowerCase().includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
+  const isEpsInd = (activeTargetName || '').toLowerCase().includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
+
+  const perChannelMjd = useMemo(
+    () => spectrum.map((channel) => (typeof channel.mjd === 'number' && channel.mjd > 0 ? channel.mjd : Number.NaN)),
+    [spectrum]
+  );
+  const hasFiniteMjds = useMemo(() => perChannelMjd.some(Number.isFinite), [perChannelMjd]);
+  useEffect(() => { colorByMjdRef.current = colorByMjd && isRDraconis && hasFiniteMjds; }, [colorByMjd, isRDraconis, hasFiniteMjds]);
+  useEffect(() => { specMjdRef.current = perChannelMjd; }, [perChannelMjd]);
+  useEffect(() => {
+    const arr = perChannelMjd.filter(Number.isFinite);
+    mjdRangeRef.current = arr.length ? [Math.min(...arr), Math.max(...arr)] : null;
+  }, [perChannelMjd]);
+  useEffect(() => { if (plotRef.current) plotRef.current.redraw(false); }, [colorByMjd, perChannelMjd]);
+
+  const data = useMemo((): uPlot.AlignedData => {
+    const x = spectrum.map((c) => c.wavelengthUm);
+    const y = spectrum.map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null));
+    return [x, y];
+  }, [spectrum]);
+
+  // Epsilon Indi B NNLS unmixing
+  const unmix = useMemo(() => {
+    if (!isEpsInd || spectrum.filter((c) => Number.isFinite(c.fluxMjySr)).length < 2) return null;
+    const y = spectrum.map((c) => c.fluxMjySr);
+    const s = spectrum.map((c) => c.uncertainty);
+    const t1 = spectrum.map((c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2))));
+    const t6 = spectrum.map((c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2))));
+    return solveNnls2(y, t1, t6, s);
+  }, [isEpsInd, spectrum]);
+
+  // Defer Photo-z grid search + Planck cosmology integrals past first paint so the 102-channel uPlot chart renders cleanly.
+  const [photoZ, setPhotoZ] = useState<PhotoZResult>({ grid: [], bestZ: null });
+
+  useEffect(() => {
+    if (spectrum.length === 0) {
+      setPhotoZ({ grid: [], bestZ: null });
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      const lambdas = spectrum.map((c) => c.wavelengthUm);
+      const flux = spectrum.map((c) => c.fluxMjySr);
+      const sig = spectrum.map((c) => c.uncertainty);
+      setPhotoZ(computePhotoZ(lambdas, flux, sig));
+    }, 16);
+    return () => window.clearTimeout(timerId);
+  }, [spectrum]);
+
+  // Build uPlot instance
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const drawBands = (u: uPlot) => {
+      const ctx = u.ctx;
+      const { top, height } = u.bbox;
+      ctx.save();
+      for (const d of DETECTORS) {
+        const x0 = u.valToPos(d.min, 'x', true);
+        const x1 = u.valToPos(d.max, 'x', true);
+        ctx.fillStyle = d.color;
+        ctx.fillRect(x0, top, x1 - x0, height);
+        ctx.fillStyle = 'rgba(229,229,229,0.45)';
+        ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
+        ctx.fillText(d.id, x0 + 4, top + 12);
+      }
+      ctx.restore();
+    };
+    const drawErrorsFlagsAndRulers = (u: uPlot) => {
+      const ctx = u.ctx;
+      const spec = spectrumRef.current;
+      ctx.save();
+      // error bars
+      ctx.strokeStyle = 'rgba(148,163,184,0.55)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < spec.length; i++) {
+        const c = spec[i];
+        if (!Number.isFinite(c.fluxMjySr) || !Number.isFinite(c.uncertainty)) continue;
+        const x = u.valToPos(c.wavelengthUm, 'x', true);
+        const y0 = u.valToPos(c.fluxMjySr - c.uncertainty, 'y', true);
+        const y1 = u.valToPos(c.fluxMjySr + c.uncertainty, 'y', true);
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+      }
+      // optional MJD coloring (R Draconis non-simultaneous spectrum assembly)
+      if (colorByMjdRef.current && mjdRangeRef.current) {
+        const [m0, m1] = mjdRangeRef.current;
+        for (let i = 0; i < spec.length; i++) {
+          const c = spec[i];
+          if (!Number.isFinite(c.fluxMjySr)) continue;
+          const x = u.valToPos(c.wavelengthUm, 'x', true);
+          const y = u.valToPos(c.fluxMjySr, 'y', true);
+          const m = specMjdRef.current[i] ?? m0;
+          const t = m1 > m0 ? (m - m0) / (m1 - m0) : 0;
+          const hue = 210 - 180 * Math.max(0, Math.min(1, t)); // blue->amber
+          ctx.fillStyle = `hsl(${hue} 85% 62%)`;
+          ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      // flags as amber hollow triangles
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < spec.length; i++) {
+        const c = spec[i];
+        if (!c.flag || !Number.isFinite(c.fluxMjySr)) continue;
+        const x = u.valToPos(c.wavelengthUm, 'x', true);
+        const y = u.valToPos(c.fluxMjySr, 'y', true);
+        const s = 5;
+        ctx.beginPath();
+        ctx.moveTo(x, y - s); ctx.lineTo(x + s, y + s); ctx.lineTo(x - s, y + s); ctx.closePath();
+        ctx.stroke();
+      }
+      // redshift rulers
+      const z = zRef.current;
+      for (const line of REST_LINES) {
+        const obs = line.lambdaRestUm * (1 + z);
+        if (obs < 0.75 || obs > 5.0) continue;
+        const x = u.valToPos(obs, 'x', true);
+        ctx.strokeStyle = line.color;
+        ctx.globalAlpha = 0.7;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(x, u.bbox.top); ctx.lineTo(x, u.bbox.top + u.bbox.height); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = line.color;
+        ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
+        ctx.fillText(`${line.label} z=${z.toFixed(2)}`, x + 3, u.bbox.top + 24);
+      }
+      ctx.restore();
+    };
+
+    const opts: uPlot.Options = {
+      width: chartRef.current.clientWidth || 900,
+      height: 420,
+      padding: [16, 12, 0, 0],
+      cursor: { drag: { x: false, y: false } },
+      scales: {
+        x: { time: false, min: 0.75, max: 5.0 },
+        y: {
+          auto: true,
+          range: (_u, min, max) => {
+            if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+            if (min === max) return [min - 0.5, max + 0.5];
+            return [min, max];
+          },
+        },
+      },
+      axes: [
+        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Wavelength λ (µm)' },
+        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Flux (MJy/sr)' },
+      ],
+      series: [
+        {},
+        {
+          label: 'Fν',
+          stroke: '#ffffff',
+          width: 1.5,
+          spanGaps: true,
+          points: { show: true, size: 4, fill: '#ffffff', stroke: '#0a0a0a' },
+        },
+      ],
+      hooks: {
+        drawClear: [drawBands],
+        draw: [drawErrorsFlagsAndRulers],
+      },
+    };
+    const plot = new uPlot(opts, data, chartRef.current);
+    plotRef.current = plot;
+
+    const onMove = (e: MouseEvent) => {
+      const rect = plot.over.getBoundingClientRect();
+      const left = e.clientX - rect.left;
+      const idx = plot.posToIdx(left);
+      const c = spectrumRef.current[idx];
+      if (c && c.flag) setFlagTip({ x: e.clientX, y: e.clientY, text: flagTooltip(c.flag) });
+      else setFlagTip(null);
+    };
+    const onLeave = () => setFlagTip(null);
+    plot.over.addEventListener('mousemove', onMove);
+    plot.over.addEventListener('mouseleave', onLeave);
+
+    const ro = new ResizeObserver((entries) => {
+      for (const ent of entries) {
+        const h = ent.contentRect.width < 640 ? 280 : ent.contentRect.width < 1280 ? 340 : 420;
+        plot.setSize({ width: Math.max(260, Math.floor(ent.contentRect.width)), height: h });
+      }
+    });
+    ro.observe(chartRef.current);
+
+    return () => {
+      ro.disconnect();
+      plot.over.removeEventListener('mousemove', onMove);
+      plot.over.removeEventListener('mouseleave', onLeave);
+      plot.destroy();
+      plotRef.current = null;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update data when spectrum changes (<1.5ms/frame typical for 102 points)
+  useEffect(() => {
+    if (plotRef.current) plotRef.current.setData(data, true);
+  }, [data]);
+
+  // Redshift slider: update store + URL and redraw rulers at 60 FPS (no data rebuild)
+  const onZChange = useCallback((val: number) => {
+    zRef.current = val;
+    setManualRedshiftZ(val);
+    setZ(val);
+    // redraw overlays (rulers) without rebuilding series data
+    if (plotRef.current) plotRef.current.redraw(false);
+  }, [setManualRedshiftZ, setZ]);
+
+  const pointColors = useMemo(() => {
+    if (!isRDraconis || !colorByMjd || !hasFiniteMjds) return null;
+    return perChannelMjd.filter(Number.isFinite);
+  }, [isRDraconis, colorByMjd, hasFiniteMjds, perChannelMjd]);
+
+  return (
+    <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-neutral-950 text-neutral-100">
+      <div className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800">
+        <div className="border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-4 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex h-7 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-2.5">
+              <svg
+                className="h-3.5 w-3.5 shrink-0 text-sky-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+              </svg>
+              <h2 className="text-xs font-semibold tracking-tight text-white">Spectrophotometric Lab</h2>
+            </div>
+            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[11px] text-neutral-300">
+              102 channels · 0.75–5.00 µm · λ vs Fν (MJy/sr)
+            </span>
+            <span
+              className={`inline-flex h-7 items-center rounded-lg border px-2.5 font-mono text-[11px] ${
+                spectrumSourceBadge.startsWith('[Installed]')
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : spectrumSourceBadge.startsWith('[IRSA Live')
+                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+              }`}
+            >
+              {spectrumSourceBadge}
+            </span>
+            {readyInstalledSections.length > 0 && (
+              <select
+                aria-label="Installed section for spectrum"
+                value={activeInstalledSection?.section_id || ''}
+                onChange={(e) => {
+                  const chosen = readyInstalledSections.find((s) => s.section_id === e.target.value);
+                  if (!chosen) return;
+                  setForceLiveCoordKey(null);
+                  setUrlRa(Number(chosen.ra.toFixed(5)));
+                  setUrlDec(Number(chosen.dec.toFixed(5)));
+                  setUrlFov(Math.round(chosen.fov_arcsec || 300));
+                  useTelemetryStore.setState({
+                    ra: chosen.ra,
+                    dec: chosen.dec,
+                    activeTargetName: chosen.label,
+                    probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
+                  });
+                }}
+                className="h-7 max-w-[210px] rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
+                title="Use an installed section for 102-channel extraction"
+              >
+                {!activeInstalledSection && (
+                  <option value="">Installed ({readyInstalledSections.length})</option>
+                )}
+                {readyInstalledSections.map((sec) => (
+                  <option key={sec.section_id} value={sec.section_id}>
+                    {sec.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {!activeInstalledSection && (
+              <button
+                type="button"
+                onClick={() => {
+                  const position = probeSkyPosition ?? { ra, dec };
+                  setForceLiveCoordKey(`${position.ra.toFixed(5)},${position.dec.toFixed(5)}`);
+                }}
+                className="h-7 rounded-lg border border-sky-400/40 bg-sky-500/10 hover:bg-sky-500/20 hover:border-sky-400/60 px-2.5 text-xs font-medium text-sky-200 transition-all cursor-pointer"
+                title="Query IRSA live for this coordinate without installing"
+              >
+                Query Live Spectrum
+              </button>
+            )}
+            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[11px] text-sky-300">
+              probe px ({probedPixel?.x ?? 24},{probedPixel?.y ?? 24})
+            </span>
+            <button
+              type="button"
+              onClick={() => setSpectralBlinkSynced(!isSpectralBlinkSynced)}
+              className={`h-7 rounded-lg border px-2.5 text-xs font-medium transition-all cursor-pointer ${
+                isSpectralBlinkSynced
+                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
+                  : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08] hover:text-white'
+              }`}
+              title="Toggle between full multi-epoch coadd and active comparator epoch"
+            >
+              {isSpectralBlinkSynced ? `Epoch ${epochIndex} Only` : 'All Epochs (Coadded)'}
+            </button>
+            {spectrumStatus && (
+              <span className="inline-flex h-7 items-center font-mono text-[11px] text-neutral-400">
+                {spectrumStatus}
+              </span>
+            )}
+          </div>
+          <p className="mt-1.5 text-[11px] text-neutral-400">
+            Target: <span className="font-mono text-neutral-200">{activeTargetName || 'Custom RA/Dec'}</span> · RA {ra.toFixed(5)}° Dec {dec.toFixed(5)}° ·
+            shaded D1–D6 super-bands · ±1σ VARIANCE bars · amber hollow triangles = FLAGS≠0 (hover for bitmask tooltip).
+          </p>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-neutral-500">
+            <span><span className="inline-block h-0 w-0 border-x-[4px] border-b-[7px] border-x-transparent border-b-amber-400 align-middle" /> Bit 0 TRANSIENT</span>
+            <span><span className="inline-block h-0 w-0 border-x-[4px] border-b-[7px] border-x-transparent border-b-amber-400 align-middle" /> Bit 1 OVERFLOW</span>
+            <span>uPlot canvas, 102 points (&lt;1.5 ms/frame updates)</span>
+          </div>
+          {isRDraconis && hasFiniteMjds && (
+            <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-neutral-300">
+              <input type="checkbox" checked={colorByMjd} onChange={(e) => setColorByMjd(e.target.checked)} />
+              Color points by observation MJD (R Draconis, [Non-Simultaneous Spectrum]{mjd !== null ? `, MJD ${mjd.toFixed(2)}` : ''})
+            </label>
+          )}
+        </div>
+
+        <div className="relative min-h-0 flex-1 p-3">
+          <div ref={chartRef} className="h-[280px] sm:h-[340px] xl:h-[420px] w-full rounded border border-neutral-800 bg-neutral-950" aria-label="102-channel hyperspectral plot" />
+          {spectrum.length === 0 && (
+            <div className="pointer-events-none absolute inset-3 flex h-[280px] sm:h-[340px] xl:h-[420px] items-center justify-center">
+              <div className="rounded border border-neutral-800 bg-neutral-900/90 px-4 py-2 text-center text-xs text-neutral-300">
+                {spectrumStatus || 'No archive spectrum loaded for this coordinate'}
+              </div>
+            </div>
+          )}
+          {flagTip && (
+            <div className="pointer-events-none fixed z-50 max-w-xs rounded border border-amber-500/50 bg-neutral-900 px-2 py-1 text-[11px] text-amber-200 shadow" style={{ left: flagTip.x + 10, top: flagTip.y + 10 }}>
+              {flagTip.text}
+            </div>
+          )}
+          {/* MJD color legend for R Draconis */}
+          {pointColors && (
+            <div className="mt-2 flex items-center gap-2 text-[10px] text-neutral-400">
+              <span>Observation MJD:</span>
+              <span className="font-mono text-amber-300">{Math.min(...pointColors).toFixed(1)}–{Math.max(...pointColors).toFixed(1)}</span>
+              <span className="rounded border border-amber-500/40 px-1 text-amber-300">[Non-Simultaneous Spectrum]</span>
+            </div>
+          )}
+          {/* Accessible hidden table */}
+          <div className="sr-only" aria-live="polite">
+            <table role="table">
+              <caption>102-channel SPHEREx spectrum (accessible data table)</caption>
+              <thead><tr><th>Channel</th><th>Detector</th><th>Wavelength (µm)</th><th>Flux (MJy/sr)</th><th>Uncertainty</th><th>FLAGS</th></tr></thead>
+              <tbody>
+                {spectrum.map((c) => (
+                  <tr key={c.channel}>
+                    <td>{c.channel}</td><td>{c.detector}</td><td>{c.wavelengthUm}</td><td>{Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : '—'}</td><td>{Number.isFinite(c.uncertainty) ? c.uncertainty : '—'}</td><td>{c.flag ? flagTooltip(c.flag) : '0'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Photo-z / χ²(z) + P(z) */}
+        <div className="border-t border-neutral-800 p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-300">Automated Galaxy Photo-z Solver (Planck 2018: H0=67.4, Ωm=0.315, ΩΛ=0.685)</h3>
+          <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3 text-[11px]">
+              <div>Best-fit redshift: <span className="font-mono font-semibold text-sky-300">{photoZ.bestZ !== null ? `z = ${photoZ.bestZ.toFixed(2)}` : '—'}</span> (grid Δz=0.01, z∈[0,2.5])</div>
+              {(() => {
+                const best = photoZ.bestZ;
+                const b = best !== null ? (photoZ.grid[Math.round(best * 100)] || photoZ.grid[0]) : null;
+                return (
+                  <div className="mt-1 text-neutral-300">Lookback time: <span className="font-mono text-white">{b ? `${b.lookbackGyr.toFixed(2)} Gyr` : '—'}</span> · Comoving distance D_C: <span className="font-mono text-white">{b ? `${b.dCMpc.toFixed(0)} Mpc` : '—'}</span></div>
+                );
+              })()}
+              <svg viewBox="0 0 320 90" className="mt-2 h-[90px] w-full rounded bg-neutral-950">
+                {photoZ.grid.map((p, i) => {
+                  if (i % 2) return null;
+                  const x = (p.z / 2.5) * 318 + 1;
+                  const y = 88 - p.p * 84;
+                  return <circle key={p.z} cx={x} cy={y} r={1.2} fill="#38bdf8" />;
+                })}
+                {photoZ.bestZ !== null && (
+                  <line x1={(photoZ.bestZ/2.5)*318+1} y1={0} x2={(photoZ.bestZ/2.5)*318+1} y2={90} stroke="#f59e0b" strokeDasharray="3 2" />
+                )}
+                <text x="4" y="12" fill="#a3a3a3" fontSize="9">P(z)</text>
+                <text x="280" y="86" fill="#a3a3a3" fontSize="9">z</text>
+              </svg>
+            </div>
+            <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3">
+              <div className="flex items-center justify-between text-[11px]">
+                <label htmlFor="lab-z-slider" className="text-neutral-300">Redshift ruler scrubber (λ_obs = λ_rest·(1+z))</label>
+                <span className="font-mono font-semibold text-amber-300">z = {manualRedshiftZ.toFixed(3)}</span>
+              </div>
+              <input id="lab-z-slider" type="range" min={0} max={2.5} step={0.01} value={manualRedshiftZ}
+                onChange={(e) => onZChange(Number(e.target.value))} className="mt-2 w-full accent-amber-400" />
+              <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                {REST_LINES.map((l) => {
+                  const obs = l.lambdaRestUm * (1 + manualRedshiftZ);
+                  const vis = obs >= 0.75 && obs <= 5.0;
+                  return <span key={l.key} className={`rounded border px-1.5 py-0.5 ${vis ? 'border-neutral-600 text-neutral-200' : 'border-neutral-800 text-neutral-600'}`} style={{ borderColor: vis ? l.color : undefined }}>{l.label} {l.lambdaRestUm}µm → {obs.toFixed(3)}µm</span>;
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right: NNLS unmixing / controls */}
+      <aside className="w-full lg:w-[330px] xl:w-[360px] shrink-0 lg:overflow-y-auto bg-neutral-900/20 p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-300">Two-Component NNLS Spectral Unmixing</h3>
+        {isEpsInd && unmix ? (
+          <div className="mt-2 rounded border border-amber-500/30 bg-amber-950/10 p-3 text-[11px]">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="font-semibold text-amber-200">Epsilon Indi Ba+Bb (blended 6.2″ pixel)</span>
+              <span className="rounded border border-amber-400/60 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">[Illustrative Two-Component De-blend]</span>
+            </div>
+            <div>Component A (T1 Brown Dwarf): weight <span className="font-mono text-white">a = {unmix.a.toFixed(4)}</span></div>
+            <div>Component B (T6 Brown Dwarf): weight <span className="font-mono text-white">b = {unmix.b.toFixed(4)}</span></div>
+            <div>Residual reduced chi-square: <span className="font-mono text-white">χ²_red = {unmix.chi2Red.toFixed(3)}</span></div>
+            <div className="mt-2 text-neutral-400">Model: min<sub>a,b≥0</sub> Σ((F_obs(λ_k)-[a·T1(λ_k)+b·T6(λ_k)])/σ_k)², k=1..102.</div>
+            <svg viewBox="0 0 320 120" className="mt-2 h-[120px] w-full rounded bg-neutral-950">
+              {(() => {
+                const t1 = spectrum.map((c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2))));
+                const t6 = spectrum.map((c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2))));
+                const comp = spectrum.map((_, i) => unmix.a * t1[i] + unmix.b * t6[i]);
+                const vals = [...spectrum.map(c=>c.fluxMjySr), ...comp].filter(Number.isFinite);
+                const max = vals.length ? Math.max(...vals, 1) : 1; const min = vals.length ? Math.min(...vals, 0) : 0;
+                const sx = (l: number) => ((l - 0.75) / 4.25) * 318 + 1;
+                const sy = (v: number) => 118 - ((v - min) / Math.max(max - min, 1e-6)) * 114;
+                const path = (arr: number[]) => {
+                  let penDown = false;
+                  return arr.map((v, i) => {
+                    if (!Number.isFinite(v)) { penDown = false; return ''; }
+                    const cmd = penDown ? 'L' : 'M';
+                    penDown = true;
+                    return `${cmd}${sx(spectrum[i].wavelengthUm)},${sy(v)}`;
+                  }).filter(Boolean).join(' ');
+                };
+                return (<>
+                  <path d={path(spectrum.map(c=>c.fluxMjySr))} fill="none" stroke="#fff" strokeWidth="1.2" />
+                  <path d={path(comp)} fill="none" stroke="#22c55e" strokeWidth="1.2" strokeDasharray="4 2" />
+                  <text x="4" y="12" fill="#fff" fontSize="9">obs</text><text x="26" y="12" fill="#22c55e" fontSize="9">a·T1+b·T6</text>
+                </>);
+              })()}
+            </svg>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-neutral-500">Unmixing panel activates for Epsilon Indi B (Epoch 2025.5: 331.09566°, -56.80031°). Select that benchmark/coordinate to see T1+T6 de-blend, weights a/b, residual χ²_red, and the illustrative badge.</p>
+        )}
+
+        {/* Spectral Similarity Matches (POST /api/subjects/similar) */}
+        <div className="mt-4 rounded border border-neutral-800 bg-neutral-900/40 p-3 text-[11px]">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold uppercase tracking-wide text-neutral-300">
+              SIMD Spectral Match (10k Templates)
+            </span>
+            {isFindingSimilar && (
+              <span className="font-mono text-[10px] text-sky-400">Scanning...</span>
+            )}
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {similarMatches.length > 0 ? (
+              similarMatches.slice(0, 4).map((m, idx) => (
+                <div
+                  key={m.id || idx}
+                  className="flex items-center justify-between rounded bg-neutral-950/60 px-2 py-1"
+                >
+                  <div className="truncate mr-2">
+                    <span className="font-medium text-white">{m.name}</span>
+                    <span className="ml-1 text-[10px] text-neutral-400">({m.spectral_class})</span>
+                  </div>
+                  <span className="font-mono font-semibold text-emerald-400 shrink-0">
+                    {(m.similarity * 100).toFixed(1)}%
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="text-neutral-500 text-[10px]">{similarStatus}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded border border-neutral-800 bg-neutral-950/40 p-3 text-[11px] text-neutral-400">
+          <div className="font-semibold text-neutral-300">Pixel → Spectrum link (Tab 2 contract)</div>
+          <div className="mt-1">Reads <span className="font-mono">useTelemetryStore.probedPixel</span> / <span className="font-mono">activeSpectrum</span> (set by Tab 2 on pixel click) and extracts directly from installed SPHEREx sections or live IRSA HDU 5/6 exposures.</div>
+        </div>
+      </aside>
+    </div>
+  );
+};
+
+export default SpectrophotometricLab;

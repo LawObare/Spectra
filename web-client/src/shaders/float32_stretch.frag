@@ -82,7 +82,13 @@ vec3 apply_palette(float val) {
     return vec3(c);           // Standard Grayscale
 }
 
+bool is_bad_scalar(float v) {
+    return isnan(v) || isinf(v);
+}
+
 void main() {
+    vec4 masked_bg = vec4(0.031, 0.039, 0.059, 1.0);
+
     if (u_is_rgb == 1) {
         // 3-Band RGB False-Color Composite
         float r_val = texture(u_band_r, v_uv).r;
@@ -90,13 +96,9 @@ void main() {
         float b_val = texture(u_band_b, v_uv).r;
 
         float range = max(u_white - u_black, 1e-6);
-        float r_norm = (r_val - u_black) / range;
-        float g_norm = (g_val - u_black) / range;
-        float b_norm = (b_val - u_black) / range;
-
-        float r_out = clamp(asinh_stretch(r_norm, u_asinh_a), 0.0, 1.0);
-        float g_out = clamp(asinh_stretch(g_norm, u_asinh_a), 0.0, 1.0);
-        float b_out = clamp(asinh_stretch(b_norm, u_asinh_a), 0.0, 1.0);
+        float r_out = is_bad_scalar(r_val) ? 0.0 : clamp(asinh_stretch((r_val - u_black) / range, u_asinh_a), 0.0, 1.0);
+        float g_out = is_bad_scalar(g_val) ? 0.0 : clamp(asinh_stretch((g_val - u_black) / range, u_asinh_a), 0.0, 1.0);
+        float b_out = is_bad_scalar(b_val) ? 0.0 : clamp(asinh_stretch((b_val - u_black) / range, u_asinh_a), 0.0, 1.0);
 
         fragColor = vec4(r_out, g_out, b_out, 1.0);
         return;
@@ -113,22 +115,44 @@ void main() {
 
     if (u_mode == 0) {
         // Mode 0: Single-Epoch Asinh Stretch (Blink)
+        if (is_bad_scalar(f_curr)) {
+            fragColor = masked_bg;
+            return;
+        }
         float norm_flux = (f_curr - u_black) / range;
         display = clamp(asinh_stretch(norm_flux, u_asinh_a), 0.0, 1.0);
     } else if (u_mode == 1) {
         // Mode 1: Pairwise Signed Difference (t_N - t_0)
         // Symmetric stretch mapped around 0.5 mid-grey to preserve dipole structure
+        if (is_bad_scalar(f_curr) || is_bad_scalar(f_ref)) {
+            fragColor = masked_bg;
+            return;
+        }
         float diff = f_curr - f_ref;
         float signed_norm = diff / max(u_diff_scale, 1e-6);
         float stretched_diff = asinh_stretch(signed_norm, u_asinh_a);
         display = clamp(0.5 + 0.5 * stretched_diff, 0.0, 1.0);
     } else if (u_mode == 2) {
         // Mode 2: True Inverse-Variance Weighted Co-Addition
-        float w_curr = 1.0 / max(v_curr, 1e-6);
-        float w_ref  = 1.0 / max(v_ref, 1e-6);
-        float coadd_flux = (f_curr * w_curr + f_ref * w_ref) / max(w_curr + w_ref, 1e-6);
-        float norm_coadd = (coadd_flux - u_black) / range;
-        display = clamp(asinh_stretch(norm_coadd, u_asinh_a), 0.0, 1.0);
+        bool curr_ok = !is_bad_scalar(f_curr) && !is_bad_scalar(v_curr) && v_curr > 0.0;
+        bool ref_ok  = !is_bad_scalar(f_ref) && !is_bad_scalar(v_ref) && v_ref > 0.0;
+        if (!curr_ok && !ref_ok) {
+            if (!is_bad_scalar(f_curr)) {
+                float norm_single = (f_curr - u_black) / range;
+                display = clamp(asinh_stretch(norm_single, u_asinh_a), 0.0, 1.0);
+            } else {
+                fragColor = masked_bg;
+                return;
+            }
+        } else {
+            float w_curr = curr_ok ? (1.0 / max(v_curr, 1e-6)) : 0.0;
+            float w_ref  = ref_ok  ? (1.0 / max(v_ref, 1e-6))  : 0.0;
+            float f_c = curr_ok ? f_curr : 0.0;
+            float f_r = ref_ok  ? f_ref  : 0.0;
+            float coadd_flux = (f_c * w_curr + f_r * w_ref) / max(w_curr + w_ref, 1e-6);
+            float norm_coadd = (coadd_flux - u_black) / range;
+            display = clamp(asinh_stretch(norm_coadd, u_asinh_a), 0.0, 1.0);
+        }
     }
 
     fragColor = vec4(apply_palette(display), 1.0);

@@ -1,0 +1,135 @@
+{
+  "barnard": {
+    "article": "Barnard's Star",
+    "file": "File:Barnardstar2006.jpg",
+    "credit": "Steve Quirk",
+    "license": "Public domain",
+    "bytes": 37104
+  },
+  "wise0855": {
+    "article": "File:WISE 0855 Hubble WFC3.jpg",
+    "file": "File:WISE 0855 Hubble WFC3.jpg",
+    "credit": "NASA/ESA/STScI — Hubble WFC3",
+    "license": "CC BY-SA 4.0",
+    "bytes": 90118
+  },
+  "eps_indi_b": {
+    "article": "File:Epsilon Indi B (eso0303a).jpg",
+    "file": "File:Epsilon Indi B (eso0303a).jpg",
+    "credit": "ESO",
+    "license": "CC BY 4.0",
+    "bytes": 98222
+  },
+  "trappist1": {
+    "article": "File:TRAPPIST-1e artist impression 2018.png",
+    "file": "File:TRAPPIST-1e artist impression 2018.png",
+    "credit": "NASA/JPL-Caltech",
+    "license": "Public domain",
+    "bytes": 58438
+  },
+  "proxima": {
+    "article": "Proxima Centauri",
+    "file": "File:New_shot_of_Proxima_Centauri,_our_nearest_neighbour.jpg",
+    "credit": "ESA/Hubble &amp; NASA",
+    "license": "CC BY 4.0",
+    "bytes": 51912
+  },
+  "m42_orion": {
+    "article": "Orion Nebula",
+    "file": "File:Orion_Nebula_-_Hubble_2006_mosaic_18000.jpg",
+    "credit": "NASA, ESA, M. Robberto (Space Telescope Science Institute/ESA) and the Hubble Space Telescope Orion Treasury Project Team",
+    "license": "Public domain",
+    "bytes": 85544
+  },
+  "elias29": {
+    "article": "Rho Ophiuchi cloud complex",
+    "file": "File:Rho_Ophiuchi_cloud_complex_(weic2316a).jpg",
+    "credit": "NASA, ESA, CSA, STScI, K. Pontoppidan (STScI), A. Pagan (STScI)",
+    "license": "CC BY 4.0",
+    "bytes": 86377
+  },
+  "betelgeuse": {
+    "article": "File:Betelgeuse captured by ALMA.jpg",
+    "file": "File:Betelgeuse captured by ALMA.jpg",
+    "credit": "ALMA (ESO/NAOJ/NRAO)",
+    "license": "CC BY 4.0",
+    "bytes": 20992
+  },
+  "nep_tdf": {
+    "article": "File:North Ecliptic Pole Time Domain Field",
+    "file": "File:North Ecliptic Pole Time Domain Field",
+    "credit": "NASA/STScI",
+    "license": "Public domain",
+    "bytes": 71957
+  },
+  "sep_df": {
+    "article": "File:Large Magellanic Cloud.jpg",
+    "file": "File:Large Magellanic Cloud.jpg",
+    "credit": "NASA/ESO",
+    "license": "Public domain",
+    "bytes": 142338
+  },
+  "cdfs": {
+    "article": "Chandra Deep Field South",
+    "file": "File:Chandra_Deep_Field_South_(2017).jpg",
+    "credit": "NASA/CXC/Penn State/B.Luo et al.",
+    "license": "Public domain",
+    "bytes": 42900
+  },
+  "sgra_star": {
+    "article": "Sagittarius A*",
+    "file": "File:EHT_Sagittarius_A_black_hole.tif",
+    "credit": "EHT Collaboration",
+    "license": "CC BY 4.0",
+    "bytes": 28242
+  },
+  "m82_cigar": {
+    "article": "Messier 82",
+    "file": "File:M82_HST_ACS_2006-14-a-large_web.jpg",
+    "credit": "NASA, ESA, and The Hubble Heritage Team (STScI/AURA)",
+    "license": "Public domain",
+    "bytes": 81962
+  },
+  "m87_virgo": {
+    "article": "Messier 87",
+    "file": "File:Messier_87_Hubble_WikiSky.jpg",
+    "credit": "en:NASA, en:STScI, en:WikiSky",
+    "license": "Public domain",
+    "bytes": 34689
+  },
+  "m31_core": {
+    "article": "Andromeda Galaxy",
+    "file": "File:M31-Andromede-16-09-2023-Hamois.jpg",
+    "credit": "Lviatour",
+    "license": "CC BY-SA 2.5",
+    "bytes": 117004
+  },
+  "m51_whirlpool": {
+    "article": "Whirlpool Galaxy",
+    "file": "File:Messier51_sRGB.jpg",
+    "credit": "NASA and European Space Agency",
+    "license": "Public domain",
+    "bytes": 79962
+  },
+  "rw_aur": {
+    "article": "File:Artist's impression of a young star surrounded by a protoplanetary disc.jpg",
+    "file": "File:Artist's impression of a young star surrounded by a protoplanetary disc.jpg",
+    "credit": "ESO — artist impression",
+    "license": "CC BY 4.0",
+    "bytes": 82758
+  },
+  "r_dra": {
+    "article": "Mira variable",
+    "file": "File:A_Wide-field_view_of_the_sky_around_a_field_studied_in_the_MASSIV_survey.jpg",
+    "credit": "DSS 2/ESO",
+    "license": "CC BY 4.0",
+    "bytes": 154906
+  },
+  "m1_crab": {
+    "article": "Crab Nebula",
+    "file": "File:Crab_Nebula.jpg",
+    "credit": "NASA, ESA, J. Hester and A. Loll (Arizona State University)",
+    "license": "Public domain",
+    "bytes": 172605
+  }
+}

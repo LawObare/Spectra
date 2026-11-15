@@ -4,6 +4,8 @@
 > This document catalogs all foundational archives, software toolkits, data access APIs, and community tools that govern the engineering of **Spectra** (NASA SPHEREx Quick Release 2 Explorer & Time-Domain Workbench).  
 > Every reference is analyzed for its **critical role in Spectra**, the **exact architectural section modeled after it**, and the **flawed assumptions it directly debunks**.
 
+> Companion review of current ingestion behavior and proposed corrections: [SPHEREx Data-Handling Audit](../audits/DATA_HANDLING_AUDIT.md).
+
 ---
 
 ## Quick Reference Index
@@ -11,7 +13,7 @@
 | ID | Resource Name | Provider / Authors | Primary Focus Area | Key Architectural Role in Spectra |
 |:---|:---|:---|:---|:---|
 | **REF-01** | [SPHEREx Intro Tutorial](https://caltech-ipac.github.io/irsa-tutorials/spherex-intro/) | Caltech / IPAC | MEF FITS HDU 0–6 Data Structures | Ingestion Pipeline & HDU Contract Validation |
-| **REF-02** | [IRSA SPHEREx Spectral Search](https://irsa.ipac.caltech.edu/applications/spherex/search-spectral-images) | NASA / IPAC | Official Web Search & Cutout GUI | Tab 1/2 Search Bar & Cutout Param Parity |
+| **REF-02** | [IRSA SPHEREx Spectral Search](https://irsa.ipac.caltech.edu/applications/spherex/?api=spectral-images) | NASA / IPAC | Firefly archive search and visualization | Archive workflow; query semantics from current SIA/TAP documentation |
 | **REF-03** | [MPIA SPHEREx Tools](https://github.com/mpi-astronomy/spherex-tools) | Max Planck Institute for Astronomy | LVF Smile WCS & Photometry | HDU 6 `WAVE-TAB` Wavelength Interpolation |
 | **REF-04** | [IRSA IBE Service Overview](https://irsa.ipac.caltech.edu/ibe/data/) | NASA / IPAC | RESTful Image Archive Backend | Primary Server-Side Sub-Array Cutout Driver |
 | **REF-05** | [IRSA IBE SPHEREx Endpoint](https://irsa.ipac.caltech.edu/ibe/data/spherex) | NASA / IPAC | Direct Directory & Product Hierarchy | Canonical URI Formulation & Parameter Resolution |
@@ -24,6 +26,10 @@
 | **REF-12** | [Material UI (MUI)](https://mui.com/material-ui/getting-started/) | Material UI / Google | Comprehensive Component System & Design Tokens | Evaluation for Scientific Dashboard UI & Density Controls |
 | **REF-13** | [Ant Design (AntD)](https://ant.design/components/button) | Ant Group | Enterprise-Grade React Component Framework | Evaluation for High-Density Data Grids, Controls & Modals |
 | **REF-14** | [shadcn/ui](https://ui.shadcn.com/) | shadcn / Vercel Community | Headless Radix UI + Tailwind CSS Copy-Paste Primitives | Selected Design System Foundation for Production-Grade Spectra UI |
+| **REF-15** | [SPHEREx Public Products](https://github.com/SPHEREx/Public-products) | SPHEREx mission team | Instrument forecasts and simulated schedules | Forecast context only; not release-product calibration data |
+| **REF-16** | [SPHEREx Science Data Center Pipelines](https://github.com/Caltech-IPAC/spherex-pipelines) | Caltech / IPAC SSDC | Level 1–3 production pipeline | Processing and provenance reference; not a runtime dependency |
+| **REF-17** | [SPHEREx Source Discovery Tool Demo](https://caltech-ipac.github.io/irsa-tutorials/spherex-source-discovery-tool-demo/) | Caltech / IPAC IRSA | Image discovery, source detection, photometry | Community workflow examples with release and method caveats |
+| **REF-18** | [SPHEREx Data Explorer Online Help](https://irsa.ipac.caltech.edu/onlinehelp/spherex/) | NASA / IPAC | Archive search, upload, visualization, spectra, mosaics, downloads | Operational semantics and user-facing archive workflow reference; summarized in [Science_Archive.md](Science_Archive.md) |
 
 ---
 
@@ -72,18 +78,21 @@ flowchart TD
 - **Repository:** `Caltech-IPAC/irsa-tutorials`
 - **Core Subject:** Multi-Extension FITS (MEF) layout, Astroquery SIA2 programmatic discovery, and calibrated spectral image header keywords for SPHEREx Quick Release products.
 
+#### Release and freshness caveats
+The tutorial lists four SIA collections: spherex_qr2, spherex_qr2_deep, spherex_qr3, and spherex_qr3_deep. It also notes weekly archive ingestion and an SIA availability lag on the order of a day. Treat “no rows” as “no coverage reported by this query” and retain query time and collection in provenance.
+
 #### Crucial Role in Spectra:
 Defines the authoritative binary layout of SPHEREx Level-2 images across all 6 detector arrays (`D1`–`D6`). Dictates how our backend parser (`backend/science/ingest.py`) reads data arrays, unit scalings ($\text{MJy/sr}$ surface brightness), and coordinate transforms.
 
 #### Section Modeled After This Reference:
 - **`backend/science/ingest.py`**: Direct ingestion of the 7 MEF Header Data Units (HDUs):
-  - `HDU 0: PRIMARY` — Metadata cards, observing mode, orbit number, spacecraft pointing angles.
+  - `HDU 0: PRIMARY` — Primary FITS header; preserve the cards present in the actual product rather than assuming mission/pointing fields.
   - `HDU 1: IMAGE` — $2040 \times 2040$ surface brightness array ($I_\nu$ in $\text{MJy/sr}$).
-  - `HDU 2: FLAGS` — $2040 \times 2040$ `uint32` bitmap of pixel flags (cosmic rays, saturation, bad pixels).
+  - `HDU 2: FLAGS` — $2040 \times 2040$ signed `int32` bitmap in the FITS product; interpret the 32-bit flag pattern without losing bits.
   - `HDU 3: VARIANCE` — $2040 \times 2040$ estimated flux variance ($\sigma^2$) used for inverse-variance coaddition.
   - `HDU 4: ZODI` — Predicted zodiacal light background model (in $\text{MJy/sr}$).
   - `HDU 5: PSF` — Spatially and wavelength-variable empirical 3D PSF cube ($101 \times 101 \times 121$ pixels across an $11 \times 11$ detector grid).
-  - `HDU 6: WCS-WAVE` — FITS binary table containing the `WAVE-TAB` spectral lookup coordinates mapping detector $(x, y)$ to central wavelength $\lambda$ and channel resolution.
+  - `HDU 6: WCS-WAVE` — FITS binary table containing the `WAVE-TAB` lookup that maps detector coordinates to per-pixel central wavelength and bandwidth.
 
 #### Assumptions Debunked:
 > [!CAUTION]
@@ -96,12 +105,16 @@ Defines the authoritative binary layout of SPHEREx Level-2 images across all 6 d
 ---
 
 ### REF-02: IRSA SPHEREx Spectral Image Search Application
-- **URL:** [https://irsa.ipac.caltech.edu/applications/spherex/search-spectral-images](https://irsa.ipac.caltech.edu/applications/spherex/search-spectral-images)
+- **URL:** [https://irsa.ipac.caltech.edu/applications/spherex/?api=spectral-images](https://irsa.ipac.caltech.edu/applications/spherex/?api=spectral-images)
+- **Legacy URL observed in browser captures:** https://irsa.ipac.caltech.edu/applications/spherex/search-spectral-images returned HTTP 404 when checked on 2026-11-12.
+- **Programmatic search guide:** [SPHEREx Data Explorer at IRSA: API](https://irsa.ipac.caltech.edu/onlinehelp/spherex/help.pdf)
 - **Host:** NASA/IPAC Infrared Science Archive
-- **Core Subject:** Official NASA web user interface for spatial cone searches, survey pass filtering, detector selection, and cutout downloading.
+- **Core Subject:** Official Firefly-based archive interface for SPHEREx image discovery and visualization. The page shell loads the Firefly application; it is not itself the image-processing API.
 
 #### Crucial Role in Spectra:
-Acts as our standard for query parameter naming, coordinate parsing conventions, and expected cutout delivery envelopes. We verify our coordinate resolution, FoV defaults, and preview options against IRSA's official application.
+Acts as a reference for archive visualization and user workflow. Programmatic collection names and query semantics must be taken from IRSA's current SIA/TAP documentation, not inferred from minified UI routes.
+
+The UI input formats and FoV presets listed below describe Spectra's own contracts; they are not verified IRSA endpoint parameters. Confirm archive query semantics against the linked IRSA API guide.
 
 #### Section Modeled After This Reference:
 - **`<GlobalCommandHeader />`** and **`<CelestialNavigator />`**: Search input formats accepting decimal degrees, sexagesimal notation (`HH MM SS ±DD MM SS`), and target names via CDS Sesame name resolver fallback.
@@ -117,12 +130,13 @@ Acts as our standard for query parameter naming, coordinate parsing conventions,
 ### REF-03: MPIA SPHEREx Tools (`mpi-astronomy/spherex-tools`)
 - **URL:** [https://github.com/mpi-astronomy/spherex-tools](https://github.com/mpi-astronomy/spherex-tools)
 - **Repository:** `mpi-astronomy/spherex-tools` (Max Planck Institute for Astronomy)
-- **Core Subject:** Open-source Python notebooks and utilities developed for SPHEREx Hack Days, demonstrating Linear Variable Filter (LVF) spectral extraction, smile correction, and forced aperture photometry.
+- **Core Subject:** Community scripts, notebooks, and photometry examples for SPHEREx Hack Days; useful implementation context, not the authoritative production pipeline or data-product specification.
 
 #### Crucial Role in Spectra:
-Provides real-world astrophysical validation for converting native detector coordinates $(x_{\text{det}}, y_{\text{det}})$ into physical central wavelengths $\lambda$, handling optical curvature ("smile distortion"), and computing aperture photometry in native detector space before spatial reprojection.
+Provides exploratory examples for LVF-aware analysis and photometry. The repository is not itself an authoritative validation source for Spectra's wavelength filters, extraction equations, or reprojection ordering.
 
 #### Section Modeled After This Reference:
+The implementation details below are Spectra contracts and must be validated against release documentation and the production pipeline; they are not all established by this community repository.
 - **`backend/science/wave.py`** and **`backend/science/wave_match.py`**:
   - Interpolation of central wavelength $\lambda(x, y)$ from `WCS-WAVE` binary tables.
   - Wavelength-matched differencing constraint: filtering exposure pairs to identical bandpass windows $[\lambda_0(1 - 1/R), \lambda_0(1 + 1/R)]$.
@@ -130,10 +144,10 @@ Provides real-world astrophysical validation for converting native detector coor
     $$F_\nu = I_\nu \times 10^6 \times \Omega_{\text{px}}$$
     where $\Omega_{\text{px}} = (6.2 \times \pi / 648000)^2\,\text{sr} \approx 9.035 \times 10^{-10}\,\text{sr}$.
 
-#### Assumptions Debunked:
-> [!IMPORTANT]
-> **Debunked Assumption:** *Spatial reprojection (`reproject_interp` or `reproject_exact`) can be performed on the 2D image before extracting spectra.*  
-> **Reality:** Reprojecting a raw SPHEREx frame onto a North-Up sky grid mixes spatial pixels that were observed through different sections of the Linear Variable Filter, blurring the spectral resolution. Spectra follows the MPIA methodology: **wavelength matching and spectral extraction must occur in native detector space** prior to or independently of aesthetic display reprojection.
+#### Caveats on inherited assumptions
+The repository notes that an earlier cutout workflow omitted a variance plane and discusses estimating background variance. Spectra should preserve the release VARIANCE plane whenever supplied; a background-derived estimate is a separately labeled fallback, not a silent replacement for calibrated variance.
+
+The sample does not establish a universal extraction/reprojection ordering. Preserve native detector coordinates and the spectral WCS for wavelength assignment, then validate any reprojection order against the selected algorithm and production/release documentation.
 
 ---
 
@@ -303,7 +317,7 @@ Contains executable reference code for working with the **empirical Point Spread
 #### Assumptions Debunked:
 > [!CAUTION]
 > **Debunked Assumption:** *A 3D celestial sphere should be rendered as an external rotating 3D globe floating inside a window.*  
-> **Reality:** Viewing space from the outside of a spherical ball is physically inverted (celestial coordinates are viewed from Earth looking *outward*, not from space looking inward at a sphere). As codified in [`DESIGN.md`](DESIGN.md), Tab 1 is an **immersed, edge-to-edge flat tangent sky plane**, utilizing Aladin Lite v3’s WebGL2 WCS projector to deliver authentic observatory console behavior.
+> **Reality:** Viewing space from the outside of a spherical ball is physically inverted (celestial coordinates are viewed from Earth looking *outward*, not from space looking inward at a sphere). As codified in [`DESIGN.md`](../../DESIGN.md), Tab 1 is an **immersed, edge-to-edge flat tangent sky plane**, utilizing Aladin Lite v3’s WebGL2 WCS projector to deliver authentic observatory console behavior.
 
 ---
 
@@ -392,10 +406,37 @@ Evaluated as an architectural candidate for dense scientific data layouts, tabul
 
 ---
 
+### REF-15: SPHEREx Public Products (Forecasts)
+- **URL:** [https://github.com/SPHEREx/Public-products](https://github.com/SPHEREx/Public-products)
+- **Core Subject:** Public mission-performance forecasts, including sensitivity/FWHM material and representative simulated solar-system observation schedules.
+- **Use in Spectra:** Mission-design and forecast context only.
+- **Do not use as:** QR2/QR3 image calibration, measured exposure noise, FLAGS definitions, empirical WCS-WAVE, or release-product ground truth. The README forecast uses 96 spectral channels and nominal-mission assumptions; reconcile that context before comparing with Spectra's 102-channel release extraction.
+
+---
+
+### REF-16: SPHEREx Science Data Center Pipelines
+- **URL:** [https://github.com/Caltech-IPAC/spherex-pipelines](https://github.com/Caltech-IPAC/spherex-pipelines)
+- **Core Subject:** SSDC Level 1–3 pipeline software and its production processing context.
+- **Use in Spectra:** Check release/product semantics and study bounded-memory techniques such as reusing PSF and wavelength products, avoiding large simultaneous mask allocations, and caching reusable intermediate values.
+- **Limits:** The repository describes deployment within SSDC infrastructure and does not promise supported standalone execution. Do not add it as a runtime dependency or copy pipeline-specific calibration steps without verifying their applicability to public quick-release MEFs.
+
+---
+
+### REF-17: SPHEREx Source Discovery Tool Demo
+- **URL:** [https://caltech-ipac.github.io/irsa-tutorials/spherex-source-discovery-tool-demo/](https://caltech-ipac.github.io/irsa-tutorials/spherex-source-discovery-tool-demo/)
+- **Core Subject:** Example workflow for querying and downloading images, source detection, interactive catalogs, aperture photometry, and spectrum visualization.
+- **Useful patterns:** Use IRSA tables and cloud_access/access_url provenance, bounded parallel downloads, cutout caching, WCS-aware image/mask reprojection, and the solid-angle pixel map (SAPM) where the operation requires per-pixel flux conversion.
+- **Caveats:** The notebook labels some collection/SAPM identifiers as ephemeral and release-dependent. Its D2–D4 color subtraction is a source-detection example, not a substitute for wavelength-matched temporal differencing. Its illustrative exact-value FLAGS masks (including a likely detector-mask typo) must not replace official bit definitions and bitwise mask handling.
+
+---
+
 ## Architectural Mapping Matrix: How References Shape Spectra
 
 | Spectra File / Subsystem | Primary References | Concrete Implementations Derived |
 |:---|:---|:---|
+| **Data ingest coverage policy** | REF-01, REF-08, REF-16 | Validate wide/deep collection availability and report collection/query freshness. |
+| **Live image source detection** | REF-16, REF-17 | Compare detection and mask workflows against release WCS, flags, and SAPM semantics. |
+| **Flux calibration assumptions** | REF-01, REF-15, REF-17 | Keep measured release calibration distinct from forecast sensitivity and validate pixel solid-angle conversion. |
 | **`backend/science/ingest.py`** | REF-01, REF-04, REF-05 | 7-HDU MEF parser, SIA2 cone search, server-side IBE cutout slicing. |
 | **`backend/science/wave.py`** | REF-01, REF-03, REF-09 | HDU 6 `WAVE-TAB` wavelength interpolation, 102-channel extraction in Janskys. |
 | **`backend/science/wave_match.py`** | REF-03, REF-08 | Pre-reprojection bandpass matching within $[\lambda_0(1-1/R), \lambda_0(1+1/R)]$. |

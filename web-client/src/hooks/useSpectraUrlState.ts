@@ -9,13 +9,13 @@ export function useSpectraUrlState() {
   const [tab, setTab] = useQueryState('tab', parseAsString.withDefault('navigator'));
   const [ra, setRa] = useQueryState('ra', parseAsFloat.withDefault(133.737120));
   const [dec, setDec] = useQueryState('dec', parseAsFloat.withDefault(-7.240380));
-  const [fov, setFov] = useQueryState('fov', parseAsFloat.withDefault(180.0));
+  const [fov, setFov] = useQueryState('fov', parseAsFloat.withDefault(300.0));
   const [cadence, setCadence] = useQueryState('cadence', parseAsString.withDefault('survey_6month'));
   const [mode, setMode] = useQueryState('mode', parseAsString.withDefault('blink'));
   const [preset, setPreset] = useQueryState('preset', parseAsString.withDefault('brown_dwarf'));
   const [z, setZ] = useQueryState('z', parseAsFloat.withDefault(0.0));
-  const [probeX, setProbeX] = useQueryState('px', parseAsInteger.withDefault(16));
-  const [probeY, setProbeY] = useQueryState('py', parseAsInteger.withDefault(16));
+  const [probeX, setProbeX] = useQueryState('px', parseAsInteger.withDefault(24));
+  const [probeY, setProbeY] = useQueryState('py', parseAsInteger.withDefault(24));
   const [embed, setEmbed] = useQueryState('embed', parseAsString.withDefault('0'));
 
   const isEmbed = embed === '1' || embed === 'true';

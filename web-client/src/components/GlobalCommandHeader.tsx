@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
 import { queryClient } from '../App';
@@ -24,51 +25,51 @@ export const MANDATORY_BENCHMARKS: BenchmarkPill[] = [
   {
     id: 'barnard',
     name: "Barnard's Star",
-    label: "Barnard's Star",
+    label: "Barnard's (Speed Demon)",
     ra: 269.44639,
     dec: 4.76676,
     preset: 'true_nir',
-    description: 'M4V high proper motion (+10.39"/yr North, 1.68 px/yr)',
+    description: 'The Cosmic Speed Demon — Fastest-moving star sprinting at +10.39"/yr North (1.68 px/yr)',
     category: 'SPHEREx Verification',
   },
   {
     id: 'wise0855',
     name: 'WISE 0855-0714',
-    label: 'WISE 0855',
+    label: 'WISE 0855 (Frozen Dwarf)',
     ra: 133.73712,
     dec: -7.24038,
     preset: 'brown_dwarf',
-    description: 'Y4 sub-brown dwarf (8.15"/yr West, thermal peak in D5/D6)',
+    description: 'The Frozen Brown Dwarf — Cold as ice (-10°C), glowing in SPHEREx mid-IR (8.15"/yr West)',
     category: 'SPHEREx Verification',
   },
   {
     id: 'eps_indi_b',
     name: 'Epsilon Indi B',
-    label: 'Epsilon Indi B',
+    label: 'Eps Indi B (Twin Worlds)',
     ra: 331.09566,
     dec: -56.80031,
     preset: 'brown_dwarf',
-    description: 'T1+T6 binary (4.68"/yr SE, 1/cos(dec) astrometric test)',
+    description: 'The Invisible Twin Worlds — T1+T6 binary pair blended in a single pixel (4.68"/yr SE)',
     category: 'SPHEREx Verification',
   },
   {
     id: 'rw_aur',
     name: 'RW Aurigae',
-    label: 'RW Aurigae',
+    label: 'RW Aurigae (Flashing Star)',
     ra: 76.95647,
     dec: 30.4013,
     preset: 'comet_outgassing',
-    description: 'T Tauri variable (>1.5 mag optical/NIR occultation dimming)',
+    description: 'The Flashing Baby Star — Violent dust clouds blocking 75% of light across seasons',
     category: 'SPHEREx Verification',
   },
   {
     id: 'r_dra',
     name: 'R Draconis',
-    label: 'R Draconis',
+    label: 'R Draconis (Pulsing Giant)',
     ra: 248.16773,
     dec: 66.75504,
     preset: 'water_ice',
-    description: 'Mira AGB variable (245d pulsation cycle, NEP deep field)',
+    description: 'The Beating Giant Heart — Red giant pulsating in brightness every 245 days',
     category: 'SPHEREx Verification',
   },
 ];
@@ -291,13 +292,197 @@ export const SEARCHABLE_SKY_CATALOG: BenchmarkPill[] = [
   },
 ];
 
-const TABS = [
-  { id: 'navigator', label: '1. Sky & Spectral Search' },
-  { id: 'comparator', label: '2. Time-Domain' },
-  { id: 'spectral', label: '3. Spectral Lab' },
-  { id: 'ice', label: '4. Ice Studio' },
-  { id: 'discussions', label: '5. Discussions' },
+interface LucideIconProps {
+  className?: string;
+}
+
+const lucideSvgProps = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true as const,
+};
+
+const CompassIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="compass">
+    <circle cx="12" cy="12" r="10" />
+    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+  </svg>
+);
+
+const HistoryIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="history">
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <path d="M12 7v5l4 2" />
+  </svg>
+);
+
+const ActivityIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="activity">
+    <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+  </svg>
+);
+
+const SnowflakeIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="snowflake">
+    <line x1="2" x2="22" y1="12" y2="12" />
+    <line x1="12" x2="12" y1="2" y2="22" />
+    <path d="m20 16-4-4 4-4" />
+    <path d="m4 8 4 4-4 4" />
+    <path d="m16 4-4 4-4-4" />
+    <path d="m8 20 4-4 4 4" />
+  </svg>
+);
+
+const MessageSquareIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="message-square">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
+const SparklesIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="sparkles">
+    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+    <path d="M20 3v4" />
+    <path d="M22 5h-4" />
+    <path d="M4 17v2" />
+    <path d="M5 18H3" />
+  </svg>
+);
+
+const BookOpenIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="book-open">
+    <path d="M12 7v14" />
+    <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+  </svg>
+);
+
+const SearchIcon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="search">
+    <circle cx="11" cy="11" r="8" />
+    <path d="m21 21-4.3-4.3" />
+  </svg>
+);
+
+const Share2Icon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="share-2">
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+    <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+  </svg>
+);
+
+const Link2Icon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="link-2">
+    <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+    <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+    <line x1="8" x2="16" y1="12" y2="12" />
+  </svg>
+);
+
+const Code2Icon: React.FC<LucideIconProps> = ({ className = 'h-3.5 w-3.5' }) => (
+  <svg {...lucideSvgProps} className={className} data-lucide="code-2">
+    <path d="m18 16 4-4-4-4" />
+    <path d="m6 8-4 4 4 4" />
+    <path d="m14.5 4-5 16" />
+  </svg>
+);
+
+const TABS: Array<{ id: string; label: string; icon: React.FC<LucideIconProps> }> = [
+  { id: 'navigator', label: 'Navigator', icon: CompassIcon },
+  { id: 'comparator', label: 'Time-Domain', icon: HistoryIcon },
+  { id: 'spectral', label: '102-Band Spectrum', icon: ActivityIcon },
+  { id: 'ice', label: 'Ice Studio', icon: SnowflakeIcon },
+  { id: 'discussions', label: 'Community Forum', icon: MessageSquareIcon },
 ];
+
+/**
+ * Original Spectra Emblem: Celestial Survey Sphere + 6-Band Infrared Spectral Prism (D1-D6)
+ */
+export const SpectraLogoSvg: React.FC<{ className?: string }> = ({ className = 'h-7 w-7' }) => {
+  const uid = React.useId().replace(/:/g, '');
+  const bgId = `spx-bg-${uid}`;
+  const ringId = `spx-ring-${uid}`;
+  const prismId = `spx-prism-${uid}`;
+
+  return (
+    <svg
+      viewBox="0 0 96 96"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-label="Spectra All-Sky Spectral Explorer Logo"
+    >
+      <defs>
+        <radialGradient id={bgId} cx="35%" cy="30%" r="75%">
+          <stop offset="0%" stopColor="#16233B" />
+          <stop offset="65%" stopColor="#080D1A" />
+          <stop offset="100%" stopColor="#03050B" />
+        </radialGradient>
+        <linearGradient id={ringId} x1="8" y1="12" x2="88" y2="84" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#38BDF8" />
+          <stop offset="50%" stopColor="#818CF8" />
+          <stop offset="100%" stopColor="#F59E0B" />
+        </linearGradient>
+        <linearGradient id={prismId} x1="28" y1="24" x2="62" y2="66" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#E0F2FE" stopOpacity="0.42" />
+          <stop offset="100%" stopColor="#38BDF8" stopOpacity="0.12" />
+        </linearGradient>
+      </defs>
+
+      {/* Outer celestial sphere & gradient aperture ring */}
+      <circle cx="48" cy="48" r="41" fill={`url(#${bgId})`} stroke={`url(#${ringId})`} strokeWidth="2.4" />
+      <circle cx="48" cy="48" r="35" stroke="#38BDF8" strokeOpacity="0.14" strokeWidth="1" />
+
+      {/* Subtle survey meridian orbit */}
+      <ellipse
+        cx="48"
+        cy="48"
+        rx="44"
+        ry="15"
+        transform="rotate(-24 48 48)"
+        stroke="#7DD3FC"
+        strokeOpacity="0.45"
+        strokeWidth="1.4"
+      />
+      <circle cx="84" cy="31" r="2.2" fill="#38BDF8" />
+
+      {/* 6-band infrared spectral dispersion rays (D1-D6) */}
+      <path d="M51 39 L82 28" stroke="#38BDF8" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M53 42.5 L84 36.5" stroke="#34D399" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M54.5 46 L85 45" stroke="#FACC15" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M56 49.5 L84 53.5" stroke="#FB923C" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M57.5 53 L82 61.5" stroke="#F472B6" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M59 56.5 L78 69" stroke="#A78BFA" strokeWidth="2.4" strokeLinecap="round" />
+
+      {/* Incoming white starlight beam */}
+      <path d="M12 40 L37 45" stroke="#F8FAFC" strokeWidth="2.3" strokeLinecap="round" />
+
+      {/* Central crystalline dispersion prism */}
+      <polygon
+        points="45,23 26,64 62,64"
+        fill={`url(#${prismId})`}
+        stroke="#E2E8F0"
+        strokeWidth="2.1"
+        strokeLinejoin="round"
+      />
+      <path d="M45 25 L50 63" stroke="#FFFFFF" strokeOpacity="0.25" strokeWidth="1.2" />
+
+      {/* Source diffraction star & field stars */}
+      <path d="M13 33 L14.1 38.4 L19.5 39.5 L14.1 40.6 L13 46 L11.9 40.6 L6.5 39.5 L11.9 38.4 Z" fill="#F8FAFC" />
+      <circle cx="70" cy="19" r="1.4" fill="#BAE6FD" fillOpacity="0.85" />
+      <circle cx="24" cy="73" r="1.2" fill="#FDE68A" fillOpacity="0.8" />
+    </svg>
+  );
+};
+
+export const NasaMeatballSvg = SpectraLogoSvg;
 
 /**
  * Client-Side Coordinate & Sexagesimal Parser
@@ -309,9 +494,9 @@ export function parseCoordinateInput(input: string): { ra: number; dec: number }
   const trimmed = input.trim();
   if (!trimmed) return null;
 
-  // Pattern 1: Sexagesimal (e.g. 08h54m56.91s -07d14m25.4s or 08:54:56.91 -07:14:25.4)
+  // Pattern 1: Sexagesimal (e.g. 08h54m56.91s, -07d14m25.4s or 08:54:56.91, -07:14:25.4)
   const sexaRegex =
-    /^(\d{1,2})[h:\s]\s*(\d{1,2})[m:\s]\s*(\d{1,2}(?:\.\d+)?)[s]?\s*([+-]?\d{1,2})[d°:\s]\s*(\d{1,2})[m':\s]\s*(\d{1,2}(?:\.\d+)?)[s"]?$/i;
+    /^(\d{1,2})[h:\s]\s*(\d{1,2})[m:\s]\s*(\d{1,2}(?:\.\d+)?)[s]?[\s,]+\s*([+-]?\d{1,2})[d°:\s]\s*(\d{1,2})[m':\s]\s*(\d{1,2}(?:\.\d+)?)[s"]?$/i;
   const sexaMatch = trimmed.match(sexaRegex);
   if (sexaMatch) {
     const rh = parseFloat(sexaMatch[1]);
@@ -344,12 +529,18 @@ export function parseCoordinateInput(input: string): { ra: number; dec: number }
   return null;
 }
 
-interface GlobalCommandHeaderProps {
+export interface GlobalCommandHeaderProps {
   onOpenCommandPalette?: () => void;
+  onToggleMissionBriefing?: () => void;
+  isMissionBriefingActive?: boolean;
+  onOpenCatalog?: () => void;
 }
 
 export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   onOpenCommandPalette,
+  onToggleMissionBriefing,
+  isMissionBriefingActive = false,
+  onOpenCatalog,
 }) => {
   const {
     ra,
@@ -590,41 +781,73 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-[56px] items-center justify-between gap-3 border-b border-border bg-card px-4 font-sans text-xs text-foreground select-none">
-      {/* 1. Brand & Archive Status */}
-      <div className="flex items-center gap-3 shrink-0">
-        <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold tracking-tight text-foreground">Spectra</span>
-          <span className="hidden sm:inline text-[11px] text-muted-foreground">
-            SPHEREx Spectral Archive
-          </span>
-        </div>
-
-        <span className="h-3.5 w-px bg-border" aria-hidden="true" />
-
-        {/* Archive Connection Badge */}
-        <Badge
-          variant={isBackendLive ? 'emerald' : 'sky'}
-          className="gap-1.5 py-0.5 text-[11px] cursor-default"
-          title={
-            isBackendLive
-              ? 'FastAPI science engine online (port 7860)'
-              : 'Archive local tensor & catalog engine active'
-          }
+    <header className="relative z-50 shrink-0 flex min-h-[56px] xl:h-[56px] flex-wrap xl:flex-nowrap items-center justify-between gap-x-3 gap-y-2 border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-3 sm:px-4 py-1.5 xl:py-0 font-sans text-xs text-foreground select-none">
+      {/* 1. Spectra Branding & Quick Actions */}
+      <div className="order-1 flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0 min-w-0">
+        <Link
+          to="/"
+          aria-label="SPHEREx — return to mission home"
+          title="Return to the SPHEREx mission home page"
+          className="group flex items-center gap-2 rounded-lg px-1.5 py-1 -mx-1 transition-colors hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
         >
-          <span
+          <SpectraLogoSvg className="h-8 w-8 drop-shadow-sm transition-transform group-hover:scale-105" />
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-extrabold tracking-tight text-white leading-none transition-colors group-hover:text-sky-300">
+                SPHEREx
+              </span>
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse"
+                title="SPHEREx Operational Status: All 6 Near-IR Detectors Active (0.75 - 5.0 μm)"
+              />
+            </div>
+            <span className="hidden sm:inline text-[9px] tracking-wider uppercase text-neutral-400 font-medium mt-0.5">
+              NASA All-Sky Survey
+            </span>
+          </div>
+        </Link>
+
+        <span className="hidden sm:inline-block h-4 w-px bg-white/10 mx-0.5" aria-hidden="true" />
+
+        {/* Mission Briefing / Sky Workstation Toggle */}
+        {onToggleMissionBriefing && (
+          <button
+            type="button"
+            onClick={onToggleMissionBriefing}
             className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              isBackendLive ? 'bg-emerald-400' : 'bg-primary'
+              'h-8 rounded-lg px-2.5 text-xs font-medium inline-flex items-center gap-1.5 transition-all whitespace-nowrap',
+              isMissionBriefingActive
+                ? 'bg-primary text-white shadow-sm ring-1 ring-white/15'
+                : 'border border-white/10 bg-white/[0.04] text-neutral-200 hover:bg-white/[0.08] hover:border-white/20 hover:text-white'
             )}
-          />
-          <span>{isBackendLive ? 'Live API' : 'Archive Ready'}</span>
-        </Badge>
+            title="Toggle between NASA SPHEREx Mission Launchpad and Workstation"
+          >
+            <SparklesIcon className={cn('h-3.5 w-3.5 shrink-0', isMissionBriefingActive ? 'text-white' : 'text-sky-400')} />
+            <span>{isMissionBriefingActive ? 'Sky Workstation' : 'Mission Briefing'}</span>
+          </button>
+        )}
+
+        {/* Authoritative Source Catalog Button */}
+        {onOpenCatalog && (
+          <button
+            type="button"
+            onClick={onOpenCatalog}
+            className="h-8 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 px-2.5 text-xs font-medium text-neutral-200 hover:text-white inline-flex items-center gap-1.5 transition-all whitespace-nowrap"
+            title="Browse all 24 calibrated astronomical targets across the survey"
+          >
+            <BookOpenIcon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+            <span className="hidden xl:inline">Source Catalog</span>
+            <span className="xl:hidden">Catalog</span>
+            <span className="rounded-md bg-sky-500/15 border border-sky-400/20 px-1.5 py-0.5 text-[10px] font-mono leading-none text-sky-300">
+              24
+            </span>
+          </button>
+        )}
 
         {/* Data Provenance Badge */}
         <Badge
           variant="secondary"
-          className="hidden 2xl:inline-flex font-mono text-[11px] tabular-nums"
+          className="hidden 2xl:inline-flex h-8 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[10px] tabular-nums text-neutral-400"
           title="Active dataset provenance"
         >
           {sourceBadge}
@@ -632,7 +855,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
       </div>
 
       {/* 2. Universal Coordinate & Object Name Resolver (SIMBAD / NED / ICRS / Catalog) */}
-      <div ref={searchContainerRef} className="relative flex-1 max-w-md">
+      <div ref={searchContainerRef} className="order-2 relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px] sm:max-w-md">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -643,17 +866,7 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
           <label htmlFor="spectra-coord-search" className="sr-only">
             Search sky coordinates (J2000 decimal or sexagesimal) or astronomical object name
           </label>
-          <svg
-            className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            aria-hidden="true"
-          >
-            <circle cx="7" cy="7" r="4.5" />
-            <path d="M10.5 10.5L14 14" strokeLinecap="round" />
-          </svg>
+          <SearchIcon className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-neutral-400" />
           <Input
             id="spectra-coord-search"
             type="text"
@@ -666,43 +879,42 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
             placeholder={
               activeTargetName
                 ? `${activeTargetName} (${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°) — Search RA/Dec or object...`
-                : 'Search RA/Dec, HMS/DMS, or object name (SIMBAD/IRSA)...'
+                : "Search RA/Dec (e.g. 269.44, 4.76) or object (Barnard's Star, WISE 0855)..."
             }
-            className="w-full pl-8 pr-16 bg-background font-mono text-xs tabular-nums text-foreground placeholder:text-muted-foreground"
+            className="h-8 w-full pl-8 pr-16 rounded-lg bg-white/[0.04] border border-white/10 focus:border-sky-400/60 focus:bg-neutral-900/90 font-mono text-xs tabular-nums text-foreground placeholder:text-neutral-500"
           />
           <div className="absolute right-1.5 flex items-center gap-1">
             {isResolving && (
-              <span className="px-1 font-sans text-[10px] text-primary">Resolving…</span>
+              <span className="px-1 font-sans text-[10px] text-sky-400">Resolving…</span>
             )}
-            <Button
-              variant="outline"
-              size="xs"
+            <button
+              type="button"
               onClick={onOpenCommandPalette}
-              className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+              className="inline-flex h-5 items-center rounded-md border border-white/10 bg-white/[0.06] px-1.5 font-mono text-[10px] text-neutral-400 hover:border-white/20 hover:text-white transition-colors"
               title="Open command palette (⌘K / Ctrl+K)"
               aria-label="Open command palette"
             >
               ⌘&nbsp;K
-            </Button>
+            </button>
           </div>
         </form>
 
         {/* Search Resolver Autocomplete & Coordinate Format Helper Popover */}
         {isSearchFocused && (
-          <div className="absolute left-0 right-0 top-9 z-50 max-h-80 overflow-y-auto rounded-sm border border-border bg-popover p-1.5 shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
+          <div className="absolute left-0 right-0 top-10 z-50 max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-neutral-950/95 backdrop-blur-xl p-1.5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/10 px-2 py-1.5 text-[10px] text-neutral-400">
               <span>Enter J2000 decimal, sexagesimal (HH:MM:SS ±DD:MM:SS), or SIMBAD object name</span>
-              <span className="font-mono">↵ Enter</span>
+              <span className="font-mono text-neutral-300">↵ Enter</span>
             </div>
 
             {parseCoordinateInput(searchInput) && (
               <button
                 type="button"
                 onClick={() => executeSearchResolution(searchInput)}
-                className="mt-1 flex w-full items-center justify-between rounded-sm border border-primary/40 bg-secondary/80 px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-primary/10 transition-colors"
+                className="mt-1 flex w-full items-center justify-between rounded-lg border border-primary/40 bg-white/[0.06] px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-primary/15 transition-colors"
               >
                 <span>Go to J2000 coordinates</span>
-                <span className="font-mono text-primary">
+                <span className="font-mono text-sky-300">
                   {parseCoordinateInput(searchInput)?.ra.toFixed(5)}°,{' '}
                   {parseCoordinateInput(searchInput)?.dec.toFixed(5)}°
                 </span>
@@ -731,26 +943,26 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                       )
                     }
                     className={cn(
-                      'flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left transition-colors duration-150',
+                      'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors duration-150',
                       isCurrent
-                        ? 'bg-secondary text-foreground'
-                        : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                        ? 'bg-white/[0.08] text-foreground'
+                        : 'text-neutral-300 hover:bg-white/[0.05] hover:text-white'
                     )}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate font-medium text-foreground">{item.name}</span>
+                        <span className="truncate font-medium text-white">{item.name}</span>
                         {item.category && (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge variant="outline" className="text-[10px] border-white/15 text-neutral-300">
                             {item.category}
                           </Badge>
                         )}
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
+                      <div className="truncate text-[11px] text-neutral-400">
                         {item.description}
                       </div>
                     </div>
-                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-primary">
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-sky-400">
                       {item.ra.toFixed(3)}° {item.dec >= 0 ? `+${item.dec.toFixed(3)}` : item.dec.toFixed(3)}°
                     </span>
                   </button>
@@ -761,12 +973,12 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                 <button
                   type="button"
                   onClick={() => executeSearchResolution(searchInput)}
-                  className="mt-1 flex w-full items-center justify-between rounded-sm border border-border bg-secondary px-2.5 py-1.5 text-left text-xs text-foreground hover:border-primary transition-colors"
+                  className="mt-1 flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-left text-xs text-foreground hover:border-sky-400/50 transition-colors"
                 >
                   <span>
                     Query SIMBAD / NED / IRSA resolver for &ldquo;{searchInput.trim()}&rdquo;
                   </span>
-                  <span className="font-mono text-[11px] text-primary">Resolve ↵</span>
+                  <span className="font-mono text-[11px] text-sky-400">Resolve ↵</span>
                 </button>
               )}
             </div>
@@ -775,64 +987,81 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
       </div>
 
       {/* 3. Workspace Tab Switcher & Share */}
-      <div className="flex items-center gap-2.5 shrink-0">
+      <div className="order-3 flex w-full xl:w-auto items-center justify-between xl:justify-end gap-2 min-w-0 border-t border-white/10 pt-1.5 xl:border-t-0 xl:pt-0 xl:shrink-0">
         {/* Compact Tensor Memory Readout */}
         <div
           className={cn(
-            'hidden xl:flex items-center gap-1.5 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums',
+            'hidden 2xl:inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 font-mono text-[11px] tabular-nums shrink-0',
             payloadMb >= 2.0
-              ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
-              : 'border-border bg-background text-muted-foreground'
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+              : 'border-white/10 bg-white/[0.04] text-neutral-300'
           )}
           title={`Cutout FoV: ${fovArcsec}" · Uncompressed float32 tensor payload (${
             totalEpochs || 4
           } passes × 6 bands × 14 B/px)`}
         >
           <span>{fovArcsec}&quot;</span>
-          <span className="text-border">|</span>
+          <span className="text-white/15">|</span>
           <span>{payloadMb.toFixed(2)}&nbsp;MB</span>
         </div>
 
         <nav
           aria-label="Workspaces"
-          className="flex items-center gap-0.5 rounded-sm border border-border bg-background p-0.5"
+          className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 overflow-x-auto max-w-full min-w-0"
         >
           {TABS.map((t) => {
-            const isActive = tab === t.id;
+            const isActive = tab === t.id && !isMissionBriefingActive;
+            const TabIcon = t.icon;
             return (
-              <Button
+              <button
                 key={t.id}
-                variant={isActive ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setTab(t.id)}
+                type="button"
+                onClick={() => {
+                  setTab(t.id);
+                  if (isMissionBriefingActive && onToggleMissionBriefing) {
+                    onToggleMissionBriefing();
+                  }
+                }}
                 aria-current={isActive ? 'page' : undefined}
                 className={cn(
-                  'h-7 px-2.5 text-xs font-sans',
+                  'group shrink-0 whitespace-nowrap h-7 px-2.5 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70',
                   isActive
-                    ? 'border-primary/50 text-foreground font-medium shadow-none'
-                    : 'text-muted-foreground hover:text-foreground'
+                    ? 'bg-primary text-white shadow-sm ring-1 ring-white/15'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.06]'
                 )}
               >
-                {t.label}
-              </Button>
+                <TabIcon
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 transition-colors',
+                    isActive ? 'text-white' : 'text-sky-400/80 group-hover:text-sky-300'
+                  )}
+                />
+                <span>{t.label}</span>
+              </button>
             );
           })}
         </nav>
 
         {/* Share & Embed Exporter Dropdown */}
-        <div className="relative">
-          <Button
-            variant="secondary"
-            size="sm"
+        <div className="relative shrink-0">
+          <button
+            type="button"
             onClick={() => setIsShareOpen(!isShareOpen)}
             aria-expanded={isShareOpen}
+            className={cn(
+              'h-8 rounded-lg border px-2.5 text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-all',
+              isShareOpen
+                ? 'border-sky-400/50 bg-sky-500/15 text-white'
+                : 'border-white/10 bg-white/[0.04] text-neutral-200 hover:bg-white/[0.08] hover:border-white/20 hover:text-white'
+            )}
           >
-            Share
-          </Button>
+            <Share2Icon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+            <span>Share</span>
+          </button>
 
           {isShareOpen && (
-            <div className="absolute right-0 top-9 z-50 w-64 rounded-sm border border-border bg-popover p-3 shadow-xl">
-              <div className="mb-2 text-xs font-medium text-foreground">
+            <div className="absolute right-0 top-10 z-50 w-64 rounded-xl border border-white/10 bg-neutral-950/95 backdrop-blur-xl p-3 shadow-2xl">
+              <div className="mb-2 text-xs font-medium text-white">
                 Share current view state
               </div>
               <div className="flex flex-col gap-1.5">
@@ -840,17 +1069,19 @@ export const GlobalCommandHeader: React.FC<GlobalCommandHeaderProps> = ({
                   variant="outline"
                   size="sm"
                   onClick={handleCopyLink}
-                  className="w-full justify-start text-xs font-normal"
+                  className="w-full justify-start gap-2 rounded-lg border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-normal text-neutral-200 hover:text-white"
                 >
-                  Copy deep link URL
+                  <Link2Icon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                  <span>Copy deep link URL</span>
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleCopyIframe}
-                  className="w-full justify-start text-xs font-normal"
+                  className="w-full justify-start gap-2 rounded-lg border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-normal text-neutral-200 hover:text-white"
                 >
-                  Copy iframe embed (?embed=1)
+                  <Code2Icon className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                  <span>Copy iframe embed (?embed=1)</span>
                 </Button>
               </div>
               {shareFeedback && (

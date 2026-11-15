@@ -8,3 +8,14 @@ __pycache__/
 node_modules/
 dist/
 .vite/
+concept/
+supabase/.temp/
+supabase/.branches/
+backend/cache/cutouts/
+backend/data/installed_sections/*
+!backend/data/installed_sections/sec_5c3ec335eb45.spx.zst
+!backend/data/installed_sections/sec_c96f4921d232.spx.zst
+!backend/data/installed_sections/sec_149168f35c1d.spx.zst
+!backend/data/installed_sections/sec_0b1b47be9ff5.spx.zst
+!backend/data/installed_sections/sec_c18570e44e6f.spx.zst
+*.fits

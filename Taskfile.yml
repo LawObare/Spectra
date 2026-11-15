@@ -7,27 +7,97 @@ tasks:
       - task --list
 
   setup:
-    desc: "Install all dependencies and activate mandatory git commit-hygiene hooks in <10 seconds"
+    desc: "Complete one-touch environment and dependency setup for all app tiers"
+    cmds:
+      - task: setup:hooks
+      - task: setup:backend
+      - task: setup:frontend
+      - task: setup:benchmarks
+      - task: db:up
+      - task: setup:info
+
+  setup:hooks:
+    desc: "Configure Git commit hooks and commit template"
     cmds:
       - git config core.hooksPath .githooks
       - git config commit.template .gitmessage
-      - chmod +x .githooks/commit-msg
-      - uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
-      - supabase --version || npm install -g supabase
-      - cd backend && uv sync
-      - cd web-client && npm install
+      - chmod +x .githooks/commit-msg 2>/dev/null || true
+      - echo "[SETUP] Git commit-hygiene hooks activated (.githooks/commit-msg)."
+
+  setup:backend:
+    desc: "Install Python science and FastAPI dependencies via uv"
+    dir: backend
+    cmds:
+      - command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+      - uv sync
+      - echo "[SETUP] Backend Python virtualenv synchronized via uv."
+
+  setup:frontend:
+    desc: "Install Node.js dependencies for the React web client"
+    dir: web-client
+    cmds:
+      - npm install
+      - echo "[SETUP] Frontend web client dependencies installed."
+
+  setup:benchmarks:
+    desc: "Verify NASA benchmark binary tensors and astrometric grounding"
+    cmds:
+      - |
+        if [ -f "web-client/public/benchmarks/barnard.f32" ] && [ -f "web-client/public/benchmarks/wise0855.f32" ]; then
+          echo "[SETUP] NASA Benchmark asset bundles verified in web-client/public/benchmarks/."
+        else
+          echo "[SETUP] Generating benchmark bundles..."
+          cd backend && uv run python ../benchmarks/build.py
+        fi
+
+  setup:info:
+    desc: "Print developer environment summary"
+    cmds:
+      - |
+        echo "============================================================"
+        echo "Spectra application setup complete."
+        echo ""
+        echo "Available Commands:"
+        echo "  task dev           Start backend (port 7860) & web client (port 5173)"
+        echo "  task backend:dev   Run only FastAPI science engine"
+        echo "  task web:dev       Run only React + Vite client"
+        echo "  task test          Run full test suite (backend pytest + frontend build)"
+        echo "  task lint          Run Ruff check & TypeScript compilation check"
+        echo ""
+        export PATH="$HOME/.local/bin:$PATH"
+        if ! command -v supabase >/dev/null 2>&1; then
+          echo "Notice: Local Supabase CLI not installed (not required for standard dev)."
+          echo "        FastAPI backend runs with cloud session pooler / offline fallback."
+        fi
+        echo "============================================================"
 
   db:up:
-    desc: "Start local Supabase Postgres and apply schema + benchmark seeds"
+    desc: "Start local Postgres/Supabase and apply schema + benchmark seeds"
     cmds:
-      - supabase start
-      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/schema.sql
-      - psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f backend/db/seed_benchmarks.sql
+      - |
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+        # 1. Start local container if not already running on port 54322
+        if command -v supabase >/dev/null 2>&1; then
+          supabase start >/dev/null 2>&1 || true
+        elif command -v docker >/dev/null 2>&1; then
+          if ! docker ps --format '{{.Names}}' | grep -q "supabase_db\|spectra-postgres"; then
+            if docker ps -a --format '{{.Names}}' | grep -q "spectra-postgres"; then
+              docker start spectra-postgres >/dev/null 2>&1 || true
+            else
+              docker run -d --name spectra-postgres -p 54322:5432 -e POSTGRES_PASSWORD=postgres postgres:18.6-alpine3.24 >/dev/null 2>&1 || true
+            fi
+          fi
+        fi
+
+        # 2. Run Python asyncpg DB initializer (applies schema and seeds)
+        cd backend && uv run python -m db.init_db
 
   types:sync:
     desc: "Generate strict TypeScript types from FastAPI OpenAPI schema"
+    dir: web-client
     cmds:
-      - npx openapi-typescript http://127.0.0.1:7860/openapi.json -o ./web-client/src/types/api.d.ts
+      - npx openapi-typescript http://127.0.0.1:7860/openapi.json -o ./src/types/api.d.ts
 
   backend:dev:
     desc: "Run the Unified FastAPI Science Engine with live reload via uv"
@@ -41,10 +111,57 @@ tasks:
     cmds:
       - npm run dev
 
-  dev:
-    desc: "Start the complete Spectra stack concurrently"
-    deps: [db:up]
+  dev:preflight:
+    desc: "Auto-install dependencies and verify benchmarks if missing"
     cmds:
-      - npx concurrently -n "BACKEND,WEB" -c "green,cyan" \
-          "task backend:dev" \
-          "task web:dev"
+      - |
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+        if [ ! -d "backend/.venv" ]; then
+          echo "[DEV] Initializing Python virtualenv..."
+          cd backend && uv sync
+        fi
+        if [ ! -d "web-client/node_modules" ]; then
+          echo "[DEV] Installing frontend dependencies..."
+          cd web-client && npm install
+        fi
+        if [ ! -f "web-client/public/benchmarks/barnard.f32" ]; then
+          echo "[DEV] Generating benchmark bundles..."
+          cd backend && uv run python ../benchmarks/build.py
+        fi
+
+  dev:services:
+    desc: "Run FastAPI science engine and React web client concurrently"
+    deps:
+      - backend:dev
+      - web:dev
+
+  dev:
+    desc: "Start the complete Spectra stack (auto-initializes environment & DB)"
+    cmds:
+      - task: dev:preflight
+      - task: db:up
+      - task: dev:services
+
+  test:backend:
+    desc: "Run backend pytest suite"
+    dir: backend
+    cmds:
+      - uv run pytest
+
+  test:frontend:
+    desc: "Run frontend build and TypeScript check"
+    dir: web-client
+    cmds:
+      - npm run build
+
+  test:
+    desc: "Run all test suites across backend and frontend"
+    cmds:
+      - task: test:backend
+      - task: test:frontend
+
+  lint:
+    desc: "Run lint and format checks across backend and frontend"
+    cmds:
+      - cd backend && uv run ruff check .
+      - cd web-client && npx tsc --noEmit

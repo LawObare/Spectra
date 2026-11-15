@@ -1,0 +1,30 @@
+{
+  "version": "3.0.0-PROD",
+  "source": "scripts/spike_s2_benchmarks.py (IRSA SIA2 live exposure MJD clustering)",
+  "spec_anchor": "SPECIFICATION.md \u00a72.2, \u00a77, \u00a78 (Day-0 Spike S2)",
+  "generated_utc": "2026-11-09T18:32:50.944839+00:00",
+  "collection": "spherex_qr2",
+  "clustering": {
+    "method": "gap-based temporal clustering on exposure t_min MJD values across 5 NASA benchmarks",
+    "gap_days_threshold": 25.0,
+    "search_radius_arcsec": 127.2792
+  },
+  "passes": {
+    "pass_01": {
+      "label": "Survey Pass 1",
+      "mjd_start": 60789.854522,
+      "mjd_end": 61053.415626,
+      "duration_days": 263.561104,
+      "n_exposures_total": 1047,
+      "n_targets_with_coverage": 5
+    },
+    "pass_02": {
+      "label": "Survey Pass 2",
+      "mjd_start": 61091.718616,
+      "mjd_end": 61237.874234,
+      "duration_days": 146.155618,
+      "n_exposures_total": 591,
+      "n_targets_with_coverage": 5
+    }
+  }
+}

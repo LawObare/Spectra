@@ -27,6 +27,7 @@ export interface SpectralChannel {
   fluxMjySr: number;
   uncertainty: number;
   flag: number;
+  mjd?: number;
 }
 
 export interface AiCandidate {
@@ -72,6 +73,7 @@ export interface TelemetryState {
 
   // Probed Pixel & Spectral State
   probedPixel: { x: number; y: number } | null;
+  probeSkyPosition: { ra: number; dec: number } | null;
   activeSpectrum: SpectralChannel[];
   isSpectrumLoading: boolean;
   isSpectralBlinkSynced: boolean;
@@ -105,6 +107,7 @@ export interface TelemetryState {
   setCustomChannelMap: (map: { r: number; g: number; b: number }) => void;
   setAsinhParams: (params: { a?: number; min?: number; max?: number }) => void;
   setProbedPixel: (pixel: { x: number; y: number } | null) => void;
+  setProbeSkyPosition: (position: { ra: number; dec: number } | null) => void;
   setManualRedshiftZ: (z: number) => void;
   toggleFeatureRuler: (rulerKey: string) => void;
   setIceAperture: (apertureRadiusPx: number, innerPx?: number, outerPx?: number) => void;
@@ -112,6 +115,7 @@ export interface TelemetryState {
   setCutoutLoading: (loading: boolean, error?: string | null) => void;
   setActiveSpectrum: (spectrum: SpectralChannel[]) => void;
   setSpectrumLoading: (loading: boolean) => void;
+  setSpectralBlinkSynced: (synced: boolean) => void;
   resetView: () => void;
 }
 
@@ -119,7 +123,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   // Spatial Parameters (defaults to WISE 0855-0714)
   ra: 133.737120,
   dec: -7.240380,
-  fovArcsec: 180.0,
+  fovArcsec: 300.0,
   activeTargetName: 'WISE 0855-0714',
   sourceBadge: '[NASA Benchmark (Pre-cached)]',
 
@@ -142,10 +146,11 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   maxFluxCut: 1.0,
 
   // Probed Pixel & Spectral State
-  probedPixel: { x: 16, y: 16 },
+  probedPixel: { x: 24, y: 24 },
+  probeSkyPosition: null,
   activeSpectrum: [],
   isSpectrumLoading: false,
-  isSpectralBlinkSynced: true,
+  isSpectralBlinkSynced: false,
   normalizeContinuum: false,
   manualRedshiftZ: 0.0,
   activeFeatureRulers: ['H2O', 'CO2'],
@@ -216,6 +221,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
     })),
 
   setProbedPixel: (probedPixel) => set({ probedPixel }),
+  setProbeSkyPosition: (probeSkyPosition) => set({ probeSkyPosition }),
 
   setManualRedshiftZ: (manualRedshiftZ) => set({ manualRedshiftZ }),
 
@@ -250,9 +256,12 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
 
   setSpectrumLoading: (isSpectrumLoading) => set({ isSpectrumLoading }),
 
+  setSpectralBlinkSynced: (isSpectralBlinkSynced) => set({ isSpectralBlinkSynced }),
+
   resetView: () =>
     set({
       probedPixel: { x: 16, y: 16 },
+      probeSkyPosition: null,
       manualRedshiftZ: 0.0,
       asinhParamA: 0.05,
       minFluxCut: 0.0,

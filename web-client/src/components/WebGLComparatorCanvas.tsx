@@ -25,6 +25,7 @@ export interface HoverPixelInfo {
   snr: number;
   flags: number;
   flagNames: string[];
+  radiusPx?: number;
 }
 
 export interface WebGLComparatorCanvasProps {
@@ -55,6 +56,7 @@ export interface WebGLComparatorCanvasProps {
   onPixelHover?: (info: HoverPixelInfo | null) => void;
   onPixelClick?: (info: HoverPixelInfo) => void;
   className?: string;
+  smooth?: boolean;
 }
 
 const FLAG_NAMES: Record<number, string> = {
@@ -117,6 +119,7 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
   onPixelHover,
   onPixelClick,
   className = '',
+  smooth = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<WebGL2RenderingContext | null>(null);
@@ -139,8 +142,24 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     bandB: null,
   });
 
+  const floatLinearSupportedRef = useRef<boolean>(false);
   const filterModeRef = useRef<number>(WebGL2RenderingContext.NEAREST);
   const [glReady, setGlReady] = useState(false);
+  const [dragCircle, setDragCircle] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    radiusPx: number;
+  } | null>(null);
+  const dragCircleRef = useRef<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    radiusPx: number;
+  } | null>(null);
+  const suppressNextClickRef = useRef<boolean>(false);
 
   const effectiveCuts = useMemo(() => {
     if (minFluxCut !== undefined && maxFluxCut !== undefined) {
@@ -192,7 +211,8 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     glRef.current = gl;
 
     const floatLinearExt = gl.getExtension('OES_texture_float_linear');
-    filterModeRef.current = floatLinearExt ? gl.LINEAR : gl.NEAREST;
+    floatLinearSupportedRef.current = Boolean(floatLinearExt);
+    filterModeRef.current = smooth && floatLinearExt ? gl.LINEAR : gl.NEAREST;
 
     try {
       const vertShader = compileShader(gl, gl.VERTEX_SHADER, vertShaderSource);
@@ -268,6 +288,8 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
       if (!gl || !tex) return;
 
       gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filterModeRef.current);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filterModeRef.current);
       if (data && data.length >= w * h) {
         gl.texImage2D(
           gl.TEXTURE_2D,
@@ -297,16 +319,15 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     []
   );
 
+  // Upload float32 textures to GPU ONLY when underlying buffer references, dimensions, or filter mode change.
   useEffect(() => {
     const gl = glRef.current;
     const program = programRef.current;
     if (!glReady || !gl || !program || width <= 0 || height <= 0) return;
 
-    gl.useProgram(program);
-    gl.viewport(0, 0, width, height);
+    filterModeRef.current = smooth && floatLinearSupportedRef.current ? gl.LINEAR : gl.NEAREST;
 
     const isRgb = !!(rgbBandsData && rgbBandsData.r && rgbBandsData.g && rgbBandsData.b);
-
     if (isRgb && rgbBandsData) {
       uploadTexture(texturesRef.current.bandR, rgbBandsData.r, width, height);
       uploadTexture(texturesRef.current.bandG, rgbBandsData.g, width, height);
@@ -317,6 +338,29 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
       uploadTexture(texturesRef.current.currentVar, varianceData, width, height);
       uploadTexture(texturesRef.current.referenceVar, refVarianceData || varianceData, width, height);
     }
+  }, [
+    glReady,
+    fluxData,
+    refFluxData,
+    varianceData,
+    refVarianceData,
+    rgbBandsData,
+    width,
+    height,
+    smooth,
+    uploadTexture,
+  ]);
+
+  // Update shader uniforms and redraw quad without re-uploading GPU textures on slider/mode/palette changes.
+  useEffect(() => {
+    const gl = glRef.current;
+    const program = programRef.current;
+    if (!glReady || !gl || !program || width <= 0 || height <= 0) return;
+
+    gl.useProgram(program);
+    gl.viewport(0, 0, width, height);
+
+    const isRgb = !!(rgbBandsData && rgbBandsData.r && rgbBandsData.g && rgbBandsData.b);
 
     const texUnits: [WebGLTexture | null, string, number][] = [
       [texturesRef.current.currentFlux, 'u_epoch_current', 0],
@@ -362,82 +406,143 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
     effectiveCuts,
     effectiveDiffScale,
     colorPalette,
-    uploadTexture,
+    smooth,
   ]);
+
+  const buildPixelInfo = useCallback(
+    (pxX: number, pxY: number, radiusPx?: number): HoverPixelInfo => {
+      const clampedX = Math.max(0, Math.min(width - 1, pxX));
+      const clampedY = Math.max(0, Math.min(height - 1, pxY));
+      const idx = clampedY * width + clampedX;
+      const flux = fluxData && idx < fluxData.length ? fluxData[idx] : 0;
+      const variance = varianceData && idx < varianceData.length ? varianceData[idx] : 0;
+      const snr = variance > 0 ? flux / Math.sqrt(variance) : 0;
+      const flagsVal = flagsData && idx < flagsData.length ? flagsData[idx] : 0;
+
+      return {
+        x: clampedX,
+        y: clampedY,
+        flux,
+        variance,
+        snr,
+        flags: flagsVal,
+        flagNames: decodeFlagNames(flagsVal),
+        ...(radiusPx !== undefined ? { radiusPx } : {}),
+      };
+    },
+    [fluxData, varianceData, flagsData, width, height]
+  );
+
+  const clientToImageCoords = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (!canvas || width <= 0 || height <= 0) return null;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const fracX = ((e.clientX - rect.left) / rect.width) * width;
+      const fracY = ((e.clientY - rect.top) / rect.height) * height;
+      const pxX = Math.floor(fracX);
+      const pxY = Math.floor(fracY);
+      return { fracX, fracY, pxX, pxY };
+    },
+    [width, height]
+  );
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (e.button !== 0 || !onPixelClick) return;
+      const coords = clientToImageCoords(e);
+      if (!coords) return;
+      const { fracX, fracY, pxX, pxY } = coords;
+      if (pxX < 0 || pxX >= width || pxY < 0 || pxY >= height) return;
+      suppressNextClickRef.current = false;
+      const nextDrag = {
+        startX: fracX,
+        startY: fracY,
+        currentX: fracX,
+        currentY: fracY,
+        radiusPx: 0,
+      };
+      dragCircleRef.current = nextDrag;
+      setDragCircle(nextDrag);
+    },
+    [clientToImageCoords, width, height, onPixelClick]
+  );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!onPixelHover && !onPixelClick) return;
-      const canvas = canvasRef.current;
-      if (!canvas || width <= 0 || height <= 0) return;
+      const coords = clientToImageCoords(e);
+      if (!coords) return;
+      const { fracX, fracY, pxX, pxY } = coords;
 
-      const rect = canvas.getBoundingClientRect();
-      const clientX = e.clientX - rect.left;
-      const clientY = e.clientY - rect.top;
-
-      const pxX = Math.floor((clientX / rect.width) * width);
-      const pxY = Math.floor((clientY / rect.height) * height);
+      const activeDrag = dragCircleRef.current;
+      if (activeDrag) {
+        const clampedFracX = Math.max(0, Math.min(width, fracX));
+        const clampedFracY = Math.max(0, Math.min(height, fracY));
+        const radiusPx = Math.min(
+          Math.max(width, height) * 0.45,
+          Math.hypot(clampedFracX - activeDrag.startX, clampedFracY - activeDrag.startY)
+        );
+        const updatedDrag = {
+          ...activeDrag,
+          currentX: clampedFracX,
+          currentY: clampedFracY,
+          radiusPx,
+        };
+        dragCircleRef.current = updatedDrag;
+        setDragCircle(updatedDrag);
+      }
 
       if (pxX < 0 || pxX >= width || pxY < 0 || pxY >= height) {
         onPixelHover?.(null);
         return;
       }
 
-      const idx = pxY * width + pxX;
-      const flux = fluxData && idx < fluxData.length ? fluxData[idx] : 0;
-      const variance = varianceData && idx < varianceData.length ? varianceData[idx] : 0;
-      const snr = variance > 0 ? flux / Math.sqrt(variance) : 0;
-      const flagsVal = flagsData && idx < flagsData.length ? flagsData[idx] : 0;
-
-      onPixelHover?.({
-        x: pxX,
-        y: pxY,
-        flux,
-        variance,
-        snr,
-        flags: flagsVal,
-        flagNames: decodeFlagNames(flagsVal),
-      });
+      onPixelHover?.(buildPixelInfo(pxX, pxY));
     },
-    [fluxData, varianceData, flagsData, width, height, onPixelHover, onPixelClick]
+    [clientToImageCoords, buildPixelInfo, width, height, onPixelHover, onPixelClick]
+  );
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (e.button !== 0) return;
+      const activeDrag = dragCircleRef.current;
+      dragCircleRef.current = null;
+      setDragCircle(null);
+
+      if (!activeDrag || !onPixelClick) return;
+      if (activeDrag.radiusPx >= 0.75) {
+        suppressNextClickRef.current = true;
+        const centerPxX = Math.max(0, Math.min(width - 1, Math.floor(activeDrag.startX)));
+        const centerPxY = Math.max(0, Math.min(height - 1, Math.floor(activeDrag.startY)));
+        onPixelClick(buildPixelInfo(centerPxX, centerPxY, Number(activeDrag.radiusPx.toFixed(2))));
+      }
+    },
+    [buildPixelInfo, width, height, onPixelClick]
   );
 
   const handleMouseLeave = useCallback(() => {
+    dragCircleRef.current = null;
+    setDragCircle(null);
     onPixelHover?.(null);
   }, [onPixelHover]);
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        return;
+      }
       if (!onPixelClick) return;
-      const canvas = canvasRef.current;
-      if (!canvas || width <= 0 || height <= 0) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const clientX = e.clientX - rect.left;
-      const clientY = e.clientY - rect.top;
-
-      const pxX = Math.floor((clientX / rect.width) * width);
-      const pxY = Math.floor((clientY / rect.height) * height);
-
+      const coords = clientToImageCoords(e);
+      if (!coords) return;
+      const { pxX, pxY } = coords;
       if (pxX >= 0 && pxX < width && pxY >= 0 && pxY < height) {
-        const idx = pxY * width + pxX;
-        const flux = fluxData && idx < fluxData.length ? fluxData[idx] : 0;
-        const variance = varianceData && idx < varianceData.length ? varianceData[idx] : 0;
-        const snr = variance > 0 ? flux / Math.sqrt(variance) : 0;
-        const flagsVal = flagsData && idx < flagsData.length ? flagsData[idx] : 0;
-
-        onPixelClick({
-          x: pxX,
-          y: pxY,
-          flux,
-          variance,
-          snr,
-          flags: flagsVal,
-          flagNames: decodeFlagNames(flagsVal),
-        });
+        onPixelClick(buildPixelInfo(pxX, pxY));
       }
     },
-    [fluxData, varianceData, flagsData, width, height, onPixelClick]
+    [clientToImageCoords, buildPixelInfo, width, height, onPixelClick]
   );
 
   return (
@@ -451,14 +556,32 @@ export const WebGLComparatorCanvas: React.FC<WebGLComparatorCanvasProps> = ({
         ref={canvasRef}
         width={width}
         height={height}
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
         className="block h-full w-full cursor-crosshair"
         style={{
-          imageRendering: 'pixelated',
+          imageRendering: smooth ? 'auto' : 'pixelated',
         }}
       />
+
+      {dragCircle && dragCircle.radiusPx >= 0.5 && width > 0 && height > 0 && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-cyan-400 bg-cyan-400/10 shadow-[0_0_12px_rgba(34,211,238,0.45)]"
+          style={{
+            left: `${(dragCircle.startX / width) * 100}%`,
+            top: `${(dragCircle.startY / height) * 100}%`,
+            width: `${((dragCircle.radiusPx * 2) / width) * 100}%`,
+            height: `${((dragCircle.radiusPx * 2) / height) * 100}%`,
+          }}
+        >
+          <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded border border-cyan-500/50 bg-[#080A0F]/90 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300">
+            r = {dragCircle.radiusPx.toFixed(1)} px · {(dragCircle.radiusPx * 6.2).toFixed(1)}&quot;
+          </span>
+        </div>
+      )}
 
       {isFrameZero && (
         <div className="pointer-events-none absolute left-2 top-2 rounded-sm border border-[#00f0ff] bg-[#0F131A]/90 px-1.5 py-0.5 font-mono text-[10px] text-[#00f0ff]">

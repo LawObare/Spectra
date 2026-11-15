@@ -1,438 +1,703 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { useAdminTelemetry } from './hooks/useAdminTelemetry';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
+import { ModelArchitecture } from './hooks/useAdminTelemetry';
+import { cn } from '../lib/utils';
 
-/**
- * Tab 3: Decision Boundary Animator (/admin/boundaries)
- * Specification Anchors: SPECIFICATION.md §6.4.4
- * 
- * Renders step-by-step morphing of classification boundaries across input space:
- * - Coordinate Space: 3D Physical Astrophysical Axes vs 102-Band UMAP Latent Space
- * - Dynamic Decision Surface P(Mover) = 0.5 isosurface meshgrid morphing across epochs (1 -> 50)
- * - 3D benchmark points: WISE 0855, Barnard's Star, Epsilon Indi B, RW Aurigae, R Draconis
- * - Highlight toggles: Newly Injected Community Labels, Misclassified Hard Negatives
- * - Playback trajectory controls and interactive 3D camera rotation/zoom
- */
+type NodeKind = 'target' | 'class' | 'feature' | 'template';
+
+interface GraphNode {
+  id: string;
+  label: string;
+  kind: NodeKind;
+  x: number;
+  y: number;
+  z?: number;
+  meta: Record<string, any>;
+}
+
+interface GraphEdge {
+  source: string;
+  target: string;
+  weight: number;
+  relation: 'classified_as' | 'spectral_feature' | 'cosine_similarity' | 'latent_cluster';
+  label: string;
+}
+
+interface GraphPayload {
+  model_name: string;
+  embedding_space: 'base' | 'trained';
+  checkpoint_meta: Record<string, any>;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+const NODE_COLORS: Record<NodeKind, { fill: string; stroke: string; badge: string; label: string }> = {
+  target: { fill: '#0ea5e9', stroke: '#7dd3fc', badge: 'text-sky-300 border-sky-500/40 bg-sky-500/10', label: 'Sky Target' },
+  class: { fill: '#8b5cf6', stroke: '#c4b5fd', badge: 'text-violet-300 border-violet-500/40 bg-violet-500/10', label: 'AI Class Hub' },
+  feature: { fill: '#f59e0b', stroke: '#fcd34d', badge: 'text-amber-300 border-amber-500/40 bg-amber-500/10', label: 'Spectral Feature' },
+  template: { fill: '#10b981', stroke: '#6ee7b7', badge: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10', label: 'Archive Template' },
+};
+
+const EDGE_COLORS: Record<GraphEdge['relation'], string> = {
+  classified_as: 'rgba(139, 92, 246, 0.55)',
+  spectral_feature: 'rgba(245, 158, 11, 0.55)',
+  cosine_similarity: 'rgba(16, 185, 129, 0.50)',
+  latent_cluster: 'rgba(56, 189, 248, 0.45)',
+};
+
 export const DecisionBoundaries: React.FC = () => {
-  const {
-    activeEpoch,
-    totalEpochs,
-    currentFrame,
-    isRunning,
-    isPaused,
-    startTrainingRun,
-    pauseTrainingRun,
-    resumeTrainingRun,
-    scrubToEpoch,
-  } = useAdminTelemetry();
+  const [modelName, setModelName] = useState<ModelArchitecture>('SpectralResNet102');
+  const [space, setSpace] = useState<'trained' | 'base'>('trained');
+  const [minSimilarity, setMinSimilarity] = useState<number>(0.25);
+  const [kindFilter, setKindFilter] = useState<'all' | NodeKind>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [graph, setGraph] = useState<GraphPayload | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<number>(1.0);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
+  const [autoOrbit, setAutoOrbit] = useState<boolean>(true);
+  const [rotation, setRotation] = useState<{ yaw: number; pitch: number }>({
+    yaw: -0.52,
+    pitch: 0.32,
+  });
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dragRef = useRef<{ active: boolean; x: number; y: number; moved: boolean }>({ active: false, x: 0, y: 0, moved: false });
 
-  // View state: 3D camera angles
-  const [rotX, setRotX] = useState<number>(0.55); // Elevation angle
-  const [rotY, setRotY] = useState<number>(-0.65); // Azimuth angle
-  const [zoom, setZoom] = useState<number>(1.0);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const dragStartRef = useRef<{ x: number; y: number; rotX: number; rotY: number }>({ x: 0, y: 0, rotX: 0, rotY: 0 });
+  useEffect(() => {
+    if (viewMode !== '3d' || !autoOrbit) return;
+    const id = window.setInterval(() => {
+      if (!dragRef.current.active) {
+        setRotation((r) => ({ ...r, yaw: r.yaw + 0.006 }));
+      }
+    }, 33);
+    return () => clearInterval(id);
+  }, [viewMode, autoOrbit]);
 
-  // Toggles
-  const [coordSpace, setCoordSpace] = useState<'physical' | 'umap'>('physical');
-  const [showCommunityLabels, setShowCommunityLabels] = useState<boolean>(true);
-  const [showHardNegatives, setShowHardNegatives] = useState<boolean>(true);
-  const [hoveredPoint, setHoveredPoint] = useState<any | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
-  // Mouse drag handlers for 3D rotation
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    setIsDragging(true);
-    dragStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      rotX,
-      rotY,
+    fetch(
+      `/api/admin/graph?model=${encodeURIComponent(modelName)}&space=${space}&min_similarity=${minSimilarity.toFixed(2)}`
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: GraphPayload) => {
+        if (cancelled) return;
+        setGraph(data);
+        setSelectedNodeId((prev) => {
+          if (prev && data.nodes.some((n) => n.id === prev)) return prev;
+          return data.nodes.find((n) => n.kind === 'target')?.id || data.nodes[0]?.id || null;
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed loading knowledge graph');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modelName, space, minSimilarity]);
+
+  const visibleNodes = useMemo(() => {
+    if (!graph) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return graph.nodes.filter((n) => {
+      if (kindFilter !== 'all' && n.kind !== kindFilter) return false;
+      if (q && !n.label.toLowerCase().includes(q) && !n.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [graph, kindFilter, searchQuery]);
+
+  const visibleNodeSet = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
+
+  const visibleEdges = useMemo(() => {
+    if (!graph) return [];
+    return graph.edges.filter((e) => visibleNodeSet.has(e.source) && visibleNodeSet.has(e.target));
+  }, [graph, visibleNodeSet]);
+
+  const nodeMap = useMemo(() => {
+    const map = new Map<string, GraphNode>();
+    for (const n of graph?.nodes || []) map.set(n.id, n);
+    return map;
+  }, [graph]);
+
+  const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) || null : null;
+
+  const selectedConnections = useMemo(() => {
+    if (!selectedNodeId || !graph) return [];
+    return graph.edges
+      .filter((e) => e.source === selectedNodeId || e.target === selectedNodeId)
+      .map((e) => {
+        const peerId = e.source === selectedNodeId ? e.target : e.source;
+        return { edge: e, peer: nodeMap.get(peerId) || null };
+      })
+      .sort((a, b) => b.edge.weight - a.edge.weight);
+  }, [selectedNodeId, graph, nodeMap]);
+
+  // Project normalized graph coords [-1, 1]^3 into canvas pixel coordinates + perspective depth
+  const projectCoords = (nx: number, ny: number, nz: number, width: number, height: number) => {
+    const scale = Math.min(width, height) * 0.41 * zoom;
+    if (viewMode === '2d') {
+      return {
+        cx: width * 0.5 + pan.x + nx * scale,
+        cy: height * 0.5 + pan.y + ny * scale,
+        depth: 0,
+        pScale: 1,
+      };
+    }
+
+    const cosY = Math.cos(rotation.yaw);
+    const sinY = Math.sin(rotation.yaw);
+    const cosP = Math.cos(rotation.pitch);
+    const sinP = Math.sin(rotation.pitch);
+
+    const x1 = nx * cosY - nz * sinY;
+    const z1 = nx * sinY + nz * cosY;
+    const y2 = ny * cosP - z1 * sinP;
+    const z2 = ny * sinP + z1 * cosP;
+
+    const fov = 2.8;
+    const pScale = fov / Math.max(0.9, fov + z2);
+    return {
+      cx: width * 0.5 + pan.x + x1 * scale * pScale,
+      cy: height * 0.5 + pan.y + y2 * scale * pScale,
+      depth: z2,
+      pScale,
     };
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDragging) return;
-    const dx = e.clientX - dragStartRef.current.x;
-    const dy = e.clientY - dragStartRef.current.y;
-    setRotY(dragStartRef.current.rotY + dx * 0.008);
-    setRotX(Math.max(-1.4, Math.min(1.4, dragStartRef.current.rotX + dy * 0.008)));
+  const projectNode = (n: GraphNode, width: number, height: number) => {
+    const nz = typeof n.z === 'number' ? n.z : 0;
+    return projectCoords(n.x, n.y, nz, width, height);
   };
 
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    setZoom((prev) => Math.max(0.6, Math.min(2.2, prev - e.deltaY * 0.001)));
-  };
-
-  // Render 3D Decision Surface & Scatter Data onto Canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const width = rect.width;
-    const height = rect.height;
-
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (width === 0 || height === 0) return;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Deep space background
-    ctx.fillStyle = '#080A0F';
+    // Background radial glow
+    ctx.fillStyle = '#070b13';
     ctx.fillRect(0, 0, width, height);
 
-    const cx = width / 2;
-    const cy = height / 2 + 20;
-    const scale = Math.min(width, height) * 0.42 * zoom;
+    if (viewMode === '3d') {
+      const steps = 64;
+      for (const r of [0.42, 0.78, 1.08]) {
+        // XZ equatorial orbital ring
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i <= steps; i++) {
+          const theta = (i / steps) * Math.PI * 2;
+          const pt = projectCoords(Math.cos(theta) * r, 0, Math.sin(theta) * r, width, height);
+          if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+          else ctx.lineTo(pt.cx, pt.cy);
+        }
+        ctx.stroke();
 
-    // 3D Projection Helper
-    const project = (x: number, y: number, z: number) => {
-      // Rotate around Y (azimuth)
-      const cosY = Math.cos(rotY);
-      const sinY = Math.sin(rotY);
-      const x1 = x * cosY - z * sinY;
-      const z1 = x * sinY + z * cosY;
-
-      // Rotate around X (elevation)
-      const cosX = Math.cos(rotX);
-      const sinX = Math.sin(rotX);
-      const y2 = y * cosX - z1 * sinX;
-      const z2 = y * sinX + z1 * cosX;
-
-      // Isometric camera projection
-      const px = cx + x1 * scale;
-      const py = cy - y2 * scale;
-      return { px, py, depth: z2 };
-    };
-
-    // Draw 3D Bounding Cube Axes [-1, 1] in each dimension
-    ctx.strokeStyle = '#1E2530';
-    ctx.lineWidth = 1;
-
-    const corners = [
-      project(-1, -1, -1),
-      project(1, -1, -1),
-      project(1, 1, -1),
-      project(-1, 1, -1),
-      project(-1, -1, 1),
-      project(1, -1, 1),
-      project(1, 1, 1),
-      project(-1, 1, 1),
-    ];
-
-    // Floor grid (Z-X plane at Y = -1)
-    ctx.strokeStyle = '#151B24';
-    for (let g = -1; g <= 1; g += 0.5) {
-      const p1 = project(g, -1, -1);
-      const p2 = project(g, -1, 1);
-      ctx.beginPath();
-      ctx.moveTo(p1.px, p1.py);
-      ctx.lineTo(p2.px, p2.py);
-      ctx.stroke();
-
-      const p3 = project(-1, -1, g);
-      const p4 = project(1, -1, g);
-      ctx.beginPath();
-      ctx.moveTo(p3.px, p3.py);
-      ctx.lineTo(p4.px, p4.py);
-      ctx.stroke();
+        // XY meridional reference ring
+        if (r === 0.78) {
+          ctx.strokeStyle = 'rgba(139, 92, 246, 0.10)';
+          ctx.beginPath();
+          for (let i = 0; i <= steps; i++) {
+            const theta = (i / steps) * Math.PI * 2;
+            const pt = projectCoords(Math.cos(theta) * r, Math.sin(theta) * r, 0, width, height);
+            if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+            else ctx.lineTo(pt.cx, pt.cy);
+          }
+          ctx.stroke();
+        }
+      }
+    } else {
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+      ctx.lineWidth = 1;
+      for (const r of [0.35, 0.65, 0.92]) {
+        ctx.beginPath();
+        ctx.arc(width * 0.5 + pan.x, height * 0.5 + pan.y, Math.min(width, height) * 0.41 * r * zoom, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
-    // Outer bounding box edges
-    ctx.strokeStyle = '#334155';
-    const edges = [
-      [0, 1], [1, 2], [2, 3], [3, 0],
-      [4, 5], [5, 6], [6, 7], [7, 4],
-      [0, 4], [1, 5], [2, 6], [3, 7],
-    ];
-    edges.forEach(([i, j]) => {
-      ctx.beginPath();
-      ctx.moveTo(corners[i].px, corners[i].py);
-      ctx.lineTo(corners[j].px, corners[j].py);
-      ctx.stroke();
+    const focusId = hoveredNodeId || selectedNodeId;
+    const coords = new Map<string, { cx: number; cy: number; depth: number; pScale: number }>();
+    for (const n of visibleNodes) {
+      coords.set(n.id, projectNode(n, width, height));
+    }
+
+    // Depth-sort edges (average depth back-to-front)
+    const sortedEdges = [...visibleEdges].sort((ea, eb) => {
+      const da = ((coords.get(ea.source)?.depth ?? 0) + (coords.get(ea.target)?.depth ?? 0)) * 0.5;
+      const db = ((coords.get(eb.source)?.depth ?? 0) + (coords.get(eb.target)?.depth ?? 0)) * 0.5;
+      return db - da;
     });
 
-    // Axis Labels
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = '10px ui-monospace, monospace';
+    // Draw edges
+    for (const e of sortedEdges) {
+      const a = coords.get(e.source);
+      const b = coords.get(e.target);
+      if (!a || !b) continue;
+      const isFocused = !focusId || e.source === focusId || e.target === focusId;
+      ctx.globalAlpha = focusId ? (isFocused ? 0.95 : 0.14) : 0.70;
+      ctx.strokeStyle = EDGE_COLORS[e.relation] || '#64748b';
+      ctx.lineWidth = Math.max(1, e.weight * 3.0);
+      ctx.beginPath();
+      ctx.moveTo(a.cx, a.cy);
+      ctx.lineTo(b.cx, b.cy);
+      ctx.stroke();
 
-    const pX = project(1.2, -1, -1);
-    ctx.fillText('X: IR Color (D5/D2)', pX.px, pX.py);
-
-    const pY = project(-1, 1.2, -1);
-    ctx.fillText('Y: Motion SNR (ΔS/σ)', pY.px, pY.py);
-
-    const pZ = project(-1, -1, 1.2);
-    ctx.fillText('Z: Ice Depth (τ)', pZ.px, pZ.py);
-
-    // Decision Surface P(Mover) = 0.5 meshgrid evaluation (SPECIFICATION.md §6.4.4)
-    // As epochs advance, boundary shifts from linear plane into warped non-linear manifold
-    const morph = (currentFrame?.decision_surface_offset || 0) * 0.35;
-    const epochRatio = activeEpoch / totalEpochs;
-
-    // Generate 12x12 3D mesh surface
-    const meshSteps = 12;
-    const meshPoints: Array<{ px: number; py: number; depth: number }[]> = [];
-
-    for (let i = 0; i <= meshSteps; i++) {
-      const u = -0.9 + (i / meshSteps) * 1.8; // X: IR color
-      const row: { px: number; py: number; depth: number }[] = [];
-      for (let j = 0; j <= meshSteps; j++) {
-        const v = -0.9 + (j / meshSteps) * 1.8; // Z: Ice depth
-
-        // Height Y of decision boundary P(Mover)=0.5
-        // At Epoch 1: Linear threshold Y = -0.2 (SNR > 6)
-        // At Epoch 50: Non-linear hyperbolic manifold: requires high SNR when IR Color is low (rejecting artifacts)
-        const linearY = -0.2;
-        const warpedY = -0.4 + 0.8 * Math.exp(-u * 1.5) - 0.25 * Math.sin(v * 2.0) + morph * 0.15;
-        const yVal = linearY * (1 - epochRatio) + warpedY * epochRatio;
-
-        const p = project(u, Math.max(-0.95, Math.min(0.95, yVal)), v);
-        row.push(p);
+      if (focusId && isFocused) {
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '9px "IBM Plex Mono", ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, (a.cx + b.cx) * 0.5, (a.cy + b.cy) * 0.5 - 3);
       }
-      meshPoints.push(row);
     }
+    ctx.globalAlpha = 1;
 
-    // Render Meshgrid Quads with Depth Shading
-    for (let i = 0; i < meshSteps; i++) {
-      for (let j = 0; j < meshSteps; j++) {
-        const p00 = meshPoints[i][j];
-        const p10 = meshPoints[i + 1][j];
-        const p11 = meshPoints[i + 1][j + 1];
-        const p01 = meshPoints[i][j + 1];
+    // Depth-sort nodes back-to-front so foreground nodes overlap distant ones cleanly
+    const sortedNodes = [...visibleNodes].sort(
+      (na, nb) => (coords.get(nb.id)?.depth ?? 0) - (coords.get(na.id)?.depth ?? 0)
+    );
 
-        const avgDepth = (p00.depth + p10.depth + p11.depth + p01.depth) / 4;
-        const depthAlpha = Math.max(0.12, Math.min(0.45, 0.25 + avgDepth * 0.15));
+    // Draw nodes
+    for (const n of sortedNodes) {
+      const p = coords.get(n.id);
+      if (!p) continue;
+      const style = NODE_COLORS[n.kind];
+      const isSelected = n.id === selectedNodeId;
+      const isHover = n.id === hoveredNodeId;
+      const baseR = n.kind === 'class' ? 12 : n.kind === 'target' ? 9.5 : 8.5;
+      const r = Math.max(4.5, baseR * p.pScale);
+      const depthFade = viewMode === '3d' ? Math.max(0.42, Math.min(1, 0.88 - p.depth * 0.25)) : 1;
 
-        // Translucent blue decision surface
-        ctx.fillStyle = `rgba(56, 189, 248, ${depthAlpha})`;
+      ctx.save();
+      ctx.globalAlpha = isSelected || isHover ? 1 : depthFade;
+
+      if (isSelected || isHover) {
         ctx.beginPath();
-        ctx.moveTo(p00.px, p00.py);
-        ctx.lineTo(p10.px, p10.py);
-        ctx.lineTo(p11.px, p11.py);
-        ctx.lineTo(p01.px, p01.py);
-        ctx.closePath();
+        ctx.arc(p.cx, p.cy, r + 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
         ctx.fill();
-
-        // Wireframe lines
-        ctx.strokeStyle = `rgba(56, 189, 248, ${depthAlpha * 1.5})`;
-        ctx.lineWidth = 0.75;
-        ctx.stroke();
       }
+
+      ctx.fillStyle = style.fill;
+      ctx.strokeStyle = isSelected ? '#ffffff' : style.stroke;
+      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+
+      ctx.beginPath();
+      if (n.kind === 'class') {
+        // Diamond hub
+        ctx.moveTo(p.cx, p.cy - r);
+        ctx.lineTo(p.cx + r, p.cy);
+        ctx.lineTo(p.cx, p.cy + r);
+        ctx.lineTo(p.cx - r, p.cy);
+        ctx.closePath();
+      } else if (n.kind === 'feature') {
+        // Square molecular feature badge
+        ctx.rect(p.cx - r * 0.85, p.cy - r * 0.85, r * 1.7, r * 1.7);
+      } else {
+        ctx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = isSelected ? '#ffffff' : '#e2e8f0';
+      ctx.font = n.kind === 'class' ? 'bold 11px "IBM Plex Sans", system-ui, sans-serif' : '10px "IBM Plex Sans", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(n.label, p.cx, p.cy + r + 13);
+      ctx.restore();
     }
 
-    // Benchmark Target Points & Community Injections
-    const points = currentFrame?.community_points || [];
-    points.forEach((pt) => {
-      // Map physical ranges to [-1, 1] normalized cube:
-      // X: [0.0, 5.0] -> [-1, 1]
-      // Y: [0.0, 18.0] -> [-1, 1]
-      // Z: [0.0, 3.0] -> [-1, 1]
-      const nx = (pt.x / 5.0) * 2.0 - 1.0;
-      const ny = (pt.y / 18.0) * 2.0 - 1.0;
-      const nz = (pt.z / 3.0) * 2.0 - 1.0;
+    // 3D PC1/PC2/PC3 Axis Compass in bottom-right corner
+    if (viewMode === '3d' && width > 180 && height > 140) {
+      const originX = width - 56;
+      const originY = height - 52;
+      const axisLen = 28;
+      const cosY = Math.cos(rotation.yaw);
+      const sinY = Math.sin(rotation.yaw);
+      const cosP = Math.cos(rotation.pitch);
+      const sinP = Math.sin(rotation.pitch);
 
-      if (!showCommunityLabels && !pt.label.includes('WISE') && !pt.label.includes('Barnard') && !pt.label.includes('Epsilon') && !pt.label.includes('RW') && !pt.label.includes('R Dra')) {
-        return;
-      }
-      if (!showHardNegatives && pt.isHardNegative) {
-        return;
-      }
-
-      const p = project(nx, ny, nz);
-
-      // Point styling
-      let color = '#38BDF8'; // Moving dipole (Sky)
-      let radius = 4.5;
-      if (pt.isHardNegative) {
-        color = '#EF4444'; // Hard Negative / Glitch (Red)
-        radius = 5.0;
-      } else if (!pt.isMover) {
-        color = '#F59E0B'; // Variable star (Amber)
-      }
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(p.px, p.py, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Outer glow for prominent benchmarks
-      if (pt.label.includes('WISE') || pt.label.includes('Barnard')) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
+      const axes: Array<{ label: string; vec: [number, number, number]; color: string }> = [
+        { label: 'PC1', vec: [1, 0, 0], color: '#38bdf8' },
+        { label: 'PC2', vec: [0, 1, 0], color: '#34d399' },
+        { label: 'PC3', vec: [0, 0, 1], color: '#f59e0b' },
+      ];
+      for (const ax of axes) {
+        const [vx, vy, vz] = ax.vec;
+        const x1 = vx * cosY - vz * sinY;
+        const z1 = vx * sinY + vz * cosY;
+        const y2 = vy * cosP - z1 * sinP;
+        const ex = originX + x1 * axisLen;
+        const ey = originY + y2 * axisLen;
+        ctx.strokeStyle = ax.color;
+        ctx.lineWidth = 1.6;
         ctx.beginPath();
-        ctx.arc(p.px, p.py, radius + 3, 0, Math.PI * 2);
+        ctx.moveTo(originX, originY);
+        ctx.lineTo(ex, ey);
         ctx.stroke();
+
+        ctx.fillStyle = ax.color;
+        ctx.font = 'bold 9px "IBM Plex Mono", ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(ax.label, originX + x1 * (axisLen + 11), originY + y2 * (axisLen + 11) + 3);
       }
+    }
+  }, [visibleNodes, visibleEdges, selectedNodeId, hoveredNodeId, zoom, pan, viewMode, rotation]);
 
-      // Point label text
-      ctx.fillStyle = '#E2E8F0';
-      ctx.font = '9px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(pt.label, p.px + 8, p.py + 3);
-    });
-
-    // P(Mover) = 0.5 Surface Marker
-    const pSurface = project(0.4, -0.1, 0.4);
-    ctx.fillStyle = '#38BDF8';
-    ctx.font = '10px sans-serif';
-    ctx.fillText('◄ Dynamic Decision Surface P(Mover)=0.5', pSurface.px + 10, pSurface.py - 10);
-  }, [rotX, rotY, zoom, activeEpoch, totalEpochs, currentFrame, showCommunityLabels, showHardNegatives]);
+  const hitTestNode = (clientX: number, clientY: number): GraphNode | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const mx = clientX - rect.left;
+    const my = clientY - rect.top;
+    // Test closest (foreground) nodes first
+    const projected = visibleNodes
+      .map((n) => ({ n, p: projectNode(n, rect.width, rect.height) }))
+      .sort((a, b) => a.p.depth - b.p.depth);
+    for (const { n, p } of projected) {
+      if (Math.hypot(mx - p.cx, my - p.cy) <= Math.max(12, 15 * p.pScale)) return n;
+    }
+    return null;
+  };
 
   return (
-    <div className="flex flex-col h-full bg-[#080A0F] text-[#E6ECF2] p-4 gap-4 overflow-y-auto">
-      {/* COORDINATE SPACE & TRAJECTORY CONTROLLER */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded border border-[#1E2530] bg-[#0F131A] p-3 shadow-md">
-        <div className="flex items-center gap-4 text-xs">
-          <span className="font-semibold uppercase tracking-wider text-[#38BDF8]">
-            COORDINATE SPACE:
-          </span>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name="coordSpace"
-              checked={coordSpace === 'physical'}
-              onChange={() => setCoordSpace('physical')}
-              className="accent-[#38BDF8]"
-            />
-            <span>3D Physical Astrophysical Axes</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer text-[#94A3B8]">
-            <input
-              type="radio"
-              name="coordSpace"
-              checked={coordSpace === 'umap'}
-              onChange={() => setCoordSpace('umap')}
-              className="accent-[#38BDF8]"
-            />
-            <span>102-Band UMAP Latent Space</span>
-          </label>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
+      {/* TOP TOOLBAR */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/70 px-5 py-2.5 shrink-0">
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">
+              AI Knowledge & Relationship Graph
+            </h2>
+            <p className="text-[11px] text-muted-foreground">
+              PyTorch latent representations linking Sky Targets, Spectral Features, Archive Templates & AI Class Hubs
+            </p>
+          </div>
+          {graph?.checkpoint_meta && (
+            <Badge variant="sky" className="font-mono text-[10px]">
+              {graph.embedding_space === 'trained'
+                ? `Trained LoRA r=${graph.checkpoint_meta.lora_r} (${Math.round((graph.checkpoint_meta.val_acc || 0) * 100)}% acc)`
+                : 'Untrained Base Model'}
+            </Badge>
+          )}
         </div>
 
-        {/* Highlight Checkboxes */}
-        <div className="flex items-center gap-4 text-xs">
-          <label className="flex items-center gap-1.5 cursor-pointer">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <select
+            value={modelName}
+            onChange={(e) => setModelName(e.target.value as ModelArchitecture)}
+            className="bg-background border border-border rounded px-2 py-1 text-xs font-mono"
+          >
+            <option value="SpectralResNet102">SpectralResNet102</option>
+            <option value="DipoleConvNet3D">DipoleConvNet3D</option>
+            <option value="AstroFeatureSVM">AstroFeatureSVM</option>
+          </select>
+
+          <div className="flex rounded border border-border bg-secondary/40 p-0.5 font-mono text-[11px]">
+            <button
+              onClick={() => setSpace('base')}
+              className={cn(
+                'px-2.5 py-1 rounded transition-colors',
+                space === 'base' ? 'bg-amber-500/20 text-amber-300 font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              Base (Untrained)
+            </button>
+            <button
+              onClick={() => setSpace('trained')}
+              className={cn(
+                'px-2.5 py-1 rounded transition-colors',
+                space === 'trained' ? 'bg-emerald-500/20 text-emerald-300 font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              Trained (SFT/LoRA)
+            </button>
+          </div>
+
+          <div className="flex rounded border border-border bg-secondary/40 p-0.5 font-mono text-[11px]">
+            <button
+              onClick={() => setViewMode('3d')}
+              className={cn(
+                'px-2.5 py-1 rounded transition-colors',
+                viewMode === '3d' ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              3D Galaxy Orbit
+            </button>
+            <button
+              onClick={() => setViewMode('2d')}
+              className={cn(
+                'px-2.5 py-1 rounded transition-colors',
+                viewMode === '2d' ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              2D Map
+            </button>
+          </div>
+
+          {viewMode === '3d' && (
+            <Button
+              size="sm"
+              variant={autoOrbit ? 'default' : 'outline'}
+              className="h-7 text-xs font-mono"
+              onClick={() => setAutoOrbit((v) => !v)}
+            >
+              {autoOrbit ? 'Auto-Orbit: ON' : 'Auto-Orbit: OFF'}
+            </Button>
+          )}
+
+          <div className="flex items-center gap-1.5 border border-border rounded px-2 py-1 bg-background">
+            <span className="text-[10px] font-mono text-muted-foreground">min sim {minSimilarity.toFixed(2)}</span>
             <input
-              type="checkbox"
-              checked={showCommunityLabels}
-              onChange={(e) => setShowCommunityLabels(e.target.checked)}
-              className="accent-[#38BDF8]"
+              type="range"
+              min={0.1}
+              max={0.85}
+              step={0.05}
+              value={minSimilarity}
+              onChange={(e) => setMinSimilarity(Number(e.target.value))}
+              className="w-20 accent-primary"
             />
-            <span>Newly Injected Community Labels</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showHardNegatives}
-              onChange={(e) => setShowHardNegatives(e.target.checked)}
-              className="accent-[#EF4444]"
-            />
-            <span className="text-[#EF4444]">Misclassified Hard Negatives</span>
-          </label>
+          </div>
+
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => {
+              setZoom(1);
+              setPan({ x: 0, y: 0 });
+              setRotation({ yaw: -0.52, pitch: 0.32 });
+            }}
+          >
+            Reset View
+          </Button>
         </div>
       </div>
 
-      {/* 3D WEBGL/CANVAS DECISION SURFACE VIEWPORT */}
-      <div className="relative flex-1 min-h-[460px] rounded border border-[#1E2530] bg-[#080A0F] shadow-inner overflow-hidden flex flex-col">
-        {/* Interactive 3D Canvas */}
-        <canvas
-          ref={canvasRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onWheel={handleWheel}
-          className="absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
-        />
-
-        {/* Camera Navigation Overlay HUD */}
-        <div className="absolute top-3 left-3 pointer-events-none rounded bg-[#0F131A]/85 backdrop-blur-sm border border-[#1E2530] p-2 text-[10px] text-[#94A3B8] font-mono flex flex-col gap-1">
-          <div>Camera: Azimuth {Math.round(rotY * 57.3)}°, Elevation {Math.round(rotX * 57.3)}°</div>
-          <div>Zoom: {(zoom * 100).toFixed(0)}% (Scroll to Zoom, Drag to Rotate)</div>
-          <div className="text-[#38BDF8]">Evaluating 25×25×25 Meshgrid (N=15,625 points)</div>
+      {/* FILTER BAR */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-secondary/20 px-5 py-1.5 shrink-0 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(['all', 'target', 'class', 'feature', 'template'] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setKindFilter(k)}
+              className={cn(
+                'px-2.5 py-0.5 rounded-full text-[11px] border transition-colors',
+                kindFilter === k
+                  ? 'bg-primary text-primary-foreground border-primary font-medium'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {k === 'all' ? 'All Nodes' : NODE_COLORS[k].label}
+            </button>
+          ))}
         </div>
-
-        {/* Target Legend HUD */}
-        <div className="absolute top-3 right-3 pointer-events-none rounded bg-[#0F131A]/85 backdrop-blur-sm border border-[#1E2530] p-2.5 text-xs text-[#E6ECF2] flex flex-col gap-1.5">
-          <div className="text-[10px] uppercase font-semibold text-[#64748B] mb-0.5">Physical Entities</div>
-          <div className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 rounded-full bg-[#38BDF8]" />
-            <span>Moving Brown Dwarf / Fast Dipole (P &gt; 0.5)</span>
-          </div>
-          <div className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 rounded-full bg-amber-400" />
-            <span>Pulsing Variable Monopole</span>
-          </div>
-          <div className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 rounded-full bg-[#EF4444]" />
-            <span>Misclassified Hard Negative (Artifact)</span>
-          </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-mono text-muted-foreground">
+            {visibleNodes.length} nodes · {visibleEdges.length} relationships
+          </span>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter node name..."
+            className="bg-background border border-border rounded px-2.5 py-0.5 text-xs w-44"
+          />
         </div>
+      </div>
 
-        {/* BOTTOM TRAJECTORY SCRUBBER CONTROLLER (SPECIFICATION.md §6.4.4) */}
-        <div className="absolute bottom-3 inset-x-3 rounded border border-[#1E2530] bg-[#0F131A]/90 backdrop-blur-sm p-3 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => scrubToEpoch(1)}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="First Epoch"
-            >
-              |&lt;
-            </button>
-            <button
-              onClick={() => scrubToEpoch(Math.max(1, activeEpoch - 5))}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="Step Back 5 Epochs"
-            >
-              &lt;&lt;
-            </button>
-            <button
-              onClick={isRunning && !isPaused ? pauseTrainingRun : (isPaused ? resumeTrainingRun : startTrainingRun)}
-              className="rounded bg-[#38BDF8] px-3 py-1 text-xs font-medium text-[#080A0F] hover:bg-[#0284C7] transition"
-            >
-              {isRunning && !isPaused ? '⏸ Pause Trajectory' : '▶ Play Boundary Trajectory (Epoch 1 -> 50)'}
-            </button>
-            <button
-              onClick={() => scrubToEpoch(Math.min(totalEpochs, activeEpoch + 5))}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="Step Forward 5 Epochs"
-            >
-              &gt;&gt;
-            </button>
-            <button
-              onClick={() => scrubToEpoch(totalEpochs)}
-              className="rounded border border-[#1E2530] bg-[#151B24] px-2 py-1 text-xs text-[#94A3B8] hover:text-[#E6ECF2] hover:bg-[#1E2530]"
-              title="Final Epoch"
-            >
-              &gt;|
-            </button>
-          </div>
+      {/* GRAPH CANVAS + INSPECTOR */}
+      <div className="flex flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        <div className="relative min-h-[340px] lg:min-h-0 flex-1 overflow-hidden">
+          {loading && !graph && (
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground z-10">
+              Computing PyTorch embedding graph...
+            </div>
+          )}
+          {error && (
+            <div className="absolute top-3 left-3 z-10 rounded border border-rose-500/40 bg-rose-950/70 px-3 py-1.5 text-xs text-rose-200">
+              {error}
+            </div>
+          )}
+          <canvas
+            ref={canvasRef}
+            className="w-full h-full cursor-grab active:cursor-grabbing"
+            onWheel={(e) => {
+              e.preventDefault();
+              setZoom((z) => Math.max(0.55, Math.min(2.4, z * (e.deltaY < 0 ? 1.08 : 0.92))));
+            }}
+            onMouseDown={(e) => {
+              dragRef.current = { active: true, x: e.clientX, y: e.clientY, moved: false };
+            }}
+            onMouseMove={(e) => {
+              if (dragRef.current.active) {
+                const dx = e.clientX - dragRef.current.x;
+                const dy = e.clientY - dragRef.current.y;
+                if (Math.abs(dx) + Math.abs(dy) > 3) dragRef.current.moved = true;
+                dragRef.current.x = e.clientX;
+                dragRef.current.y = e.clientY;
+                setAutoOrbit(false);
+                if (viewMode === '3d' && !e.shiftKey) {
+                  setRotation((r) => ({
+                    yaw: r.yaw + dx * 0.008,
+                    pitch: Math.max(-1.2, Math.min(1.2, r.pitch + dy * 0.008)),
+                  }));
+                } else {
+                  setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+                }
+              } else {
+                const hit = hitTestNode(e.clientX, e.clientY);
+                setHoveredNodeId(hit ? hit.id : null);
+              }
+            }}
+            onMouseUp={(e) => {
+              const wasMoved = dragRef.current.moved;
+              dragRef.current.active = false;
+              if (!wasMoved) {
+                const hit = hitTestNode(e.clientX, e.clientY);
+                if (hit) setSelectedNodeId(hit.id);
+              }
+            }}
+            onMouseLeave={() => {
+              dragRef.current.active = false;
+              setHoveredNodeId(null);
+            }}
+          />
 
-          <div className="flex items-center gap-3 flex-1 max-w-md">
-            <span className="text-xs font-mono text-[#94A3B8] whitespace-nowrap">
-              Active Epoch: <strong className="text-[#38BDF8] text-sm">{activeEpoch}</strong> / {totalEpochs}
+          {/* LEGEND OVERLAY */}
+          <div className="absolute bottom-3 left-3 rounded-md border border-border/80 bg-card/90 backdrop-blur px-3 py-2 text-[10px] flex flex-wrap items-center gap-3">
+            {(['target', 'class', 'feature', 'template'] as NodeKind[]).map((k) => (
+              <span key={k} className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ backgroundColor: NODE_COLORS[k].fill }} />
+                {NODE_COLORS[k].label}
+              </span>
+            ))}
+            <span className="text-muted-foreground font-mono border-l border-border pl-2.5">
+              {viewMode === '3d' ? 'Drag: 360° 3D orbit · Shift+Drag: pan · Wheel: zoom' : 'Drag: pan · Wheel: zoom'}
             </span>
-            <input
-              type="range"
-              min="1"
-              max={totalEpochs}
-              value={activeEpoch}
-              onChange={(e) => scrubToEpoch(Number(e.target.value))}
-              className="flex-1 accent-[#38BDF8] cursor-pointer"
-            />
-          </div>
-
-          <div className="text-[11px] text-[#94A3B8]">
-            Morph: <span className="font-mono text-emerald-400">Non-linear warp active</span>
           </div>
         </div>
+
+        {/* RIGHT NODE & RELATIONSHIP INSPECTOR */}
+        <aside className="w-full lg:w-[320px] xl:w-[340px] shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-card/40 lg:overflow-y-auto p-3 sm:p-4 flex flex-col gap-3">
+          {selectedNode ? (
+            <>
+              <Card className="border-border">
+                <CardHeader className="py-2.5 px-3.5 border-b border-border bg-secondary/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={cn('text-[10px] font-mono px-2 py-0.5 rounded border', NODE_COLORS[selectedNode.kind].badge)}>
+                      {NODE_COLORS[selectedNode.kind].label}
+                    </span>
+                    {selectedNode.meta.ra !== undefined && (
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        {Number(selectedNode.meta.ra).toFixed(3)}°, {Number(selectedNode.meta.dec).toFixed(3)}°
+                      </span>
+                    )}
+                  </div>
+                  <CardTitle className="text-sm font-semibold mt-1.5">{selectedNode.label}</CardTitle>
+                </CardHeader>
+                <CardContent className="p-3.5 text-xs flex flex-col gap-2">
+                  {selectedNode.kind === 'target' && (
+                    <>
+                      <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px]">
+                        <div className="bg-secondary/30 p-1.5 rounded">
+                          <span className="text-muted-foreground block">CH4 3.32µm</span>
+                          <span className="text-amber-300 font-bold">{selectedNode.meta.ch4_332_depth}</span>
+                        </div>
+                        <div className="bg-secondary/30 p-1.5 rounded">
+                          <span className="text-muted-foreground block">H2O 3.05µm</span>
+                          <span className="text-sky-300 font-bold">{selectedNode.meta.h2o_305_depth}</span>
+                        </div>
+                        <div className="bg-secondary/30 p-1.5 rounded">
+                          <span className="text-muted-foreground block">D5/D2 Color</span>
+                          <span className="text-emerald-300 font-bold">{selectedNode.meta.ir_color_d5_d2}</span>
+                        </div>
+                        <div className="bg-secondary/30 p-1.5 rounded">
+                          <span className="text-muted-foreground block">Domain</span>
+                          <span className="text-foreground font-bold truncate block">{selectedNode.meta.domain_class}</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <Link
+                          to={`/admin/internals?target=${encodeURIComponent(selectedNode.meta.target_id || '')}`}
+                          className="flex-1"
+                        >
+                          <Button size="sm" className="w-full text-xs">Inspect in Co-Pilot →</Button>
+                        </Link>
+                        <Link
+                          to={`/explore?tab=navigator&ra=${selectedNode.meta.ra}&dec=${selectedNode.meta.dec}`}
+                        >
+                          <Button size="sm" variant="outline" className="text-xs">Sky View</Button>
+                        </Link>
+                      </div>
+                    </>
+                  )}
+                  {selectedNode.kind !== 'target' && (
+                    <pre className="text-[10px] font-mono text-muted-foreground whitespace-pre-wrap">
+                      {JSON.stringify(selectedNode.meta, null, 2)}
+                    </pre>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-border">
+                <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/40">
+                  <CardTitle className="text-xs font-semibold">
+                    Connected Relationships ({selectedConnections.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-2 flex flex-col gap-1.5 max-h-[380px] overflow-y-auto">
+                  {selectedConnections.map(({ edge, peer }, idx) => (
+                    <button
+                      key={`${edge.source}-${edge.target}-${idx}`}
+                      onClick={() => peer && setSelectedNodeId(peer.id)}
+                      className="text-left p-2 rounded border border-border/60 hover:border-primary/60 bg-background/60 transition-colors flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium truncate">{peer?.label || edge.target}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">{edge.relation} · {edge.label}</div>
+                      </div>
+                      <Badge variant="outline" className="font-mono text-[10px] shrink-0">
+                        {edge.weight.toFixed(2)}
+                      </Badge>
+                    </button>
+                  ))}
+                  {selectedConnections.length === 0 && (
+                    <div className="text-xs text-muted-foreground p-2">
+                      No relationships pass current similarity threshold ({minSimilarity.toFixed(2)}).
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <div className="text-xs text-muted-foreground">Click any node in the graph to inspect relationships.</div>
+          )}
+        </aside>
       </div>
     </div>
   );

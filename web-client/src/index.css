@@ -6,36 +6,36 @@
   :root {
     color-scheme: dark;
 
-    /* Spectra Astronomical Observatory Tokens (HSL) */
-    --background: 222 36% 5%;          /* #080A0F Base sky canvas */
-    --foreground: 210 24% 93%;         /* #E6ECF2 High-contrast readout text */
+    /* NASA Human Design System (HDS) & Aerospace Tokens */
+    --background: 0 0% 0%;             /* #000000 True Carbon Black void */
+    --foreground: 0 0% 100%;           /* #FFFFFF Spacesuit White */
 
-    --card: 218 27% 8%;                /* #0F131A Solid instrument HUD surface */
-    --card-foreground: 210 24% 93%;
+    --card: 240 7% 10%;                /* #17171B Carbon 90 surface */
+    --card-foreground: 0 0% 100%;
 
-    --popover: 215 25% 11%;            /* #151B24 Floating menus & modals */
-    --popover-foreground: 210 24% 93%;
+    --popover: 240 7% 10%;             /* #17171B Floating HUD panels */
+    --popover-foreground: 0 0% 100%;
 
-    --primary: 199 89% 60%;            /* #38BDF8 Precision telescope reticle cyan */
-    --primary-foreground: 222 36% 5%;
+    --primary: 212 100% 58%;           /* #288BFF NASA Electric Blue */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 215 25% 14%;          /* #1A222E Secondary controls */
-    --secondary-foreground: 210 24% 93%;
+    --secondary: 240 5% 19%;           /* #2E2E32 Carbon 80 control surface */
+    --secondary-foreground: 0 0% 100%;
 
-    --muted: 218 27% 12%;              /* Muted panels & inactive tabs */
-    --muted-foreground: 215 16% 65%;   /* #94A3B8 Units & secondary labels */
+    --muted: 240 5% 19%;               /* #2E2E32 Carbon 80 */
+    --muted-foreground: 0 0% 46%;      /* #767676 Carbon 50 labels */
 
-    --accent: 215 25% 14%;             /* Hover & focus state fill */
-    --accent-foreground: 210 24% 93%;
+    --accent: 212 100% 58%;            /* #288BFF NASA Electric Blue */
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 347 77% 50%;        /* Flag warnings & destructive actions */
-    --destructive-foreground: 210 24% 98%;
+    --destructive: 4 92% 59%;          /* #F64137 NASA Red */
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 218 23% 15%;             /* #1E2530 Hairline structural borders */
-    --input: 218 23% 15%;              /* Input borders */
-    --ring: 199 89% 60%;               /* Focus outline rings */
+    --border: 240 5% 19%;              /* #2E2E32 Carbon 80 hairline */
+    --input: 240 5% 19%;
+    --ring: 212 100% 58%;              /* NASA Blue focus ring */
 
-    --radius: 0.25rem;                 /* Crisp 4px instrument corners */
+    --radius: 0.25rem;                 /* 4px crisp aerospace instrument radius */
   }
 
   * {
@@ -46,6 +46,157 @@
     margin: 0;
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  body,
+  .font-mono,
+  table,
+  td,
+  th,
+  input,
+  select {
+    font-variant-numeric: tabular-nums;
   }
 }
+
+/* NASA Aerospace HUD & Human Design System Utility Classes */
+@layer components {
+  /* Translucent Aerospace HUD glass panels */
+  .nasa-hud-panel {
+    background-color: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* Subtle card elevation with carbon-80 border */
+  .nasa-card {
+    background-color: #17171B;
+    border: 1px solid #2E2E32;
+  }
+
+  /* Target corner reticle bracket overlay [ ] */
+  .nasa-reticle-bracket {
+    position: relative;
+  }
+  .nasa-reticle-bracket::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: -4px;
+    width: 8px;
+    height: 8px;
+    border-top: 2px solid #288BFF;
+    border-left: 2px solid #288BFF;
+  }
+  .nasa-reticle-bracket::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    right: -4px;
+    width: 8px;
+    height: 8px;
+    border-bottom: 2px solid #288BFF;
+    border-right: 2px solid #288BFF;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Hero Galaxy Plate — slow rotation + twinkling starfield             */
+  /* ------------------------------------------------------------------ */
+  /* Continuously rotating galaxy disk (240 s per revolution). */
+  .spx-galaxy-layer {
+    animation: spx-galaxy-spin 240s linear infinite;
+    transform-origin: 50% 50%;
+    will-change: transform;
+  }
+
+  /* Individual twinkling star (durations/delays injected per star). */
+  .spx-star {
+    position: absolute;
+    border-radius: 9999px;
+    background-color: #ffffff;
+    box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.75);
+    animation-name: spx-star-twinkle;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    will-change: opacity, transform;
+  }
+
+  .spx-nebula-veil {
+    animation: spx-nebula-drift 42s ease-in-out infinite;
+    will-change: opacity, transform;
+  }
+
+  /* Horizontally swipeable discovery carousel — hide native scrollbar. */
+  .spx-carousel-viewport {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .spx-carousel-viewport::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spx-galaxy-layer,
+    .spx-star,
+    .spx-nebula-veil {
+      animation: none !important;
+    }
+  }
+
+  /* NASA HDS Signature Primary Button with arrow */
+  .nasa-button-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 500;
+    color: #FFFFFF;
+    transition: all 0.2s ease;
+  }
+  .nasa-button-primary:hover .nasa-button-circle {
+    transform: translateX(4px);
+    background-color: #288BFF;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Landing-page motion primitives (galaxy rotation, star twinkle, nebula)  */
+/* ---------------------------------------------------------------------- */
+@keyframes spx-galaxy-spin {
+  from {
+    transform: rotate(0deg) scale(1.02);
+  }
+  to {
+    transform: rotate(360deg) scale(1.02);
+  }
+}
+
+@keyframes spx-star-twinkle {
+  0%,
+  100% {
+    opacity: var(--spx-twinkle-min, 0.15);
+    transform: translate(-50%, -50%) scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.25);
+  }
+}
+
+@keyframes spx-nebula-drift {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    opacity: 0.75;
+    transform: translate3d(-2%, 1.5%, 0) scale(1.06);
+  }
+}
+

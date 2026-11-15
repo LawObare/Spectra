@@ -1,0 +1,501 @@
+{
+  "spike": "S2",
+  "spec_anchors": [
+    "SPECIFICATION.md \u00a72.2",
+    "SPECIFICATION.md \u00a77",
+    "SPECIFICATION.md \u00a78"
+  ],
+  "generated_utc": "2026-11-09T18:32:50.944839+00:00",
+  "collection": "spherex_qr2",
+  "search_geometry": {
+    "fov_arcsec": 180.0,
+    "padding_factor": "sqrt(2) on half-diagonal",
+    "radius_arcsec": 127.2792,
+    "radius_deg": 0.03535534
+  },
+  "pass_gap_days": 30.0,
+  "targets": [
+    {
+      "name": "Barnard's Star",
+      "object_class": "M4V Red Dwarf",
+      "ra_deg": 269.44639,
+      "dec_deg": 4.76676,
+      "epoch": "2025.5",
+      "notes": "Check Bit 1 OVERFLOW saturation in D1-D3; motion 10.39\"/yr North.",
+      "query": {
+        "url": "https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr2&POS=circle+269.44639+4.76676+0.035355339059327376&RESPONSEFORMAT=VOTABLE",
+        "collection": "spherex_qr2",
+        "ra": 269.44639,
+        "dec": 4.76676,
+        "radius_deg": 0.035355339059327376,
+        "radius_arcsec": 127.27922061357856,
+        "status": "ok",
+        "http_bytes": 552933,
+        "error": null,
+        "elapsed_s": 3.824,
+        "n_rows": 253
+      },
+      "n_exposures": 253,
+      "bands_seen": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6"
+      ],
+      "coverage_matrix_epochs_x_bands": {
+        "pass_01": {
+          "D1": 24,
+          "D2": 23,
+          "D3": 18,
+          "D4": 25,
+          "D5": 22,
+          "D6": 18
+        },
+        "pass_02": {
+          "D1": 19,
+          "D2": 19,
+          "D3": 24,
+          "D4": 18,
+          "D5": 19,
+          "D6": 24
+        }
+      },
+      "band_totals_n_exp": {
+        "D1": 43,
+        "D2": 42,
+        "D3": 42,
+        "D4": 43,
+        "D5": 41,
+        "D6": 42
+      },
+      "epoch_totals_n_exp": {
+        "pass_01": 130,
+        "pass_02": 123
+      },
+      "total_exposures_in_passes": 253
+    },
+    {
+      "name": "WISE 0855-0714",
+      "object_class": "Y4 Sub-Brown Dwarf (T_eff ~250 K)",
+      "ra_deg": 133.73712,
+      "dec_deg": -7.24038,
+      "epoch": "2025.5",
+      "notes": "Check single-pass vs inverse-variance coadd SNR in D5/D6; faint <3.5 um.",
+      "query": {
+        "url": "https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr2&POS=circle+133.73712+-7.24038+0.035355339059327376&RESPONSEFORMAT=VOTABLE",
+        "collection": "spherex_qr2",
+        "ra": 133.73712,
+        "dec": -7.24038,
+        "radius_deg": 0.035355339059327376,
+        "radius_arcsec": 127.27922061357856,
+        "status": "ok",
+        "http_bytes": 563150,
+        "error": null,
+        "elapsed_s": 3.714,
+        "n_rows": 257
+      },
+      "n_exposures": 257,
+      "bands_seen": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6"
+      ],
+      "coverage_matrix_epochs_x_bands": {
+        "pass_01": {
+          "D1": 22,
+          "D2": 33,
+          "D3": 24,
+          "D4": 22,
+          "D5": 33,
+          "D6": 22
+        },
+        "pass_02": {
+          "D1": 15,
+          "D2": 15,
+          "D3": 21,
+          "D4": 14,
+          "D5": 15,
+          "D6": 21
+        }
+      },
+      "band_totals_n_exp": {
+        "D1": 37,
+        "D2": 48,
+        "D3": 45,
+        "D4": 36,
+        "D5": 48,
+        "D6": 43
+      },
+      "epoch_totals_n_exp": {
+        "pass_01": 156,
+        "pass_02": 101
+      },
+      "total_exposures_in_passes": 257
+    },
+    {
+      "name": "Epsilon Indi B",
+      "object_class": "T1+T6 Brown Dwarf Binary",
+      "ra_deg": 331.09566,
+      "dec_deg": -56.80031,
+      "epoch": "2025.5",
+      "notes": "Verify 1/cos(delta) corrected center hits target pixel; unresolved 0.7\" binary.",
+      "query": {
+        "url": "https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr2&POS=circle+331.09566+-56.80031+0.035355339059327376&RESPONSEFORMAT=VOTABLE",
+        "collection": "spherex_qr2",
+        "ra": 331.09566,
+        "dec": -56.80031,
+        "radius_deg": 0.035355339059327376,
+        "radius_arcsec": 127.27922061357856,
+        "status": "ok",
+        "http_bytes": 744172,
+        "error": null,
+        "elapsed_s": 4.564,
+        "n_rows": 344
+      },
+      "n_exposures": 344,
+      "bands_seen": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6"
+      ],
+      "coverage_matrix_epochs_x_bands": {
+        "pass_01": {
+          "D1": 26,
+          "D2": 64,
+          "D3": 52,
+          "D4": 25,
+          "D5": 51,
+          "D6": 48
+        },
+        "pass_02": {
+          "D1": 21,
+          "D2": 8,
+          "D3": 12,
+          "D4": 19,
+          "D5": 7,
+          "D6": 11
+        }
+      },
+      "band_totals_n_exp": {
+        "D1": 47,
+        "D2": 72,
+        "D3": 64,
+        "D4": 44,
+        "D5": 58,
+        "D6": 59
+      },
+      "epoch_totals_n_exp": {
+        "pass_01": 266,
+        "pass_02": 78
+      },
+      "total_exposures_in_passes": 344
+    },
+    {
+      "name": "RW Aurigae",
+      "object_class": "Classical T Tauri Star",
+      "ra_deg": 76.95647,
+      "dec_deg": 30.4013,
+      "epoch": "2025.5",
+      "notes": "Check multi-epoch coverage across D1-D6; stationary flashing monopole.",
+      "query": {
+        "url": "https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr2&POS=circle+76.95647+30.4013+0.035355339059327376&RESPONSEFORMAT=VOTABLE",
+        "collection": "spherex_qr2",
+        "ra": 76.95647,
+        "dec": 30.4013,
+        "radius_deg": 0.035355339059327376,
+        "radius_arcsec": 127.27922061357856,
+        "status": "ok",
+        "http_bytes": 496452,
+        "error": null,
+        "elapsed_s": 3.787,
+        "n_rows": 226
+      },
+      "n_exposures": 226,
+      "bands_seen": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6"
+      ],
+      "coverage_matrix_epochs_x_bands": {
+        "pass_01": {
+          "D1": 19,
+          "D2": 19,
+          "D3": 19,
+          "D4": 19,
+          "D5": 19,
+          "D6": 17
+        },
+        "pass_02": {
+          "D1": 19,
+          "D2": 19,
+          "D3": 19,
+          "D4": 19,
+          "D5": 19,
+          "D6": 19
+        }
+      },
+      "band_totals_n_exp": {
+        "D1": 38,
+        "D2": 38,
+        "D3": 38,
+        "D4": 38,
+        "D5": 38,
+        "D6": 36
+      },
+      "epoch_totals_n_exp": {
+        "pass_01": 112,
+        "pass_02": 114
+      },
+      "total_exposures_in_passes": 226
+    },
+    {
+      "name": "R Draconis",
+      "object_class": "Mira-type Pulsating AGB (P=245d)",
+      "ra_deg": 248.16773,
+      "dec_deg": 66.75504,
+      "epoch": "2025.5",
+      "notes": "8.61 deg from NEP; record dense MJD visit cadence.",
+      "query": {
+        "url": "https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr2&POS=circle+248.16773+66.75504+0.035355339059327376&RESPONSEFORMAT=VOTABLE",
+        "collection": "spherex_qr2",
+        "ra": 248.16773,
+        "dec": 66.75504,
+        "radius_deg": 0.035355339059327376,
+        "radius_arcsec": 127.27922061357856,
+        "status": "ok",
+        "http_bytes": 1186798,
+        "error": null,
+        "elapsed_s": 4.5,
+        "n_rows": 558
+      },
+      "n_exposures": 558,
+      "bands_seen": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6"
+      ],
+      "coverage_matrix_epochs_x_bands": {
+        "pass_01": {
+          "D1": 69,
+          "D2": 76,
+          "D3": 50,
+          "D4": 67,
+          "D5": 75,
+          "D6": 46
+        },
+        "pass_02": {
+          "D1": 24,
+          "D2": 19,
+          "D3": 45,
+          "D4": 24,
+          "D5": 19,
+          "D6": 44
+        }
+      },
+      "band_totals_n_exp": {
+        "D1": 93,
+        "D2": 95,
+        "D3": 95,
+        "D4": 91,
+        "D5": 94,
+        "D6": 90
+      },
+      "epoch_totals_n_exp": {
+        "pass_01": 383,
+        "pass_02": 175
+      },
+      "total_exposures_in_passes": 558
+    }
+  ],
+  "global_survey_passes": [
+    {
+      "pass_id": "pass_01",
+      "label": "Survey Pass 1",
+      "mjd_start": 60789.854522,
+      "mjd_end": 61053.415626,
+      "duration_days": 263.561104,
+      "n_exposures_total": 1047,
+      "n_targets_with_coverage": 5
+    },
+    {
+      "pass_id": "pass_02",
+      "label": "Survey Pass 2",
+      "mjd_start": 61091.718616,
+      "mjd_end": 61237.874234,
+      "duration_days": 146.155618,
+      "n_exposures_total": 591,
+      "n_targets_with_coverage": 5
+    }
+  ],
+  "saturation_audits": {
+    "Barnard's Star": {
+      "flag_bit": 1,
+      "flag_mask": "0x0002",
+      "bands_audited": [
+        "D1",
+        "D2",
+        "D3"
+      ],
+      "samples": [
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W35_1A/l2b-v20-2025-269/1/level2_2025W35_1A_0432_4D1_spx_l2b-v20-2025-269.fits",
+          "status": "ok",
+          "http_bytes": 5060160,
+          "overflow_fraction": 0.009259,
+          "overflow_pixel_count": 3,
+          "total_pixels_sampled": 324,
+          "signal_mean": 98.77766,
+          "variance_mean": 4.726608,
+          "snr_proxy": 45.4343,
+          "error": null,
+          "elapsed_s": 18.3,
+          "cutout_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W35_1A/l2b-v20-2025-269/1/level2_2025W35_1A_0432_4D1_spx_l2b-v20-2025-269.fits?center=269.44639,4.76676&size=0.03",
+          "n_hdus": 7,
+          "band": "D1",
+          "obs_id": "2025W35_1A_0432_4",
+          "t_min_mjd": 60914.21253
+        },
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W34_1B/l2b-v20-2025-267/2/level2_2025W34_1B_0557_1D2_spx_l2b-v20-2025-267.fits",
+          "status": "error",
+          "http_bytes": 0,
+          "overflow_fraction": null,
+          "overflow_pixel_count": null,
+          "total_pixels_sampled": null,
+          "signal_mean": null,
+          "variance_mean": null,
+          "snr_proxy": null,
+          "error": "HTTP Error 422: Unprocessable Content",
+          "band": "D2",
+          "obs_id": "2025W34_1B_0557_1",
+          "t_min_mjd": 60907.959983
+        },
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W33_2C/l2b-v20-2025-267/3/level2_2025W33_2C_0321_1D3_spx_l2b-v20-2025-267.fits",
+          "status": "ok",
+          "http_bytes": 5060160,
+          "overflow_fraction": 0.015432,
+          "overflow_pixel_count": 5,
+          "total_pixels_sampled": 324,
+          "signal_mean": NaN,
+          "variance_mean": NaN,
+          "snr_proxy": null,
+          "error": null,
+          "elapsed_s": 10.287,
+          "cutout_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W33_2C/l2b-v20-2025-267/3/level2_2025W33_2C_0321_1D3_spx_l2b-v20-2025-267.fits?center=269.44639,4.76676&size=0.03",
+          "n_hdus": 7,
+          "band": "D3",
+          "obs_id": "2025W33_2C_0321_1",
+          "t_min_mjd": 60902.864715
+        }
+      ],
+      "summary": "D1: overflow_fraction=0.009259 (3/324 px) | D3: overflow_fraction=0.015432 (5/324 px) \u2014 OVERFLOW pixels detected in audited D1-D3 cutouts."
+    }
+  },
+  "detection_depth_audits": {
+    "WISE 0855-0714": {
+      "bands_audited": [
+        "D5",
+        "D6"
+      ],
+      "method": "IRSA cutout central-pixel signal/variance proxy; inverse-variance coadd SNR estimated from per-exposure variance",
+      "samples": [
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/5/level2_2025W19_1B_0181_1D5_spx_l2b-v20-2025-241.fits",
+          "status": "ok",
+          "http_bytes": 5060160,
+          "overflow_fraction": 0.006173,
+          "overflow_pixel_count": 2,
+          "total_pixels_sampled": 324,
+          "signal_mean": 0.369799,
+          "variance_mean": 0.001743,
+          "snr_proxy": 8.8569,
+          "error": null,
+          "elapsed_s": 10.099,
+          "cutout_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/5/level2_2025W19_1B_0181_1D5_spx_l2b-v20-2025-241.fits?center=133.73712,-7.24038&size=0.03",
+          "n_hdus": 7,
+          "band": "D5",
+          "obs_id": "2025W19_1B_0181_1",
+          "t_min_mjd": 60801.106596
+        },
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/5/level2_2025W19_1B_0181_2D5_spx_l2b-v20-2025-241.fits",
+          "status": "ok",
+          "http_bytes": 5060160,
+          "overflow_fraction": 0.0,
+          "overflow_pixel_count": 0,
+          "total_pixels_sampled": 324,
+          "signal_mean": 0.33356,
+          "variance_mean": 0.001483,
+          "snr_proxy": 8.6622,
+          "error": null,
+          "elapsed_s": 15.699,
+          "cutout_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/5/level2_2025W19_1B_0181_2D5_spx_l2b-v20-2025-241.fits?center=133.73712,-7.24038&size=0.03",
+          "n_hdus": 7,
+          "band": "D5",
+          "obs_id": "2025W19_1B_0181_2",
+          "t_min_mjd": 60801.108089
+        },
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/6/level2_2025W19_1B_0116_1D6_spx_l2b-v20-2025-241.fits",
+          "status": "ok",
+          "http_bytes": 5060160,
+          "overflow_fraction": 0.0,
+          "overflow_pixel_count": 0,
+          "total_pixels_sampled": 324,
+          "signal_mean": 0.946514,
+          "variance_mean": 0.021455,
+          "snr_proxy": 6.4619,
+          "error": null,
+          "elapsed_s": 10.83,
+          "cutout_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/6/level2_2025W19_1B_0116_1D6_spx_l2b-v20-2025-241.fits?center=133.73712,-7.24038&size=0.03",
+          "n_hdus": 7,
+          "band": "D6",
+          "obs_id": "2025W19_1B_0116_1",
+          "t_min_mjd": 60800.700028
+        },
+        {
+          "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/6/level2_2025W19_1B_0116_2D6_spx_l2b-v20-2025-241.fits",
+          "status": "ok",
+          "http_bytes": 5060160,
+          "overflow_fraction": 0.0,
+          "overflow_pixel_count": 0,
+          "total_pixels_sampled": 324,
+          "signal_mean": 0.801791,
+          "variance_mean": 0.005744,
+          "snr_proxy": 10.5789,
+          "error": null,
+          "elapsed_s": 8.454,
+          "cutout_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W19_1B/l2b-v20-2025-241/6/level2_2025W19_1B_0116_2D6_spx_l2b-v20-2025-241.fits?center=133.73712,-7.24038&size=0.03",
+          "n_hdus": 7,
+          "band": "D6",
+          "obs_id": "2025W19_1B_0116_2",
+          "t_min_mjd": 60800.701521
+        }
+      ],
+      "summary": "D5: single-pass SNR proxy~8.8569, n=2, inverse-variance coadd proxy~12.3724; D6: single-pass SNR proxy~6.4619, n=2, inverse-variance coadd proxy~12.3655. D5/D6 are the relevant detection bands for this faint Y4 target; non-detection in single pass may be honest if SNR is low."
+    }
+  },
+  "errors": [],
+  "acceptance_criteria": {
+    "survey_passes_json_generated_from_real_mjd_clusters": true,
+    "coverage_matrix_epochs_x_6_bands_verified_for_5_targets": true,
+    "barnards_overflow_documented": true,
+    "wise_0855_detection_depth_documented": true,
+    "all_targets_queried_ok": true
+  }
+}
