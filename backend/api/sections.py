@@ -852,17 +852,25 @@ async def list_installed_sections(request: Request) -> dict[str, Any]:
             "sections": disk_sections,
             "status": "ready" if disk_sections else "offline",
         }
-    if "pytest" not in sys.modules and not _BENCHMARKS_SEEDED_MARKER.exists():
-        await ensure_benchmarks_preinstalled(pool)
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT section_id, label, ra, dec, fov_arcsec, status, epochs, bands,
-                   height, width, source_badge, size_bytes, error_message, created_at, updated_at
-            FROM installed_sections
-            ORDER BY updated_at DESC
-            """
-        )
+    try:
+        if "pytest" not in sys.modules and not _BENCHMARKS_SEEDED_MARKER.exists():
+            await ensure_benchmarks_preinstalled(pool)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT section_id, label, ra, dec, fov_arcsec, status, epochs, bands,
+                       height, width, source_badge, size_bytes, error_message, created_at, updated_at
+                FROM installed_sections
+                ORDER BY updated_at DESC
+                """
+            )
+    except Exception:
+        logger.exception("Failed listing installed sections from PostgreSQL; using bundled sections")
+        disk_sections = await asyncio.to_thread(_load_disk_benchmark_sections)
+        return {
+            "sections": disk_sections,
+            "status": "ready" if disk_sections else "offline",
+        }
     sections = [
         {
             "section_id": str(r["section_id"]),
