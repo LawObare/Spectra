@@ -3,6 +3,8 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useTelemetryStore, type SpectralChannel } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
+import { ActiveCaseBanner } from '../components/ActiveCaseBanner';
+import { CutoutProbeMinimap } from '../components/CutoutProbeMinimap';
 import {
   InstalledCutoutsModal,
   UseCurrentSelectedButton,
@@ -18,10 +20,6 @@ import {
 /**
  * Spectra Tab 3: Spectrophotometric Lab
  * SPECIFICATION.md §6.3.3 — 102-channel WCS-WAVE workbench (0.75–5.00 µm).
- * Capabilities: 60 FPS uPlot chart, D1–D6 super-bands, ±1σ variance bars,
- * FLAGS-as-amber-hollow-triangles, MJD coloring (R Draconis), accessible table,
- * 2-component NNLS spectral unmixing (Epsilon Indi B), galaxy photo-z χ²(z)
- * solver with Planck 2018 cosmology and interactive rest-frame line rulers.
  */
 
 const DETECTORS: Array<{ id: string; min: number; max: number; color: string }> = [
@@ -69,12 +67,10 @@ function flagTooltip(flag: number): string {
   return names.length ? names.join(' | ') : `FLAGS=0x${flag.toString(16)}`;
 }
 
-/** Solve 2-component NNLS: min_{a,b>=0} sum(((y - a*t1 - b*t2)/s)^2). */
 function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: number; b: number; chi2Red: number } {
   let s11 = 0, s22 = 0, s12 = 0, sy1 = 0, sy2 = 0;
   let validCount = 0;
-  const n = y.length;
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < y.length; i++) {
     if (!Number.isFinite(y[i]) || !Number.isFinite(s[i])) continue;
     validCount += 1;
     const w = 1 / Math.max(s[i] * s[i], 1e-12);
@@ -88,14 +84,13 @@ function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: 
   const det = s11 * s22 - s12 * s12;
   let a = det !== 0 ? (s22 * sy1 - s12 * sy2) / det : 0;
   let b = det !== 0 ? (s11 * sy2 - s12 * sy1) / det : 0;
-  // enforce non-negativity by projecting to feasible candidates
   const candidates: Array<[number, number]> = [[Math.max(0, a), Math.max(0, b)], [0, 0]];
-  const a0 = sy1 / Math.max(s11, 1e-12); candidates.push([Math.max(0, a0), 0]);
-  const b0 = sy2 / Math.max(s22, 1e-12); candidates.push([0, Math.max(0, b0)]);
+  candidates.push([Math.max(0, sy1 / Math.max(s11, 1e-12)), 0]);
+  candidates.push([0, Math.max(0, sy2 / Math.max(s22, 1e-12))]);
   let best = { a: 0, b: 0, chi2: Infinity };
   for (const [ca, cb] of candidates) {
     let chi2 = 0;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < y.length; i++) {
       if (!Number.isFinite(y[i]) || !Number.isFinite(s[i])) continue;
       const r = (y[i] - ca * t1[i] - cb * t2[i]) / Math.max(s[i], 1e-12);
       chi2 += r * r;
@@ -103,20 +98,22 @@ function solveNnls2(y: number[], t1: number[], t2: number[], s: number[]): { a: 
     if (chi2 < best.chi2) best = { a: ca, b: cb, chi2 };
   }
   a = best.a; b = best.b;
-  const dof = Math.max(1, validCount - 2);
-  return { a, b, chi2Red: best.chi2 / dof };
+  return { a, b, chi2Red: best.chi2 / Math.max(1, validCount - 2) };
 }
 
 type PzPoint = { z: number; chi2: number; p: number; lookbackGyr: number; dCMpc: number };
 type PhotoZResult = { grid: PzPoint[]; bestZ: number | null };
+type SpectralFidelity = 'true_102_ch' | 'broadband_6_interpolated';
+type ToolTab = 'match' | 'redshift' | 'binary';
 
 interface CachedExtractedSpectrum {
   channels: SpectralChannel[];
   badge: string;
   status: string;
+  fidelity: SpectralFidelity;
 }
 
-const MAX_SPECTRUM_CACHE_ENTRIES = 16;
+const MAX_SPECTRUM_CACHE_ENTRIES = 24;
 const SPECTRUM_MEM_CACHE = new Map<string, CachedExtractedSpectrum>();
 
 function getCachedSpectrum(key: string): CachedExtractedSpectrum | null {
@@ -128,21 +125,17 @@ function getCachedSpectrum(key: string): CachedExtractedSpectrum | null {
 }
 
 function setCachedSpectrum(key: string, entry: CachedExtractedSpectrum): void {
-  if (SPECTRUM_MEM_CACHE.has(key)) {
-    SPECTRUM_MEM_CACHE.delete(key);
-  } else if (SPECTRUM_MEM_CACHE.size >= MAX_SPECTRUM_CACHE_ENTRIES) {
+  if (SPECTRUM_MEM_CACHE.has(key)) SPECTRUM_MEM_CACHE.delete(key);
+  else if (SPECTRUM_MEM_CACHE.size >= MAX_SPECTRUM_CACHE_ENTRIES) {
     const oldestKey = SPECTRUM_MEM_CACHE.keys().next().value;
-    if (oldestKey !== undefined) {
-      SPECTRUM_MEM_CACHE.delete(oldestKey);
-    }
+    if (oldestKey !== undefined) SPECTRUM_MEM_CACHE.delete(oldestKey);
   }
   SPECTRUM_MEM_CACHE.set(key, entry);
 }
 
 function planckCosmo(z: number): { lookbackGyr: number; dCMpc: number } {
-  // Planck 2018: H0=67.4, Ωm=0.315, ΩΛ=0.685 (flat)
   const H0 = 67.4, Om = 0.315, Ol = 0.685;
-  const c = 299792.458; // km/s
+  const c = 299792.458;
   const Ez = (zp: number) => Math.sqrt(Om * Math.pow(1 + zp, 3) + Ol);
   const steps = Math.max(8, Math.ceil(z * 80));
   let dc = 0, tl = 0;
@@ -153,17 +146,14 @@ function planckCosmo(z: number): { lookbackGyr: number; dCMpc: number } {
     dc += (c / H0) * invE * dz;
     tl += invE * dz / (1 + z1);
   }
-  const tH = 9.778 / (H0 / 100); // Gyr*h? use 977.8/H0 Gyr
-  const lookbackGyr = (977.8 / H0) * tl;
-  return { lookbackGyr, dCMpc: dc };
+  return { lookbackGyr: (977.8 / H0) * tl, dCMpc: dc };
 }
 
-function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { grid: PzPoint[]; bestZ: number | null } {
-  const valid = lambdas.map((wave, i) => ({ wave, flux: flux[i], sigma: sigma[i] }))
-    .filter((point) => Number.isFinite(point.wave) && Number.isFinite(point.flux) && Number.isFinite(point.sigma));
-  if (valid.length < 5) {
-    return { grid: [], bestZ: null };
-  }
+function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): PhotoZResult {
+  const valid = lambdas
+    .map((wave, i) => ({ wave, flux: flux[i], sigma: sigma[i] }))
+    .filter((pt) => Number.isFinite(pt.wave) && Number.isFinite(pt.flux) && Number.isFinite(pt.sigma));
+  if (valid.length < 5) return { grid: [], bestZ: null };
   const grid: PzPoint[] = [];
   let best: PzPoint | null = null;
   for (let zi = 0; zi <= 250; zi++) {
@@ -171,12 +161,11 @@ function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { gr
     let chi2 = 0;
     for (const point of valid) {
       const rest = point.wave / (1 + z);
-      // simple emission-line + continuum template proxy
       let model = 8 * Math.exp(-0.3 * Math.max(0, rest - 0.8));
-      model += 10 * Math.exp(-Math.pow((rest - 0.6563) / 0.03, 2)); // Hα
-      model += 7 * Math.exp(-Math.pow((rest - 0.5007) / 0.025, 2)); // [O III]
-      model += 4 * Math.exp(-Math.pow((rest - 1.282) / 0.04, 2)); // Paβ
-      model += 3 * Math.exp(-Math.pow((rest - 1.6) / 0.08, 2)); // H-bump
+      model += 10 * Math.exp(-Math.pow((rest - 0.6563) / 0.03, 2));
+      model += 7 * Math.exp(-Math.pow((rest - 0.5007) / 0.025, 2));
+      model += 4 * Math.exp(-Math.pow((rest - 1.282) / 0.04, 2));
+      model += 3 * Math.exp(-Math.pow((rest - 1.6) / 0.08, 2));
       const r = (point.flux - model) / Math.max(point.sigma, 1e-6);
       chi2 += r * r;
     }
@@ -187,23 +176,81 @@ function computePhotoZ(lambdas: number[], flux: number[], sigma: number[]): { gr
   }
   const minChi2 = best ? best.chi2 : grid[0].chi2;
   let sumP = 0;
-  for (const p of grid) { p.p = Math.exp(-0.5 * (p.chi2 - minChi2)); sumP += p.p; }
+  for (const p of grid) {
+    p.p = Math.exp(-0.5 * (p.chi2 - minChi2));
+    sumP += p.p;
+  }
   for (const p of grid) p.p /= Math.max(sumP, 1e-12);
   return { grid, bestZ: best ? best.z : 0 };
 }
 
+function payloadToChannels(data: any): SpectralChannel[] {
+  const convFactor = 9.0229788e-4;
+  return data.wavelengths_um.map((lam: number, i: number) => ({
+    channel: i + 1,
+    detector: detectorFor(lam),
+    wavelengthUm: lam,
+    uncertainty: Number((Math.sqrt(Math.max(0, data.variance_jy2?.[i] ?? 0)) / convFactor).toFixed(5)),
+    flag: data.flags?.[i] ?? 0,
+    mjd: data.mjd_per_channel?.[i],
+    fluxMjySr: data.channel_coverage?.[i] ? Number((data.flux_jy[i] / convFactor).toFixed(5)) : Number.NaN,
+  }));
+}
+
+function inferFidelity(data: any): SpectralFidelity {
+  const raw = data?.provenance?.spectral_fidelity;
+  if (raw === 'true_102_ch') return 'true_102_ch';
+  const method = String(data?.provenance?.method || '').toLowerCase();
+  if (method.includes('hdu 5') || method.includes('wcs-wave')) return 'true_102_ch';
+  return 'broadband_6_interpolated';
+}
+
 export const SpectrophotometricLab: React.FC = () => {
   const {
-    ra, dec, activeTargetName, probedPixel, probeSkyPosition, activeSpectrum, activeEpochIndex,
-    isSpectralBlinkSynced, setSpectralBlinkSynced, manualRedshiftZ, setManualRedshiftZ, loadedCutout,
-    setActiveSpectrum, setSpectrumLoading, colorPalette, currentSelectedSection,
+    ra,
+    dec,
+    fovArcsec,
+    activeTargetName,
+    probedPixel,
+    setProbedPixel,
+    probeSkyPosition,
+    setProbeSkyPosition,
+    activeSpectrum,
+    activeEpochIndex,
+    isSpectralBlinkSynced,
+    setSpectralBlinkSynced,
+    manualRedshiftZ,
+    setManualRedshiftZ,
+    loadedCutout,
+    setActiveSpectrum,
+    setSpectrumLoading,
+    colorPalette,
+    currentSelectedSection,
+    setCurrentSelectedSection,
+    setCaseFindings,
   } = useTelemetryStore();
-  const { setZ, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
+
+  const {
+    setTab,
+    setZ,
+    setRa: setUrlRa,
+    setDec: setUrlDec,
+    setFov: setUrlFov,
+    setProbeX: setUrlProbeX,
+    setProbeY: setUrlProbeY,
+  } = useSpectraUrlState();
+
   const { installedSections } = useInstalledSectionState();
   const [spectrumSourceBadge, setSpectrumSourceBadge] = useState('[Loading Archive Spectrum…]');
   const [spectrumStatus, setSpectrumStatus] = useState('');
+  const [spectralFidelity, setSpectralFidelity] = useState<SpectralFidelity>('broadband_6_interpolated');
   const [forceLiveCoordKey, setForceLiveCoordKey] = useState<string | null>(null);
   const [isCutoutBrowserOpen, setIsCutoutBrowserOpen] = useState(false);
+
+  const [overlayEpoch, setOverlayEpoch] = useState(false);
+  const [epochCompareChannels, setEpochCompareChannels] = useState<SpectralChannel[]>([]);
+  const [activeToolTab, setActiveToolTab] = useState<ToolTab>('match');
+  const [selectedMatchIdx, setSelectedMatchIdx] = useState<number | null>(0);
 
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
@@ -215,7 +262,8 @@ export const SpectrophotometricLab: React.FC = () => {
   );
   const activeInstalledSection = useMemo(() => {
     const position = probeSkyPosition ?? { ra, dec };
-    return findMatchingSection(readyInstalledSections, position.ra, position.dec);
+    return findMatchingSection(readyInstalledSections, position.ra, position.dec) ||
+      findMatchingSection(readyInstalledSections, ra, dec);
   }, [readyInstalledSections, probeSkyPosition, ra, dec]);
 
   const handleSelectInstalledSection = useCallback(
@@ -224,6 +272,7 @@ export const SpectrophotometricLab: React.FC = () => {
       setUrlRa(Number(chosen.ra.toFixed(5)));
       setUrlDec(Number(chosen.dec.toFixed(5)));
       setUrlFov(Math.round(chosen.fov_arcsec || 300));
+      setCurrentSelectedSection(chosen);
       useTelemetryStore.setState({
         ra: chosen.ra,
         dec: chosen.dec,
@@ -231,7 +280,18 @@ export const SpectrophotometricLab: React.FC = () => {
         probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
       });
     },
-    [setUrlRa, setUrlDec, setUrlFov]
+    [setUrlRa, setUrlDec, setUrlFov, setCurrentSelectedSection]
+  );
+
+  const handleMinimapPixelSelect = useCallback(
+    (px: number, py: number, skyCoord: { ra: number; dec: number }) => {
+      setForceLiveCoordKey(null);
+      setProbedPixel({ x: px, y: py });
+      setProbeSkyPosition(skyCoord);
+      setUrlProbeX(px);
+      setUrlProbeY(py);
+    },
+    [setProbedPixel, setProbeSkyPosition, setUrlProbeX, setUrlProbeY]
   );
 
   const handleCloseCutoutBrowser = useCallback(() => setIsCutoutBrowserOpen(false), []);
@@ -242,23 +302,28 @@ export const SpectrophotometricLab: React.FC = () => {
     }
   }, [installedSections.length]);
 
-  // Live / Installed 102-Channel WCS-WAVE Hyperspectral Fetch (SPECIFICATION.md §4.1 Pipeline 2, §5.3.1)
+  // Fetch main 102-channel / section spectrum
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     const fetchLiveSpectrum = async () => {
       const position = probeSkyPosition ?? { ra, dec };
       const coordKey = `${position.ra.toFixed(5)},${position.dec.toFixed(5)}`;
-      const quickMatch = findMatchingSection(readyInstalledSections, position.ra, position.dec);
-      const buildCacheKey = (sec: { section_id: string; updated_at?: string | null; size_bytes?: number }) =>
-        `${sec.section_id}:${sec.updated_at || sec.size_bytes || ''}:${probedPixel?.x ?? ''}:${probedPixel?.y ?? ''}:${isSpectralBlinkSynced ? activeEpochIndex : ''}`;
+      const isForcedFullRes = forceLiveCoordKey === coordKey;
+      const quickMatch = !isForcedFullRes
+        ? findMatchingSection(readyInstalledSections, position.ra, position.dec) ||
+          findMatchingSection(readyInstalledSections, ra, dec)
+        : null;
+      const buildCacheKey = (id: string, rev: string | number) =>
+        `${id}:${rev}:${probedPixel?.x ?? ''}:${probedPixel?.y ?? ''}:${isSpectralBlinkSynced ? activeEpochIndex : ''}:${isForcedFullRes ? 'full' : 'std'}`;
 
       if (quickMatch) {
-        const cached = getCachedSpectrum(buildCacheKey(quickMatch));
+        const cached = getCachedSpectrum(buildCacheKey(quickMatch.section_id, quickMatch.updated_at || quickMatch.size_bytes || ''));
         if (cached) {
           setActiveSpectrum(cached.channels);
           setSpectrumSourceBadge(cached.badge);
           setSpectrumStatus(cached.status);
+          setSpectralFidelity(cached.fidelity);
           setSpectrumLoading(false);
           return;
         }
@@ -274,14 +339,20 @@ export const SpectrophotometricLab: React.FC = () => {
         }
         if (cancelled) return;
 
-        const matched = findMatchingSection(sections, position.ra, position.dec);
-        const matchedKey = matched ? buildCacheKey(matched) : null;
+        const matched = !isForcedFullRes
+          ? findMatchingSection(sections, position.ra, position.dec) ||
+            findMatchingSection(sections, ra, dec)
+          : null;
+        const matchedKey = matched
+          ? buildCacheKey(matched.section_id, matched.updated_at || matched.size_bytes || '')
+          : null;
         if (matched && matchedKey) {
           const cached = getCachedSpectrum(matchedKey);
           if (cached) {
             setActiveSpectrum(cached.channels);
             setSpectrumSourceBadge(cached.badge);
             setSpectrumStatus(cached.status);
+            setSpectralFidelity(cached.fidelity);
             setSpectrumLoading(false);
             return;
           }
@@ -289,7 +360,7 @@ export const SpectrophotometricLab: React.FC = () => {
 
         let data: any;
         if (matched) {
-          setSpectrumStatus(`Extracting 102-ch spectrum from installed "${matched.label}"…`);
+          setSpectrumStatus(`Sampling "${matched.label}" at px (${probedPixel?.x ?? 24},${probedPixel?.y ?? 24})…`);
           const qs = new URLSearchParams({ normalize: 'false' });
           if (probedPixel) {
             qs.set('px', String(probedPixel.x));
@@ -314,12 +385,12 @@ export const SpectrophotometricLab: React.FC = () => {
           }
           if (!data) throw new Error('Installed spectrum unavailable');
         } else {
-          if (forceLiveCoordKey !== coordKey) {
-            setSpectrumSourceBadge('[No Archive Data]');
-            setSpectrumStatus('No installed section at this coordinate — pick an installed section or click Query Live');
+          if (!isForcedFullRes) {
+            setSpectrumSourceBadge('[No Installed Cutout]');
+            setSpectrumStatus('No installed cutout covers this spot — select a cutout or extract live from IRSA.');
             return;
           }
-          setSpectrumStatus('Querying live IRSA HDU 6 spectrum (sampling D1–D6 exposures)…');
+          setSpectrumStatus('Extracting true 102-channel IRSA HDU 6 WCS-WAVE spectrum…');
           const queued = await fetch('/api/spectrum/tasks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -333,9 +404,12 @@ export const SpectrophotometricLab: React.FC = () => {
             const poll = await fetch(`/api/spectrum/tasks/${taskId}`, { signal: controller.signal });
             if (!poll.ok) throw new Error(`HTTP ${poll.status}`);
             const task = await poll.json();
-            setSpectrumStatus(task.message || 'Extracting archive spectrum');
+            setSpectrumStatus(task.message || 'Extracting HDU 6 archive spectrum');
             if (task.status === 'error') throw new Error(task.message || 'Live spectrum unavailable');
-            if (task.status === 'complete') { data = task.result; break; }
+            if (task.status === 'complete') {
+              data = task.result;
+              break;
+            }
           }
         }
         if (cancelled || !data) return;
@@ -345,28 +419,29 @@ export const SpectrophotometricLab: React.FC = () => {
           (/^\[Installed\]/.test(sourceBadge) ||
             /^\[IRSA Live \(.+\)\]$/.test(sourceBadge) ||
             /^\[NASA Benchmark/.test(sourceBadge));
-        if (!cancelled && hasHonestSource && Array.isArray(data.wavelengths_um) && data.wavelengths_um.length >= 102 && Array.isArray(data.flux_jy) && data.flux_jy.length >= 102) {
-          const convFactor = 9.0229788e-4; // Jy per (MJy/sr) for 6.2" pixel
-          const channels: SpectralChannel[] = data.wavelengths_um.map((lam: number, i: number) => ({
-            channel: i + 1,
-            detector: detectorFor(lam),
-            wavelengthUm: lam,
-            uncertainty: Number((Math.sqrt(Math.max(0, data.variance_jy2?.[i] ?? 0)) / convFactor).toFixed(5)),
-            flag: data.flags?.[i] ?? 0,
-            mjd: data.mjd_per_channel?.[i],
-            fluxMjySr: data.channel_coverage?.[i] ? Number((data.flux_jy[i] / convFactor).toFixed(5)) : Number.NaN,
-          }));
+        if (
+          !cancelled &&
+          hasHonestSource &&
+          Array.isArray(data.wavelengths_um) &&
+          data.wavelengths_um.length >= 102 &&
+          Array.isArray(data.flux_jy) &&
+          data.flux_jy.length >= 102
+        ) {
+          const channels = payloadToChannels(data);
+          const fidelity = inferFidelity(data);
           const statusText = `${data.provenance.covered_channels}/${data.provenance.channel_count} channels covered`;
           if (matchedKey) {
             setCachedSpectrum(matchedKey, {
               channels,
               badge: sourceBadge as string,
               status: statusText,
+              fidelity,
             });
           }
           setActiveSpectrum(channels);
           setSpectrumSourceBadge(sourceBadge as string);
           setSpectrumStatus(statusText);
+          setSpectralFidelity(fidelity);
         }
       } catch (err) {
         if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
@@ -377,7 +452,7 @@ export const SpectrophotometricLab: React.FC = () => {
         if (!cancelled) setSpectrumLoading(false);
       }
     };
-    fetchLiveSpectrum();
+    void fetchLiveSpectrum();
     return () => {
       cancelled = true;
       controller.abort();
@@ -397,13 +472,46 @@ export const SpectrophotometricLab: React.FC = () => {
     setSpectrumLoading,
   ]);
 
+  // Fetch single-epoch comparison curve when overlayEpoch is toggled on
+  useEffect(() => {
+    if (!overlayEpoch || isSpectralBlinkSynced || !activeInstalledSection) {
+      setEpochCompareChannels([]);
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    const qs = new URLSearchParams({
+      normalize: 'false',
+      epoch: String(activeEpochIndex),
+    });
+    if (probedPixel) {
+      qs.set('px', String(probedPixel.x));
+      qs.set('py', String(probedPixel.y));
+    }
+    fetch(`/api/sections/${activeInstalledSection.section_id}/spectrum?${qs.toString()}`, {
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data || !Array.isArray(data.wavelengths_um)) return;
+        setEpochCompareChannels(payloadToChannels(data));
+      })
+      .catch(() => {
+        if (!cancelled) setEpochCompareChannels([]);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [overlayEpoch, isSpectralBlinkSynced, activeInstalledSection, activeEpochIndex, probedPixel?.x, probedPixel?.y]);
+
   const [colorByMjd, setColorByMjd] = useState(false);
   const [flagTip, setFlagTip] = useState<{ x: number; y: number; text: string } | null>(null);
   const [similarMatches, setSimilarMatches] = useState<
     Array<{ id?: string; name: string; spectral_class: string; similarity: number; flux_curve: number[] }>
   >([]);
   const [isFindingSimilar, setIsFindingSimilar] = useState(false);
-  const [similarStatus, setSimilarStatus] = useState('Awaiting archive spectrum for SIMD matching');
+  const [similarStatus, setSimilarStatus] = useState('Awaiting spectrum for template match');
 
   const zRef = useRef(manualRedshiftZ);
   const chartRef = useRef<HTMLDivElement | null>(null);
@@ -413,7 +521,9 @@ export const SpectrophotometricLab: React.FC = () => {
   const specMjdRef = useRef<number[]>([]);
   const mjdRangeRef = useRef<[number, number] | null>(null);
 
-  useEffect(() => { zRef.current = manualRedshiftZ; }, [manualRedshiftZ]);
+  useEffect(() => {
+    zRef.current = manualRedshiftZ;
+  }, [manualRedshiftZ]);
 
   const epochIndex = isSpectralBlinkSynced ? activeEpochIndex : 0;
   const mjd = useMemo(() => {
@@ -425,14 +535,17 @@ export const SpectrophotometricLab: React.FC = () => {
     () => (activeSpectrum && activeSpectrum.length >= 102 ? activeSpectrum.slice(0, 102) : []),
     [activeSpectrum]
   );
-  useEffect(() => { spectrumRef.current = spectrum; }, [spectrum]);
+  useEffect(() => {
+    spectrumRef.current = spectrum;
+  }, [spectrum]);
 
+  // Run SIMD spectral similarity matching
   useEffect(() => {
     let cancelled = false;
     const fetchSimilar = async () => {
       if (!spectrum || spectrum.length < 102) {
         setSimilarMatches([]);
-        setSimilarStatus('Install a section or query live spectrum for SIMD matching');
+        setSimilarStatus('Select a cutout or extract live spectrum to match templates');
         return;
       }
       const finiteIdx: number[] = [];
@@ -441,17 +554,19 @@ export const SpectrophotometricLab: React.FC = () => {
       }
       if (finiteIdx.length < 17) {
         setSimilarMatches([]);
-        setSimilarStatus(`Only ${finiteIdx.length}/102 channels covered at px (${probedPixel?.x ?? 24},${probedPixel?.y ?? 24}) — need ≥17 for SIMD match`);
+        setSimilarStatus(`Only ${finiteIdx.length}/102 channels covered here — need ≥17 for match`);
         return;
       }
       const fluxArr = spectrum.map((c, idx) => {
         if (Number.isFinite(c.fluxMjySr)) return c.fluxMjySr;
-        // Linearly interpolate / clamp missing bands so sparse gaps don't break 102-pt cosine similarity
         let left = -1;
         let right = -1;
         for (const fi of finiteIdx) {
           if (fi < idx) left = fi;
-          else if (fi > idx) { right = fi; break; }
+          else if (fi > idx) {
+            right = fi;
+            break;
+          }
         }
         if (left >= 0 && right >= 0) {
           const t = (idx - left) / (right - left);
@@ -460,7 +575,7 @@ export const SpectrophotometricLab: React.FC = () => {
         return spectrum[left >= 0 ? left : right].fluxMjySr;
       });
       setIsFindingSimilar(true);
-      setSimilarStatus('Evaluating SIMD cosine similarity...');
+      setSimilarStatus('Matching against spectral library…');
       try {
         const res = await fetch('/api/subjects/similar', {
           method: 'POST',
@@ -482,57 +597,171 @@ export const SpectrophotometricLab: React.FC = () => {
         if (!cancelled) setIsFindingSimilar(false);
       }
     };
-    fetchSimilar();
+    void fetchSimilar();
     return () => {
       cancelled = true;
     };
   }, [spectrum, spectrumSourceBadge, probedPixel?.x, probedPixel?.y]);
 
-  const isRDraconis = (activeTargetName || '').toLowerCase().includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
-  const isEpsInd = (activeTargetName || '').toLowerCase().includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
+  const isRDraconis =
+    (activeTargetName || '').toLowerCase().includes('r draconis') || Math.abs(ra - 248.16773) < 0.2;
+  const isEpsInd =
+    (activeTargetName || '').toLowerCase().includes('epsilon indi') || Math.abs(ra - 331.09566) < 0.2;
 
   const perChannelMjd = useMemo(
-    () => spectrum.map((channel) => (typeof channel.mjd === 'number' && channel.mjd > 0 ? channel.mjd : Number.NaN)),
+    () =>
+      spectrum.map((channel) =>
+        typeof channel.mjd === 'number' && channel.mjd > 0 ? channel.mjd : Number.NaN
+      ),
     [spectrum]
   );
   const hasFiniteMjds = useMemo(() => perChannelMjd.some(Number.isFinite), [perChannelMjd]);
-  useEffect(() => { colorByMjdRef.current = colorByMjd && isRDraconis && hasFiniteMjds; }, [colorByMjd, isRDraconis, hasFiniteMjds]);
-  useEffect(() => { specMjdRef.current = perChannelMjd; }, [perChannelMjd]);
+  useEffect(() => {
+    colorByMjdRef.current = colorByMjd && isRDraconis && hasFiniteMjds;
+  }, [colorByMjd, isRDraconis, hasFiniteMjds]);
+  useEffect(() => {
+    specMjdRef.current = perChannelMjd;
+  }, [perChannelMjd]);
   useEffect(() => {
     const arr = perChannelMjd.filter(Number.isFinite);
     mjdRangeRef.current = arr.length ? [Math.min(...arr), Math.max(...arr)] : null;
   }, [perChannelMjd]);
-  useEffect(() => { if (plotRef.current) plotRef.current.redraw(false); }, [colorByMjd, perChannelMjd]);
+  useEffect(() => {
+    if (plotRef.current) plotRef.current.redraw(false);
+  }, [colorByMjd, perChannelMjd]);
+
+  // Scale selected template match onto observed flux range for visual comparison
+  const scaledTemplateOverlay = useMemo<(number | null)[] | null>(() => {
+    if (selectedMatchIdx === null || !similarMatches[selectedMatchIdx] || spectrum.length < 102) {
+      return null;
+    }
+    const curve = similarMatches[selectedMatchIdx].flux_curve;
+    if (!Array.isArray(curve) || curve.length < 102) return null;
+    const obsValid = spectrum.map((c) => c.fluxMjySr).filter(Number.isFinite);
+    const tplValid = curve.slice(0, 102).filter(Number.isFinite);
+    if (obsValid.length === 0 || tplValid.length === 0) return null;
+    const obsMed = obsValid.reduce((a, b) => a + Math.abs(b), 0) / obsValid.length;
+    const tplMed = tplValid.reduce((a, b) => a + Math.abs(b), 0) / tplValid.length;
+    const gain = tplMed > 1e-12 ? obsMed / tplMed : 1;
+    return curve.slice(0, 102).map((v) => (Number.isFinite(v) ? v * gain : null));
+  }, [selectedMatchIdx, similarMatches, spectrum]);
 
   const data = useMemo((): uPlot.AlignedData => {
     const x = spectrum.map((c) => c.wavelengthUm);
     const y = spectrum.map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null));
-    return [x, y];
+    const yEpoch =
+      overlayEpoch && !isSpectralBlinkSynced && epochCompareChannels.length >= 102
+        ? epochCompareChannels.slice(0, 102).map((c) => (Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : null))
+        : x.map(() => null);
+    const yTemplate = scaledTemplateOverlay || x.map(() => null);
+    return [x, y, yEpoch, yTemplate];
+  }, [spectrum, overlayEpoch, isSpectralBlinkSynced, epochCompareChannels, scaledTemplateOverlay]);
+
+  const epochDeltaPct = useMemo(() => {
+    if (!overlayEpoch || isSpectralBlinkSynced || epochCompareChannels.length < 102 || spectrum.length < 102) {
+      return null;
+    }
+    const pairs: Array<{ base: number; ep: number }> = [];
+    for (let i = 0; i < 102; i++) {
+      const a = spectrum[i].fluxMjySr;
+      const b = epochCompareChannels[i].fluxMjySr;
+      if (Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) > 1e-6) {
+        pairs.push({ base: a, ep: b });
+      }
+    }
+    if (pairs.length < 5) return null;
+    const meanBase = pairs.reduce((s, p) => s + p.base, 0) / pairs.length;
+    const meanEp = pairs.reduce((s, p) => s + p.ep, 0) / pairs.length;
+    return Math.abs(meanBase) > 1e-9 ? ((meanEp - meanBase) / Math.abs(meanBase)) * 100 : null;
+  }, [overlayEpoch, isSpectralBlinkSynced, epochCompareChannels, spectrum]);
+
+  // Summary facts for Hero Identity Card
+  const spectrumSummary = useMemo(() => {
+    const finite = spectrum.filter((c) => Number.isFinite(c.fluxMjySr));
+    const flaggedCount = spectrum.filter((c) => c.flag !== 0).length;
+    if (finite.length === 0) {
+      return { coveredCount: 0, flaggedCount: 0, peakWaveUm: null as number | null, meanFlux: null as number | null };
+    }
+    let peak = finite[0];
+    let sum = 0;
+    for (const c of finite) {
+      sum += c.fluxMjySr;
+      if (c.fluxMjySr > peak.fluxMjySr) peak = c;
+    }
+    return {
+      coveredCount: finite.length,
+      flaggedCount,
+      peakWaveUm: peak.wavelengthUm,
+      meanFlux: sum / finite.length,
+    };
   }, [spectrum]);
+
+  const topMatch = similarMatches[0] || null;
+  const looksExtragalactic = useMemo(() => {
+    const cls = `${topMatch?.spectral_class || ''} ${topMatch?.name || ''}`.toLowerCase();
+    return ['galaxy', 'qso', 'agn', 'starburst', 'spiral', 'elliptical', 'z='].some((k) => cls.includes(k));
+  }, [topMatch]);
+
+  // Sync live finding back into Active Case
+  useEffect(() => {
+    const position = probeSkyPosition ?? { ra, dec };
+    const targetKey =
+      activeInstalledSection?.section_id || `${position.ra.toFixed(4)},${position.dec.toFixed(4)}`;
+    let summary = 'No spectrum loaded';
+    if (topMatch) {
+      summary = `${topMatch.name} (${(topMatch.similarity * 100).toFixed(0)}%)`;
+    } else if (spectrumSummary.coveredCount > 0 && spectrumSummary.peakWaveUm !== null) {
+      summary = `Peak ${spectrumSummary.peakWaveUm.toFixed(2)} µm · ${spectrumSummary.coveredCount}/102 ch`;
+    }
+    setCaseFindings(
+      {
+        spectralSummary: summary,
+        spectralTopClass: topMatch?.spectral_class || null,
+        spectralFidelity,
+      },
+      targetKey
+    );
+  }, [
+    activeInstalledSection?.section_id,
+    probeSkyPosition?.ra,
+    probeSkyPosition?.dec,
+    ra,
+    dec,
+    topMatch,
+    spectrumSummary.coveredCount,
+    spectrumSummary.peakWaveUm,
+    spectralFidelity,
+    setCaseFindings,
+  ]);
 
   // Epsilon Indi B NNLS unmixing
   const unmix = useMemo(() => {
     if (!isEpsInd || spectrum.filter((c) => Number.isFinite(c.fluxMjySr)).length < 2) return null;
     const y = spectrum.map((c) => c.fluxMjySr);
     const s = spectrum.map((c) => c.uncertainty);
-    const t1 = spectrum.map((c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2))));
-    const t6 = spectrum.map((c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2))));
+    const t1 = spectrum.map(
+      (c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2)))
+    );
+    const t6 = spectrum.map(
+      (c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2)))
+    );
     return solveNnls2(y, t1, t6, s);
   }, [isEpsInd, spectrum]);
 
-  // Defer Photo-z grid search + Planck cosmology integrals past first paint so the 102-channel uPlot chart renders cleanly.
   const [photoZ, setPhotoZ] = useState<PhotoZResult>({ grid: [], bestZ: null });
-
   useEffect(() => {
     if (spectrum.length === 0) {
       setPhotoZ({ grid: [], bestZ: null });
       return;
     }
     const timerId = window.setTimeout(() => {
-      const lambdas = spectrum.map((c) => c.wavelengthUm);
-      const flux = spectrum.map((c) => c.fluxMjySr);
-      const sig = spectrum.map((c) => c.uncertainty);
-      setPhotoZ(computePhotoZ(lambdas, flux, sig));
+      setPhotoZ(
+        computePhotoZ(
+          spectrum.map((c) => c.wavelengthUm),
+          spectrum.map((c) => c.fluxMjySr),
+          spectrum.map((c) => c.uncertainty)
+        )
+      );
     }, 16);
     return () => window.clearTimeout(timerId);
   }, [spectrum]);
@@ -559,8 +788,7 @@ export const SpectrophotometricLab: React.FC = () => {
       const ctx = u.ctx;
       const spec = spectrumRef.current;
       ctx.save();
-      // error bars
-      ctx.strokeStyle = 'rgba(148,163,184,0.55)';
+      ctx.strokeStyle = 'rgba(148,163,184,0.5)';
       ctx.lineWidth = 1;
       for (let i = 0; i < spec.length; i++) {
         const c = spec[i];
@@ -568,9 +796,11 @@ export const SpectrophotometricLab: React.FC = () => {
         const x = u.valToPos(c.wavelengthUm, 'x', true);
         const y0 = u.valToPos(c.fluxMjySr - c.uncertainty, 'y', true);
         const y1 = u.valToPos(c.fluxMjySr + c.uncertainty, 'y', true);
-        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x, y1);
+        ctx.stroke();
       }
-      // optional MJD coloring (R Draconis non-simultaneous spectrum assembly)
       if (colorByMjdRef.current && mjdRangeRef.current) {
         const [m0, m1] = mjdRangeRef.current;
         for (let i = 0; i < spec.length; i++) {
@@ -580,12 +810,13 @@ export const SpectrophotometricLab: React.FC = () => {
           const y = u.valToPos(c.fluxMjySr, 'y', true);
           const m = specMjdRef.current[i] ?? m0;
           const t = m1 > m0 ? (m - m0) / (m1 - m0) : 0;
-          const hue = 210 - 180 * Math.max(0, Math.min(1, t)); // blue->amber
+          const hue = 210 - 180 * Math.max(0, Math.min(1, t));
           ctx.fillStyle = `hsl(${hue} 85% 62%)`;
-          ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath();
+          ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
-      // flags as amber hollow triangles
       ctx.strokeStyle = '#f59e0b';
       ctx.lineWidth = 1.2;
       for (let i = 0; i < spec.length; i++) {
@@ -595,31 +826,36 @@ export const SpectrophotometricLab: React.FC = () => {
         const y = u.valToPos(c.fluxMjySr, 'y', true);
         const s = 5;
         ctx.beginPath();
-        ctx.moveTo(x, y - s); ctx.lineTo(x + s, y + s); ctx.lineTo(x - s, y + s); ctx.closePath();
+        ctx.moveTo(x, y - s);
+        ctx.lineTo(x + s, y + s);
+        ctx.lineTo(x - s, y + s);
+        ctx.closePath();
         ctx.stroke();
       }
-      // redshift rulers
       const z = zRef.current;
       for (const line of REST_LINES) {
         const obs = line.lambdaRestUm * (1 + z);
         if (obs < 0.75 || obs > 5.0) continue;
         const x = u.valToPos(obs, 'x', true);
         ctx.strokeStyle = line.color;
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = 0.65;
         ctx.setLineDash([4, 3]);
-        ctx.beginPath(); ctx.moveTo(x, u.bbox.top); ctx.lineTo(x, u.bbox.top + u.bbox.height); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, u.bbox.top);
+        ctx.lineTo(x, u.bbox.top + u.bbox.height);
+        ctx.stroke();
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
         ctx.fillStyle = line.color;
         ctx.font = '10px "IBM Plex Mono", ui-monospace, monospace';
-        ctx.fillText(`${line.label} z=${z.toFixed(2)}`, x + 3, u.bbox.top + 24);
+        ctx.fillText(`${line.label}`, x + 3, u.bbox.top + 24);
       }
       ctx.restore();
     };
 
     const opts: uPlot.Options = {
-      width: chartRef.current.clientWidth || 900,
-      height: 420,
+      width: chartRef.current.clientWidth || 720,
+      height: 360,
       padding: [16, 12, 0, 0],
       cursor: { drag: { x: false, y: false } },
       scales: {
@@ -635,16 +871,32 @@ export const SpectrophotometricLab: React.FC = () => {
       },
       axes: [
         { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Wavelength λ (µm)' },
-        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Flux (MJy/sr)' },
+        { stroke: '#a3a3a3', grid: { stroke: 'rgba(148,163,184,0.15)' }, label: 'Brightness (MJy/sr)' },
       ],
       series: [
         {},
         {
-          label: 'Fν',
+          label: 'Observed',
           stroke: '#ffffff',
-          width: 1.5,
+          width: 1.8,
           spanGaps: true,
           points: { show: true, size: 4, fill: '#ffffff', stroke: '#0a0a0a' },
+        },
+        {
+          label: 'Active Epoch',
+          stroke: '#38bdf8',
+          width: 1.5,
+          dash: [5, 3],
+          spanGaps: true,
+          points: { show: false },
+        },
+        {
+          label: 'Matched Template',
+          stroke: '#34d399',
+          width: 1.5,
+          dash: [3, 3],
+          spanGaps: true,
+          points: { show: false },
         },
       ],
       hooks: {
@@ -657,8 +909,7 @@ export const SpectrophotometricLab: React.FC = () => {
 
     const onMove = (e: MouseEvent) => {
       const rect = plot.over.getBoundingClientRect();
-      const left = e.clientX - rect.left;
-      const idx = plot.posToIdx(left);
+      const idx = plot.posToIdx(e.clientX - rect.left);
       const c = spectrumRef.current[idx];
       if (c && c.flag) setFlagTip({ x: e.clientX, y: e.clientY, text: flagTooltip(c.flag) });
       else setFlagTip(null);
@@ -669,7 +920,7 @@ export const SpectrophotometricLab: React.FC = () => {
 
     const ro = new ResizeObserver((entries) => {
       for (const ent of entries) {
-        const h = ent.contentRect.width < 640 ? 280 : ent.contentRect.width < 1280 ? 340 : 420;
+        const h = ent.contentRect.width < 640 ? 260 : 340;
         plot.setSize({ width: Math.max(260, Math.floor(ent.contentRect.width)), height: h });
       }
     });
@@ -684,300 +935,613 @@ export const SpectrophotometricLab: React.FC = () => {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update data when spectrum changes (<1.5ms/frame typical for 102 points)
   useEffect(() => {
     if (plotRef.current) plotRef.current.setData(data, true);
   }, [data]);
 
-  // Redshift slider: update store + URL and redraw rulers at 60 FPS (no data rebuild)
-  const onZChange = useCallback((val: number) => {
-    zRef.current = val;
-    setManualRedshiftZ(val);
-    setZ(val);
-    // redraw overlays (rulers) without rebuilding series data
-    if (plotRef.current) plotRef.current.redraw(false);
-  }, [setManualRedshiftZ, setZ]);
+  const onZChange = useCallback(
+    (val: number) => {
+      zRef.current = val;
+      setManualRedshiftZ(val);
+      setZ(val);
+      if (plotRef.current) plotRef.current.redraw(false);
+    },
+    [setManualRedshiftZ, setZ]
+  );
 
   const pointColors = useMemo(() => {
     if (!isRDraconis || !colorByMjd || !hasFiniteMjds) return null;
     return perChannelMjd.filter(Number.isFinite);
   }, [isRDraconis, colorByMjd, hasFiniteMjds, perChannelMjd]);
 
+  const displayName = activeInstalledSection?.label || activeTargetName || 'Custom Sky Field';
+  const focusPos = probeSkyPosition ?? { ra, dec };
+
   return (
-    <div className="flex h-full w-full flex-col lg:flex-row overflow-y-auto lg:overflow-hidden bg-neutral-950 text-neutral-100">
-      <div className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800">
-        <div className="border-b border-white/10 bg-neutral-950/90 backdrop-blur-xl px-4 py-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex h-7 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-2.5">
-              <svg
-                className="h-3.5 w-3.5 shrink-0 text-sky-400"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
-              </svg>
-              <h2 className="text-xs font-semibold tracking-tight text-white">Spectrophotometric Lab</h2>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-neutral-950 text-neutral-100">
+      <ActiveCaseBanner activeLens="spectral" sectionLabel={displayName} />
+
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        {/* LEFT RAIL: Spatial Context & Epoch Comparison */}
+        <aside className="w-full lg:w-[290px] xl:w-[310px] shrink-0 lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800 bg-neutral-950 p-3 space-y-3">
+          <div className="space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+              Active Cutout & Target
             </div>
-            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[11px] text-neutral-300">
-              102 channels · 0.75–5.00 µm · λ vs Fν (MJy/sr)
-            </span>
-            <span
-              className={`inline-flex h-7 items-center rounded-lg border px-2.5 font-mono text-[11px] ${
-                spectrumSourceBadge.startsWith('[Installed]')
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : spectrumSourceBadge.startsWith('[IRSA Live')
-                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
-              }`}
-            >
-              {spectrumSourceBadge}
-            </span>
-            {currentSelectedSection && (
-              <UseCurrentSelectedButton
-                section={currentSelectedSection}
-                isActive={activeInstalledSection?.section_id === currentSelectedSection.section_id}
-                colorPalette={colorPalette}
-                onSelect={handleSelectInstalledSection}
+            <div className="flex flex-wrap gap-1.5">
+              {currentSelectedSection && (
+                <UseCurrentSelectedButton
+                  section={currentSelectedSection}
+                  isActive={activeInstalledSection?.section_id === currentSelectedSection.section_id}
+                  colorPalette={colorPalette}
+                  onSelect={handleSelectInstalledSection}
+                />
+              )}
+              {readyInstalledSections.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsCutoutBrowserOpen(true)}
+                  aria-label="Browse installed sections for spectrum"
+                  className="inline-flex h-7 max-w-[230px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 hover:bg-emerald-900/50 cursor-pointer"
+                  title="Browse installed cutouts with previews"
+                >
+                  <span className="truncate">
+                    {activeInstalledSection ? activeInstalledSection.label : 'Browse Installed'}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-emerald-300/90">
+                    ({readyInstalledSections.length})
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <CutoutProbeMinimap
+            section={activeInstalledSection}
+            epochIndex={isSpectralBlinkSynced || overlayEpoch ? activeEpochIndex : null}
+            colorPalette={colorPalette}
+            probePixel={probedPixel ?? { x: 24, y: 24 }}
+            fallbackRa={focusPos.ra}
+            fallbackDec={focusPos.dec}
+            fallbackFovArcsec={fovArcsec}
+            onSelectPixel={handleMinimapPixelSelect}
+            caption="Click any dot on the cutout to fingerprint that pixel"
+          />
+
+          <div className="rounded-xl border border-white/10 bg-neutral-900/50 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-300">
+                Compare Across Time
+              </span>
+              <span className="font-mono text-[10px] text-sky-300">
+                Epoch {activeEpochIndex}
+              </span>
+            </div>
+            <label className="flex items-center justify-between gap-2 text-xs text-neutral-300 cursor-pointer">
+              <span>Overlay Epoch {activeEpochIndex} on chart</span>
+              <input
+                type="checkbox"
+                checked={overlayEpoch}
+                disabled={isSpectralBlinkSynced || !activeInstalledSection}
+                onChange={(e) => setOverlayEpoch(e.target.checked)}
+                className="accent-sky-400"
               />
-            )}
-            {readyInstalledSections.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setIsCutoutBrowserOpen(true)}
-                aria-label="Browse installed sections for spectrum"
-                className="inline-flex h-7 max-w-[230px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 hover:bg-emerald-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
-                title="Browse installed cutouts with previews for 102-channel extraction"
-              >
-                <span className="truncate">
-                  {activeInstalledSection
-                    ? `${activeInstalledSection.label}`
-                    : 'Browse Installed'}
-                </span>
-                <span className="shrink-0 font-mono text-[10px] text-emerald-300/90">
-                  ({readyInstalledSections.length})
-                </span>
-              </button>
-            )}
-            {!activeInstalledSection && (
-              <button
-                type="button"
-                onClick={() => {
-                  const position = probeSkyPosition ?? { ra, dec };
-                  setForceLiveCoordKey(`${position.ra.toFixed(5)},${position.dec.toFixed(5)}`);
-                }}
-                className="h-7 rounded-lg border border-sky-400/40 bg-sky-500/10 hover:bg-sky-500/20 hover:border-sky-400/60 px-2.5 text-xs font-medium text-sky-200 transition-all cursor-pointer"
-                title="Query IRSA live for this coordinate without installing"
-              >
-                Query Live Spectrum
-              </button>
-            )}
-            <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 font-mono text-[11px] text-sky-300">
-              probe px ({probedPixel?.x ?? 24},{probedPixel?.y ?? 24})
-            </span>
+            </label>
             <button
               type="button"
               onClick={() => setSpectralBlinkSynced(!isSpectralBlinkSynced)}
-              className={`h-7 rounded-lg border px-2.5 text-xs font-medium transition-all cursor-pointer ${
+              className={`w-full rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all cursor-pointer ${
                 isSpectralBlinkSynced
                   ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
-                  : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08] hover:text-white'
+                  : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08]'
               }`}
-              title="Toggle between full multi-epoch coadd and active comparator epoch"
             >
-              {isSpectralBlinkSynced ? `Epoch ${epochIndex} Only` : 'All Epochs (Coadded)'}
+              {isSpectralBlinkSynced
+                ? `Showing Epoch ${activeEpochIndex} Only`
+                : 'Showing All Epochs (Coadded)'}
             </button>
-            {spectrumStatus && (
-              <span className="inline-flex h-7 items-center font-mono text-[11px] text-neutral-400">
-                {spectrumStatus}
-              </span>
+            {epochDeltaPct !== null && (
+              <div className="rounded-lg border border-sky-500/25 bg-sky-950/30 px-2.5 py-1.5 font-mono text-[11px] text-sky-200">
+                Epoch {activeEpochIndex} vs Coadd:{' '}
+                <strong>
+                  {epochDeltaPct >= 0 ? '+' : ''}
+                  {epochDeltaPct.toFixed(1)}%
+                </strong>
+              </div>
             )}
+            <button
+              type="button"
+              onClick={() => setTab('comparator')}
+              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-[11px] font-medium text-neutral-300 hover:bg-white/[0.08] cursor-pointer"
+            >
+              ← Blink This Pixel in Time-Domain
+            </button>
           </div>
-          <p className="mt-1.5 text-[11px] text-neutral-400">
-            Target: <span className="font-mono text-neutral-200">{activeTargetName || 'Custom RA/Dec'}</span> · RA {ra.toFixed(5)}° Dec {dec.toFixed(5)}° ·
-            shaded D1–D6 super-bands · ±1σ VARIANCE bars · amber hollow triangles = FLAGS≠0 (hover for bitmask tooltip).
-          </p>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-neutral-500">
-            <span><span className="inline-block h-0 w-0 border-x-[4px] border-b-[7px] border-x-transparent border-b-amber-400 align-middle" /> Bit 0 TRANSIENT</span>
-            <span><span className="inline-block h-0 w-0 border-x-[4px] border-b-[7px] border-x-transparent border-b-amber-400 align-middle" /> Bit 1 OVERFLOW</span>
-            <span>uPlot canvas, 102 points (&lt;1.5 ms/frame updates)</span>
-          </div>
+
           {isRDraconis && hasFiniteMjds && (
-            <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-neutral-300">
-              <input type="checkbox" checked={colorByMjd} onChange={(e) => setColorByMjd(e.target.checked)} />
-              Color points by observation MJD (R Draconis, [Non-Simultaneous Spectrum]{mjd !== null ? `, MJD ${mjd.toFixed(2)}` : ''})
+            <label className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 p-2.5 text-[11px] text-amber-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={colorByMjd}
+                onChange={(e) => setColorByMjd(e.target.checked)}
+                className="accent-amber-400"
+              />
+              <span>
+                Color channels by observation MJD
+                {mjd !== null ? ` (MJD ${mjd.toFixed(1)})` : ''}
+              </span>
             </label>
           )}
-        </div>
+        </aside>
 
-        <div className="relative min-h-0 flex-1 p-3">
-          <div ref={chartRef} className="h-[280px] sm:h-[340px] xl:h-[420px] w-full rounded border border-neutral-800 bg-neutral-950" aria-label="102-channel hyperspectral plot" />
-          {spectrum.length === 0 && (
-            <div className="pointer-events-none absolute inset-3 flex h-[280px] sm:h-[340px] xl:h-[420px] items-center justify-center">
-              <div className="rounded border border-neutral-800 bg-neutral-900/90 px-4 py-2 text-center text-xs text-neutral-300">
-                {spectrumStatus || 'No archive spectrum loaded for this coordinate'}
+        {/* CENTER COLUMN: Identity Verdict + Chart */}
+        <section className="flex min-w-0 flex-1 flex-col lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-neutral-800 p-3 sm:p-4 space-y-3">
+          {/* Plain-English Verdict Banner */}
+          <div className="rounded-xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/35 via-neutral-900/70 to-neutral-900/70 p-3.5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-300">
+                    What Is This Dot?
+                  </span>
+                  <span
+                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                      spectralFidelity === 'true_102_ch'
+                        ? 'border-sky-400/50 bg-sky-500/15 text-sky-200'
+                        : 'border-amber-400/40 bg-amber-500/10 text-amber-200'
+                    }`}
+                  >
+                    {spectralFidelity === 'true_102_ch'
+                      ? 'True 102-Channel HDU 6'
+                      : '6-Band Cutout Preview (D1–D6)'}
+                  </span>
+                  <span
+                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                      spectrumSourceBadge.startsWith('[Installed]')
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                        : 'border-sky-500/40 bg-sky-500/10 text-sky-300'
+                    }`}
+                  >
+                    {spectrumSourceBadge}
+                  </span>
+                </div>
+                <div className="mt-1 text-base font-semibold text-white">
+                  {topMatch
+                    ? `Closest match: ${topMatch.name} (${topMatch.spectral_class})`
+                    : spectrumSummary.coveredCount > 0
+                      ? `Infrared signature of ${displayName}`
+                      : spectrumStatus || 'Select a target or click a star pixel'}
+                </div>
+                <p className="mt-0.5 text-xs text-neutral-300">
+                  {topMatch ? (
+                    <>
+                      Template match confidence{' '}
+                      <strong className="font-mono text-emerald-300">
+                        {(topMatch.similarity * 100).toFixed(1)}%
+                      </strong>
+                      {spectrumSummary.peakWaveUm !== null && (
+                        <>
+                          {' '}
+                          · Peak brightness near{' '}
+                          <strong className="font-mono text-white">
+                            {spectrumSummary.peakWaveUm.toFixed(2)} µm
+                          </strong>
+                        </>
+                      )}
+                      .
+                    </>
+                  ) : (
+                    <>
+                      {spectralFidelity === 'broadband_6_interpolated'
+                        ? 'Preview draws smooth lines between the 6 detector bands at this pixel.'
+                        : 'Measured natively across 102 infrared wavelength channels.'}
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {spectralFidelity !== 'true_102_ch' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const coordKey = `${focusPos.ra.toFixed(5)},${focusPos.dec.toFixed(5)}`;
+                      setForceLiveCoordKey(coordKey);
+                    }}
+                    className="rounded-lg border border-sky-400/50 bg-sky-500/15 hover:bg-sky-500/25 px-2.5 py-1.5 text-xs font-semibold text-sky-200 transition-colors cursor-pointer"
+                    title="Fetch native HDU 6 WCS-WAVE 102-channel spectrum from IRSA instead of 6-band cutout interpolation"
+                  >
+                    Extract Full 102-Ch (IRSA)
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setTab('ice')}
+                  className="rounded-lg border border-cyan-400/50 bg-cyan-500/15 hover:bg-cyan-500/25 px-2.5 py-1.5 text-xs font-semibold text-cyan-200 transition-colors cursor-pointer"
+                >
+                  Check for Cosmic Ice →
+                </button>
               </div>
             </div>
-          )}
-          {flagTip && (
-            <div className="pointer-events-none fixed z-50 max-w-xs rounded border border-amber-500/50 bg-neutral-900 px-2 py-1 text-[11px] text-amber-200 shadow" style={{ left: flagTip.x + 10, top: flagTip.y + 10 }}>
-              {flagTip.text}
+
+            {spectrumSummary.flaggedCount > 0 && (
+              <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-950/25 px-2.5 py-1 text-[11px] text-amber-200">
+                Note: {spectrumSummary.flaggedCount} channel{spectrumSummary.flaggedCount === 1 ? '' : 's'} have detector quality flags (amber triangles — hover point for details).
+              </div>
+            )}
+          </div>
+
+          {/* Chart Legend & uPlot */}
+          <div className="rounded-xl border border-neutral-800 bg-black/50 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400">
+              <div className="flex flex-wrap items-center gap-4">
+                <span className="inline-flex items-center gap-1.5 text-neutral-200">
+                  <span className="inline-block h-0.5 w-4 bg-white" />
+                  Observed {isSpectralBlinkSynced ? `Epoch ${activeEpochIndex}` : 'Coadd'}
+                </span>
+                {overlayEpoch && !isSpectralBlinkSynced && (
+                  <span className="inline-flex items-center gap-1.5 text-sky-300">
+                    <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-sky-400" />
+                    Epoch {activeEpochIndex}
+                  </span>
+                )}
+                {scaledTemplateOverlay && selectedMatchIdx !== null && similarMatches[selectedMatchIdx] && (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-300">
+                    <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-emerald-400" />
+                    {similarMatches[selectedMatchIdx].name} template
+                  </span>
+                )}
+              </div>
+              <span className="font-mono text-[10px] text-neutral-400">
+                {spectrumStatus || '0.75–5.00 µm'}
+              </span>
             </div>
-          )}
-          {/* MJD color legend for R Draconis */}
-          {pointColors && (
-            <div className="mt-2 flex items-center gap-2 text-[10px] text-neutral-400">
-              <span>Observation MJD:</span>
-              <span className="font-mono text-amber-300">{Math.min(...pointColors).toFixed(1)}–{Math.max(...pointColors).toFixed(1)}</span>
-              <span className="rounded border border-amber-500/40 px-1 text-amber-300">[Non-Simultaneous Spectrum]</span>
+
+            <div className="relative">
+              <div
+                ref={chartRef}
+                className="h-[260px] sm:h-[340px] w-full rounded border border-neutral-800 bg-neutral-950"
+                aria-label="102-channel hyperspectral plot"
+              />
+              {spectrum.length === 0 && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="rounded-lg border border-neutral-700 bg-neutral-900/95 px-4 py-2 text-center text-xs text-neutral-300">
+                    {spectrumStatus || 'No archive spectrum loaded for this coordinate'}
+                  </div>
+                </div>
+              )}
+              {flagTip && (
+                <div
+                  className="pointer-events-none fixed z-50 max-w-xs rounded border border-amber-500/50 bg-neutral-900 px-2 py-1 text-[11px] text-amber-200 shadow"
+                  style={{ left: flagTip.x + 10, top: flagTip.y + 10 }}
+                >
+                  {flagTip.text}
+                </div>
+              )}
             </div>
-          )}
+
+            {pointColors && (
+              <div className="mt-2 flex items-center gap-2 text-[10px] text-neutral-400">
+                <span>Observation MJD:</span>
+                <span className="font-mono text-amber-300">
+                  {Math.min(...pointColors).toFixed(1)}–{Math.max(...pointColors).toFixed(1)}
+                </span>
+                <span className="rounded border border-amber-500/40 px-1 text-amber-300">
+                  [Non-Simultaneous Spectrum]
+                </span>
+              </div>
+            )}
+          </div>
+
           {/* Accessible hidden table */}
           <div className="sr-only" aria-live="polite">
             <table role="table">
               <caption>102-channel SPHEREx spectrum (accessible data table)</caption>
-              <thead><tr><th>Channel</th><th>Detector</th><th>Wavelength (µm)</th><th>Flux (MJy/sr)</th><th>Uncertainty</th><th>FLAGS</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Detector</th>
+                  <th>Wavelength (µm)</th>
+                  <th>Flux (MJy/sr)</th>
+                  <th>Uncertainty</th>
+                  <th>FLAGS</th>
+                </tr>
+              </thead>
               <tbody>
                 {spectrum.map((c) => (
                   <tr key={c.channel}>
-                    <td>{c.channel}</td><td>{c.detector}</td><td>{c.wavelengthUm}</td><td>{Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : '—'}</td><td>{Number.isFinite(c.uncertainty) ? c.uncertainty : '—'}</td><td>{c.flag ? flagTooltip(c.flag) : '0'}</td>
+                    <td>{c.channel}</td>
+                    <td>{c.detector}</td>
+                    <td>{c.wavelengthUm}</td>
+                    <td>{Number.isFinite(c.fluxMjySr) ? c.fluxMjySr : '—'}</td>
+                    <td>{Number.isFinite(c.uncertainty) ? c.uncertainty : '—'}</td>
+                    <td>{c.flag ? flagTooltip(c.flag) : '0'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
 
-        {/* Photo-z / χ²(z) + P(z) */}
-        <div className="border-t border-neutral-800 p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-300">Automated Galaxy Photo-z Solver (Planck 2018: H0=67.4, Ωm=0.315, ΩΛ=0.685)</h3>
-          <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3 text-[11px]">
-              <div>Best-fit redshift: <span className="font-mono font-semibold text-sky-300">{photoZ.bestZ !== null ? `z = ${photoZ.bestZ.toFixed(2)}` : '—'}</span> (grid Δz=0.01, z∈[0,2.5])</div>
-              {(() => {
-                const best = photoZ.bestZ;
-                const b = best !== null ? (photoZ.grid[Math.round(best * 100)] || photoZ.grid[0]) : null;
-                return (
-                  <div className="mt-1 text-neutral-300">Lookback time: <span className="font-mono text-white">{b ? `${b.lookbackGyr.toFixed(2)} Gyr` : '—'}</span> · Comoving distance D_C: <span className="font-mono text-white">{b ? `${b.dCMpc.toFixed(0)} Mpc` : '—'}</span></div>
-                );
-              })()}
-              <svg viewBox="0 0 320 90" className="mt-2 h-[90px] w-full rounded bg-neutral-950">
-                {photoZ.grid.map((p, i) => {
-                  if (i % 2) return null;
-                  const x = (p.z / 2.5) * 318 + 1;
-                  const y = 88 - p.p * 84;
-                  return <circle key={p.z} cx={x} cy={y} r={1.2} fill="#38bdf8" />;
-                })}
-                {photoZ.bestZ !== null && (
-                  <line x1={(photoZ.bestZ/2.5)*318+1} y1={0} x2={(photoZ.bestZ/2.5)*318+1} y2={90} stroke="#f59e0b" strokeDasharray="3 2" />
-                )}
-                <text x="4" y="12" fill="#a3a3a3" fontSize="9">P(z)</text>
-                <text x="280" y="86" fill="#a3a3a3" fontSize="9">z</text>
-              </svg>
-            </div>
-            <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3">
-              <div className="flex items-center justify-between text-[11px]">
-                <label htmlFor="lab-z-slider" className="text-neutral-300">Redshift ruler scrubber (λ_obs = λ_rest·(1+z))</label>
-                <span className="font-mono font-semibold text-amber-300">z = {manualRedshiftZ.toFixed(3)}</span>
+        {/* RIGHT RAIL: Progressive 3-Mode Analyzers */}
+        <aside className="w-full lg:w-[330px] xl:w-[360px] shrink-0 lg:overflow-y-auto bg-neutral-900/20 p-3 sm:p-4 space-y-3">
+          <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/10 bg-neutral-950 p-1">
+            <button
+              type="button"
+              onClick={() => setActiveToolTab('match')}
+              className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                activeToolTab === 'match'
+                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              1. Identify
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveToolTab('redshift')}
+              className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                activeToolTab === 'redshift'
+                  ? 'bg-sky-500/20 text-sky-200 border border-sky-500/40'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              2. Redshift {looksExtragalactic ? '★' : ''}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveToolTab('binary')}
+              className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                activeToolTab === 'binary'
+                  ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              3. Binary {isEpsInd ? '★' : ''}
+            </button>
+          </div>
+
+          {activeToolTab === 'match' && (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3 text-[11px]">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold uppercase tracking-wide text-neutral-200">
+                    Closest Spectral Matches
+                  </span>
+                  {isFindingSimilar && (
+                    <span className="font-mono text-[10px] text-sky-400">Scanning…</span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] text-neutral-400">
+                  Click any template below to overlay its shape on your spectrum chart.
+                </p>
+                <div className="mt-2.5 space-y-1.5">
+                  {similarMatches.length > 0 ? (
+                    similarMatches.slice(0, 5).map((m, idx) => {
+                      const isOverlayActive = selectedMatchIdx === idx;
+                      return (
+                        <button
+                          key={m.id || idx}
+                          type="button"
+                          onClick={() => setSelectedMatchIdx(isOverlayActive ? null : idx)}
+                          className={`w-full flex items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors cursor-pointer ${
+                            isOverlayActive
+                              ? 'border-emerald-400/60 bg-emerald-500/15'
+                              : 'border-white/10 bg-neutral-950/60 hover:border-white/25'
+                          }`}
+                        >
+                          <div className="truncate mr-2">
+                            <span className="block font-semibold text-white">{m.name}</span>
+                            <span className="text-[10px] text-neutral-400">{m.spectral_class}</span>
+                          </div>
+                          <span className="font-mono font-semibold text-emerald-400 shrink-0">
+                            {(m.similarity * 100).toFixed(1)}%
+                          </span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded border border-dashed border-neutral-800 p-2 text-[11px] text-neutral-400">
+                      {similarStatus}
+                    </div>
+                  )}
+                </div>
               </div>
-              <input id="lab-z-slider" type="range" min={0} max={2.5} step={0.01} value={manualRedshiftZ}
-                onChange={(e) => onZChange(Number(e.target.value))} className="mt-2 w-full accent-amber-400" />
-              <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
-                {REST_LINES.map((l) => {
-                  const obs = l.lambdaRestUm * (1 + manualRedshiftZ);
-                  const vis = obs >= 0.75 && obs <= 5.0;
-                  return <span key={l.key} className={`rounded border px-1.5 py-0.5 ${vis ? 'border-neutral-600 text-neutral-200' : 'border-neutral-800 text-neutral-600'}`} style={{ borderColor: vis ? l.color : undefined }}>{l.label} {l.lambdaRestUm}µm → {obs.toFixed(3)}µm</span>;
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Right: NNLS unmixing / controls */}
-      <aside className="w-full lg:w-[330px] xl:w-[360px] shrink-0 lg:overflow-y-auto bg-neutral-900/20 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-300">Two-Component NNLS Spectral Unmixing</h3>
-        {isEpsInd && unmix ? (
-          <div className="mt-2 rounded border border-amber-500/30 bg-amber-950/10 p-3 text-[11px]">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="font-semibold text-amber-200">Epsilon Indi Ba+Bb (blended 6.2″ pixel)</span>
-              <span className="rounded border border-amber-400/60 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">[Illustrative Two-Component De-blend]</span>
-            </div>
-            <div>Component A (T1 Brown Dwarf): weight <span className="font-mono text-white">a = {unmix.a.toFixed(4)}</span></div>
-            <div>Component B (T6 Brown Dwarf): weight <span className="font-mono text-white">b = {unmix.b.toFixed(4)}</span></div>
-            <div>Residual reduced chi-square: <span className="font-mono text-white">χ²_red = {unmix.chi2Red.toFixed(3)}</span></div>
-            <div className="mt-2 text-neutral-400">Model: min<sub>a,b≥0</sub> Σ((F_obs(λ_k)-[a·T1(λ_k)+b·T6(λ_k)])/σ_k)², k=1..102.</div>
-            <svg viewBox="0 0 320 120" className="mt-2 h-[120px] w-full rounded bg-neutral-950">
-              {(() => {
-                const t1 = spectrum.map((c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2))));
-                const t6 = spectrum.map((c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2))));
-                const comp = spectrum.map((_, i) => unmix.a * t1[i] + unmix.b * t6[i]);
-                const vals = [...spectrum.map(c=>c.fluxMjySr), ...comp].filter(Number.isFinite);
-                const max = vals.length ? Math.max(...vals, 1) : 1; const min = vals.length ? Math.min(...vals, 0) : 0;
-                const sx = (l: number) => ((l - 0.75) / 4.25) * 318 + 1;
-                const sy = (v: number) => 118 - ((v - min) / Math.max(max - min, 1e-6)) * 114;
-                const path = (arr: number[]) => {
-                  let penDown = false;
-                  return arr.map((v, i) => {
-                    if (!Number.isFinite(v)) { penDown = false; return ''; }
-                    const cmd = penDown ? 'L' : 'M';
-                    penDown = true;
-                    return `${cmd}${sx(spectrum[i].wavelengthUm)},${sy(v)}`;
-                  }).filter(Boolean).join(' ');
-                };
-                return (<>
-                  <path d={path(spectrum.map(c=>c.fluxMjySr))} fill="none" stroke="#fff" strokeWidth="1.2" />
-                  <path d={path(comp)} fill="none" stroke="#22c55e" strokeWidth="1.2" strokeDasharray="4 2" />
-                  <text x="4" y="12" fill="#fff" fontSize="9">obs</text><text x="26" y="12" fill="#22c55e" fontSize="9">a·T1+b·T6</text>
-                </>);
-              })()}
-            </svg>
-          </div>
-        ) : (
-          <p className="mt-2 text-[11px] text-neutral-500">Unmixing panel activates for Epsilon Indi B (Epoch 2025.5: 331.09566°, -56.80031°). Select that benchmark/coordinate to see T1+T6 de-blend, weights a/b, residual χ²_red, and the illustrative badge.</p>
-        )}
-
-        {/* Spectral Similarity Matches (POST /api/subjects/similar) */}
-        <div className="mt-4 rounded border border-neutral-800 bg-neutral-900/40 p-3 text-[11px]">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold uppercase tracking-wide text-neutral-300">
-              SIMD Spectral Match (10k Templates)
-            </span>
-            {isFindingSimilar && (
-              <span className="font-mono text-[10px] text-sky-400">Scanning...</span>
-            )}
-          </div>
-          <div className="mt-2 space-y-1.5">
-            {similarMatches.length > 0 ? (
-              similarMatches.slice(0, 4).map((m, idx) => (
-                <div
-                  key={m.id || idx}
-                  className="flex items-center justify-between rounded bg-neutral-950/60 px-2 py-1"
+              <div className="rounded-xl border border-cyan-500/25 bg-cyan-950/15 p-3 text-[11px] space-y-2">
+                <div className="font-semibold text-cyan-200">
+                  Next: Could ice be hiding in front of this star?
+                </div>
+                <p className="text-neutral-300 leading-relaxed">
+                  Cold stars and stars behind dust clouds can look alike in broadband light. Open Ice Studio at this exact pixel to test for frozen H₂O (3.05 µm) and CO₂ (4.27 µm).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setTab('ice')}
+                  className="w-full rounded-lg border border-cyan-400/50 bg-cyan-500/15 hover:bg-cyan-500/25 py-1.5 text-xs font-semibold text-cyan-200 cursor-pointer"
                 >
-                  <div className="truncate mr-2">
-                    <span className="font-medium text-white">{m.name}</span>
-                    <span className="ml-1 text-[10px] text-neutral-400">({m.spectral_class})</span>
-                  </div>
-                  <span className="font-mono font-semibold text-emerald-400 shrink-0">
-                    {(m.similarity * 100).toFixed(1)}%
+                  Open in Ice Studio →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeToolTab === 'redshift' && (
+            <div className="space-y-3">
+              {!looksExtragalactic && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2.5 text-[11px] text-amber-200">
+                  Note: Top match looks stellar rather than a distant galaxy, so cosmological redshift is typically near <span className="font-mono">z ≈ 0</span>. Useful when inspecting galaxies!
+                </div>
+              )}
+              <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3 text-[11px]">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-200">
+                  Galaxy Photo-z Solver
+                </h3>
+                <div className="mt-1.5">
+                  Best-fit redshift:{' '}
+                  <span className="font-mono font-semibold text-sky-300">
+                    {photoZ.bestZ !== null ? `z = ${photoZ.bestZ.toFixed(2)}` : '—'}
                   </span>
                 </div>
-              ))
-            ) : (
-              <div className="text-neutral-500 text-[10px]">{similarStatus}</div>
-            )}
-          </div>
-        </div>
+                {(() => {
+                  const best = photoZ.bestZ;
+                  const b = best !== null ? photoZ.grid[Math.round(best * 100)] || photoZ.grid[0] : null;
+                  return (
+                    <div className="mt-1 text-neutral-300">
+                      Lookback time:{' '}
+                      <span className="font-mono text-white">
+                        {b ? `${b.lookbackGyr.toFixed(2)} Gyr` : '—'}
+                      </span>{' '}
+                      · Distance:{' '}
+                      <span className="font-mono text-white">
+                        {b ? `${b.dCMpc.toFixed(0)} Mpc` : '—'}
+                      </span>
+                    </div>
+                  );
+                })()}
+                <svg viewBox="0 0 320 90" className="mt-2 h-[90px] w-full rounded bg-neutral-950">
+                  {photoZ.grid.map((p, i) => {
+                    if (i % 2) return null;
+                    const x = (p.z / 2.5) * 318 + 1;
+                    const y = 88 - p.p * 84;
+                    return <circle key={p.z} cx={x} cy={y} r={1.2} fill="#38bdf8" />;
+                  })}
+                  {photoZ.bestZ !== null && (
+                    <line
+                      x1={(photoZ.bestZ / 2.5) * 318 + 1}
+                      y1={0}
+                      x2={(photoZ.bestZ / 2.5) * 318 + 1}
+                      y2={90}
+                      stroke="#f59e0b"
+                      strokeDasharray="3 2"
+                    />
+                  )}
+                  <text x="4" y="12" fill="#a3a3a3" fontSize="9">
+                    P(z)
+                  </text>
+                  <text x="280" y="86" fill="#a3a3a3" fontSize="9">
+                    z
+                  </text>
+                </svg>
+              </div>
 
-        <div className="mt-4 rounded border border-neutral-800 bg-neutral-950/40 p-3 text-[11px] text-neutral-400">
-          <div className="font-semibold text-neutral-300">Pixel → Spectrum link (Tab 2 contract)</div>
-          <div className="mt-1">Reads <span className="font-mono">useTelemetryStore.probedPixel</span> / <span className="font-mono">activeSpectrum</span> (set by Tab 2 on pixel click) and extracts directly from installed SPHEREx sections or live IRSA HDU 5/6 exposures.</div>
-        </div>
-      </aside>
+              <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3">
+                <div className="flex items-center justify-between text-[11px]">
+                  <label htmlFor="lab-z-slider" className="text-neutral-200 font-medium">
+                    Shift line rulers (λ_obs = λ_rest·(1+z))
+                  </label>
+                  <span className="font-mono font-semibold text-amber-300">
+                    z = {manualRedshiftZ.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  id="lab-z-slider"
+                  type="range"
+                  min={0}
+                  max={2.5}
+                  step={0.01}
+                  value={manualRedshiftZ}
+                  onChange={(e) => onZChange(Number(e.target.value))}
+                  className="mt-2 w-full accent-amber-400"
+                />
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                  {REST_LINES.map((l) => {
+                    const obs = l.lambdaRestUm * (1 + manualRedshiftZ);
+                    const vis = obs >= 0.75 && obs <= 5.0;
+                    return (
+                      <span
+                        key={l.key}
+                        className={`rounded border px-1.5 py-0.5 ${
+                          vis ? 'border-neutral-600 text-neutral-200' : 'border-neutral-800 text-neutral-600'
+                        }`}
+                        style={{ borderColor: vis ? l.color : undefined }}
+                      >
+                        {l.label} {l.lambdaRestUm}µm → {obs.toFixed(2)}µm
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeToolTab === 'binary' && (
+            <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3 text-[11px] space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-200">
+                Unresolved Binary De-blending (NNLS)
+              </h3>
+              {isEpsInd && unmix ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-950/15 p-3 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-amber-200">Epsilon Indi Ba+Bb</span>
+                    <span className="rounded border border-amber-400/60 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+                      6.2″ blended pixel
+                    </span>
+                  </div>
+                  <div>
+                    Component A (T1 Brown Dwarf): <span className="font-mono text-white">a = {unmix.a.toFixed(4)}</span>
+                  </div>
+                  <div>
+                    Component B (T6 Brown Dwarf): <span className="font-mono text-white">b = {unmix.b.toFixed(4)}</span>
+                  </div>
+                  <div>
+                    Residual χ²_red: <span className="font-mono text-white">{unmix.chi2Red.toFixed(3)}</span>
+                  </div>
+                  <svg viewBox="0 0 320 120" className="mt-2 h-[120px] w-full rounded bg-neutral-950">
+                    {(() => {
+                      const t1 = spectrum.map(
+                        (c) => 16 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.9, 2)) * (1 - 0.2 * Math.exp(-Math.pow((c.wavelengthUm - 1.25) / 0.06, 2)))
+                      );
+                      const t6 = spectrum.map(
+                        (c) => 9 * Math.exp(-Math.pow((c.wavelengthUm - 1.55) / 0.8, 2)) * (1 - 0.35 * Math.exp(-Math.pow((c.wavelengthUm - 1.62) / 0.07, 2)))
+                      );
+                      const comp = spectrum.map((_, i) => unmix.a * t1[i] + unmix.b * t6[i]);
+                      const vals = [...spectrum.map((c) => c.fluxMjySr), ...comp].filter(Number.isFinite);
+                      const max = vals.length ? Math.max(...vals, 1) : 1;
+                      const min = vals.length ? Math.min(...vals, 0) : 0;
+                      const sx = (l: number) => ((l - 0.75) / 4.25) * 318 + 1;
+                      const sy = (v: number) => 118 - ((v - min) / Math.max(max - min, 1e-6)) * 114;
+                      const path = (arr: number[]) => {
+                        let penDown = false;
+                        return arr
+                          .map((v, i) => {
+                            if (!Number.isFinite(v)) {
+                              penDown = false;
+                              return '';
+                            }
+                            const cmd = penDown ? 'L' : 'M';
+                            penDown = true;
+                            return `${cmd}${sx(spectrum[i].wavelengthUm)},${sy(v)}`;
+                          })
+                          .filter(Boolean)
+                          .join(' ');
+                      };
+                      return (
+                        <>
+                          <path d={path(spectrum.map((c) => c.fluxMjySr))} fill="none" stroke="#fff" strokeWidth="1.2" />
+                          <path d={path(comp)} fill="none" stroke="#22c55e" strokeWidth="1.2" strokeDasharray="4 2" />
+                          <text x="4" y="12" fill="#fff" fontSize="9">
+                            obs
+                          </text>
+                          <text x="26" y="12" fill="#22c55e" fontSize="9">
+                            a·T1+b·T6
+                          </text>
+                        </>
+                      );
+                    })()}
+                  </svg>
+                </div>
+              ) : (
+                <p className="text-neutral-400 leading-relaxed">
+                  SPHEREx&apos;s 6.2″ pixel can blend two nearby brown dwarfs into one spectrum. Load{' '}
+                  <strong className="text-white">Epsilon Indi B</strong> (331.09566°, -56.80031°) to see two-component T1 + T6 non-negative least-squares unmixing live.
+                </p>
+              )}
+            </div>
+          )}
+        </aside>
+      </div>
+
       <InstalledCutoutsModal
         isOpen={isCutoutBrowserOpen}
         onClose={handleCloseCutoutBrowser}
