@@ -19,10 +19,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Input, Select } from '../components/ui';
 import {
+  InstalledCutoutsModal,
+  UseCurrentSelectedButton,
+} from '../components/InstalledCutoutsModal';
+import {
   fetchInstalledSections,
   fetchStaticSectionSpectrum,
   findMatchingSection,
   useInstalledSectionState,
+  type InstalledSection,
 } from '../lib/installedSections';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { useSpectraUrlState } from '../hooks/useSpectraUrlState';
@@ -436,8 +441,8 @@ function resolveInitialTarget(
 // --------------------------------------------------------------------------------------
 
 export const MolecularIceStudio: React.FC = () => {
-  const { ra, dec, activeTargetName } = useTelemetryStore();
-  const { setTab } = useSpectraUrlState();
+  const { ra, dec, activeTargetName, colorPalette, currentSelectedSection } = useTelemetryStore();
+  const { setTab, setRa: setUrlRa, setDec: setUrlDec, setFov: setUrlFov } = useSpectraUrlState();
   const [selectedLiveId, setSelectedLiveId] = useState<string>('wise_0855');
   const [selectedSource, setSelectedSource] = useState<'primary' | 'sky'>('primary');
   const [apertureRadius, setApertureRadius] = useState(1.5);
@@ -447,6 +452,7 @@ export const MolecularIceStudio: React.FC = () => {
   const [sourceMode, setSourceMode] = useState<'installed' | 'live'>('installed');
   const { installedSections } = useInstalledSectionState();
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
+  const [isCutoutBrowserOpen, setIsCutoutBrowserOpen] = useState(false);
   const [liveSpectrum, setLiveSpectrum] = useState<SpectrumSource | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
@@ -456,6 +462,32 @@ export const MolecularIceStudio: React.FC = () => {
   const readyInstalledSections = useMemo(
     () => installedSections.filter((s) => s.status === 'ready'),
     [installedSections]
+  );
+
+  const activeInstalledSection = useMemo(
+    () => readyInstalledSections.find((s) => s.section_id === selectedSectionId) || null,
+    [readyInstalledSections, selectedSectionId]
+  );
+
+  const handleCloseCutoutBrowser = useCallback(() => setIsCutoutBrowserOpen(false), []);
+
+  const handleSelectInstalledSection = useCallback(
+    (chosen: InstalledSection) => {
+      setSourceMode('installed');
+      setSelectedSectionId(chosen.section_id);
+      setLedgerState('idle');
+      setLedgerNote('');
+      setUrlRa(Number(chosen.ra.toFixed(5)));
+      setUrlDec(Number(chosen.dec.toFixed(5)));
+      setUrlFov(Math.round(chosen.fov_arcsec || 300));
+      useTelemetryStore.setState({
+        ra: chosen.ra,
+        dec: chosen.dec,
+        activeTargetName: chosen.label,
+        probeSkyPosition: { ra: chosen.ra, dec: chosen.dec },
+      });
+    },
+    [setUrlRa, setUrlDec, setUrlFov]
   );
 
   // Load installed sections once on mount / target change
@@ -796,23 +828,32 @@ export const MolecularIceStudio: React.FC = () => {
               <option value="live">Live /api/spectrum</option>
             </Select>
           </div>
+          {currentSelectedSection && (
+            <UseCurrentSelectedButton
+              section={currentSelectedSection}
+              isActive={
+                sourceMode === 'installed' &&
+                selectedSectionId === currentSelectedSection.section_id
+              }
+              colorPalette={colorPalette}
+              onSelect={handleSelectInstalledSection}
+            />
+          )}
           {sourceMode === 'installed' && readyInstalledSections.length > 0 && (
-            <Select
-              value={selectedSectionId}
-              onChange={(event) => {
-                setSelectedSectionId(event.target.value);
-                setLedgerState('idle');
-                setLedgerNote('');
-              }}
-              sizeVariant="xs"
-              aria-label="Choose installed section"
+            <button
+              type="button"
+              onClick={() => setIsCutoutBrowserOpen(true)}
+              aria-label="Browse installed sections for Ice Studio"
+              className="inline-flex h-7 max-w-[230px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 text-xs font-medium text-emerald-200 hover:border-emerald-400/60 hover:bg-emerald-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 cursor-pointer"
+              title="Browse installed cutouts with previews"
             >
-              {readyInstalledSections.map((sec) => (
-                <option key={sec.section_id} value={sec.section_id}>
-                  {sec.label} ({sec.ra.toFixed(3)}°, {sec.dec >= 0 ? '+' : ''}{sec.dec.toFixed(3)}°)
-                </option>
-              ))}
-            </Select>
+              <span className="truncate">
+                {activeInstalledSection ? activeInstalledSection.label : 'Browse Installed'}
+              </span>
+              <span className="shrink-0 font-mono text-[10px] text-emerald-300/90">
+                ({readyInstalledSections.length})
+              </span>
+            </button>
           )}
           {sourceMode === 'live' && (
             <Select
@@ -1254,6 +1295,16 @@ export const MolecularIceStudio: React.FC = () => {
           </p>
         )}
       </section>
+      <InstalledCutoutsModal
+        isOpen={isCutoutBrowserOpen}
+        onClose={handleCloseCutoutBrowser}
+        sections={readyInstalledSections}
+        activeSectionId={selectedSectionId || null}
+        currentComparatorSectionId={currentSelectedSection?.section_id || null}
+        colorPalette={colorPalette}
+        subtitle="Preview calibrated SPHEREx cutout stamps and select one for molecular ice analysis."
+        onSelect={handleSelectInstalledSection}
+      />
     </div>
   );
 };
