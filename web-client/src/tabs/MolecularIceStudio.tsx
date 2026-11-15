@@ -501,7 +501,8 @@ export const MolecularIceStudio: React.FC = () => {
 
   const [selectedLiveId, setSelectedLiveId] = useState<string>('elias16_taurus');
   const [selectedSource, setSelectedSource] = useState<'primary' | 'sky'>('primary');
-  const [mode, setMode] = useState<'raw' | 'transmission' | 'tau'>('raw');
+  const [mode, setMode] = useState<'transmission' | 'raw' | 'tau'>('transmission');
+  const [waveZoom, setWaveZoom] = useState<'ice' | 'full'>('ice');
   const [sourceMode, setSourceMode] = useState<'installed' | 'live'>('installed');
   const { installedSections } = useInstalledSectionState();
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
@@ -511,6 +512,7 @@ export const MolecularIceStudio: React.FC = () => {
   const [liveStatus, setLiveStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [liveStatusMessage, setLiveStatusMessage] = useState('');
   const [activeBands, setActiveBands] = useState<IceKey[]>(['h2o', 'co2', 'co2_13', 'co', 'ch3oh']);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [showLabDetails, setShowLabDetails] = useState(false);
   const [ledgerState, setLedgerState] = useState<'idle' | 'submitting' | 'logged' | 'offline'>('idle');
   const [ledgerNote, setLedgerNote] = useState('');
@@ -684,6 +686,8 @@ export const MolecularIceStudio: React.FC = () => {
     const controller = new AbortController();
     const coordKey = `${selectedTarget.ra.toFixed(5)},${selectedTarget.dec.toFixed(5)}`;
     const forceLiveFull = forceFullResolutionKey === coordKey;
+    setLiveSpectrum(null);
+    setHoverIdx(null);
     setLiveStatus('loading');
     setLiveStatusMessage(
       forceLiveFull || sourceMode === 'live'
@@ -931,31 +935,92 @@ export const MolecularIceStudio: React.FC = () => {
     );
   };
 
+  const lamMin = waveZoom === 'ice' ? 2.4 : 0.75;
+  const lamMax = 5.0;
+  const lamSpan = lamMax - lamMin;
+
   const selectedBands = effectiveSolution.bands.filter((band) => activeBands.includes(band.key));
   const maxTau = Math.max(0.4, ...solution.tau.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)));
-  const maxFlux = Math.max(
-    1e-6,
-    ...solution.flux.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0)),
-    ...solution.continuum.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0))
-  );
+
+  // Scale flux across visible wavelength zoom window so mid-IR 2.4-5.0 um never gets crushed to 0.000
+  const maxFlux = useMemo(() => {
+    let mx = 1e-6;
+    solution.wavelengthsUm.forEach((w, idx) => {
+      if (w < lamMin || w > lamMax) return;
+      const f = solution.flux[idx];
+      const c = solution.continuum[idx];
+      if (Number.isFinite(f)) mx = Math.max(mx, f);
+      if (Number.isFinite(c)) mx = Math.max(mx, c);
+    });
+    return mx;
+  }, [solution.wavelengthsUm, solution.flux, solution.continuum, lamMin, lamMax]);
+
   const transmission = useMemo(
     () => solution.tau.map((value) => Math.exp(-Math.max(0, value))),
     [solution.tau]
+  );
+
+  // Measure % starlight blocked in key molecular windows (0-100%)
+  const blockedPctForWindow = useCallback(
+    (win: [number, number]): number | null => {
+      let maxBlocked = 0;
+      let hits = 0;
+      solution.wavelengthsUm.forEach((w, idx) => {
+        if (w < win[0] || w > win[1]) return;
+        const tr = transmission[idx];
+        if (!Number.isFinite(tr)) return;
+        hits += 1;
+        maxBlocked = Math.max(maxBlocked, Math.max(0, Math.min(100, (1 - tr) * 100)));
+      });
+      return hits > 0 ? maxBlocked : null;
+    },
+    [solution.wavelengthsUm, transmission]
+  );
+
+  const h2oBlockedPct = useMemo(() => blockedPctForWindow([2.85, 3.25]), [blockedPctForWindow]);
+  const co2BlockedPct = useMemo(() => blockedPctForWindow([4.22, 4.32]), [blockedPctForWindow]);
+
+  const xForWave = useCallback(
+    (wave: number) => 58 + ((wave - lamMin) / lamSpan) * 838,
+    [lamMin, lamSpan]
   );
 
   const plotPoints = (values: number[], maximum: number): string => {
     if (solution.wavelengthsUm.length === 0 || values.length === 0) return '';
     return solution.wavelengthsUm
       .map((wave, index) => {
+        if (wave < lamMin || wave > lamMax) return null;
         const val = values[index];
         if (!Number.isFinite(wave) || !Number.isFinite(val)) return null;
-        const x = 54 + ((wave - 0.75) / 4.25) * 842;
-        const y = 330 - (Math.max(0, val) / maximum) * 290;
-        return `${x.toFixed(1)},${Math.max(16, Math.min(330, y)).toFixed(1)}`;
+        const x = xForWave(wave);
+        const y = 326 - (Math.max(0, val) / maximum) * 282;
+        return `${x.toFixed(1)},${Math.max(24, Math.min(326, y)).toFixed(1)}`;
       })
       .filter((pt): pt is string => pt !== null)
       .join(' ');
   };
+
+  // Shaded missing-light valley hanging below 100% roof in Transmission mode
+  const transmissionValleyPath = useMemo(() => {
+    if (mode !== 'transmission' || solution.wavelengthsUm.length < 2) return '';
+    const roofY = 326 - 282; // y = 44 (100% baseline)
+    const pts: Array<{ x: number; y: number }> = [];
+    solution.wavelengthsUm.forEach((wave, index) => {
+      if (wave < lamMin || wave > lamMax) return;
+      const tr = transmission[index];
+      if (!Number.isFinite(wave) || !Number.isFinite(tr)) return;
+      const x = xForWave(wave);
+      const y = Math.max(roofY, Math.min(326, 326 - Math.max(0, Math.min(1, tr)) * 282));
+      pts.push({ x, y });
+    });
+    if (pts.length < 2) return '';
+    const poly = [
+      `${pts[0].x.toFixed(1)},${roofY.toFixed(1)}`,
+      ...pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+      `${pts[pts.length - 1].x.toFixed(1)},${roofY.toFixed(1)}`,
+    ];
+    return poly.join(' ');
+  }, [mode, solution.wavelengthsUm, transmission, lamMin, lamMax, xForWave]);
 
   // Highlight ice-absorption area (where baseline > observed) in Starlight vs Baseline mode
   const absorptionShadingPath = useMemo(() => {
@@ -963,17 +1028,61 @@ export const MolecularIceStudio: React.FC = () => {
     const upperPts: string[] = [];
     const lowerPts: string[] = [];
     solution.wavelengthsUm.forEach((wave, index) => {
+      if (wave < lamMin || wave > lamMax) return;
       const f = solution.flux[index];
       const c = solution.continuum[index];
       if (!Number.isFinite(wave) || !Number.isFinite(f) || !Number.isFinite(c)) return;
-      const x = 54 + ((wave - 0.75) / 4.25) * 842;
-      const yCont = Math.max(16, Math.min(330, 330 - (Math.max(0, c) / maxFlux) * 290));
-      const yObs = Math.max(16, Math.min(330, 330 - (Math.max(0, Math.min(f, c)) / maxFlux) * 290));
+      const x = xForWave(wave);
+      const yCont = Math.max(24, Math.min(326, 326 - (Math.max(0, c) / maxFlux) * 282));
+      const yObs = Math.max(24, Math.min(326, 326 - (Math.max(0, Math.min(f, c)) / maxFlux) * 282));
       upperPts.push(`${x.toFixed(1)},${yCont.toFixed(1)}`);
       lowerPts.unshift(`${x.toFixed(1)},${yObs.toFixed(1)}`);
     });
     return upperPts.length >= 2 ? [...upperPts, ...lowerPts].join(' ') : '';
-  }, [mode, solution.wavelengthsUm, solution.flux, solution.continuum, maxFlux]);
+  }, [mode, solution.wavelengthsUm, solution.flux, solution.continuum, maxFlux, lamMin, lamMax, xForWave]);
+
+  const hoverPointInfo = useMemo(() => {
+    if (hoverIdx === null) return null;
+    const wave = solution.wavelengthsUm[hoverIdx];
+    const tr = transmission[hoverIdx];
+    const tauVal = solution.tau[hoverIdx];
+    if (!Number.isFinite(wave)) return null;
+    const nearBand = ICE_BANDS.find((b) => wave >= b.windowUm[0] && wave <= b.windowUm[1]);
+    const ch4Near = Math.abs(wave - PHOTOSPHERIC_CH4_UM) <= 0.14;
+    const label = nearBand
+      ? `${nearBand.species} (${nearBand.label})`
+      : ch4Near
+        ? 'Methane (CH₄) brown-dwarf gas zone'
+        : 'Continuum baseline (clean starlight)';
+    const blocked = Number.isFinite(tr) ? Math.max(0, Math.min(100, (1 - tr) * 100)) : null;
+    return { wave, tr, tauVal, label, blocked };
+  }, [hoverIdx, solution.wavelengthsUm, transmission, solution.tau]);
+
+  const handleSvgMouseMove = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      if (solution.wavelengthsUm.length === 0) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const viewX = ((e.clientX - rect.left) / rect.width) * 940;
+      const wave = lamMin + ((viewX - 58) / 838) * lamSpan;
+      if (wave < lamMin || wave > lamMax) {
+        setHoverIdx(null);
+        return;
+      }
+      let best = -1;
+      let bestDist = Infinity;
+      solution.wavelengthsUm.forEach((w, idx) => {
+        if (w < lamMin || w > lamMax) return;
+        const d = Math.abs(w - wave);
+        if (d < bestDist) {
+          bestDist = d;
+          best = idx;
+        }
+      });
+      setHoverIdx(best >= 0 ? best : null);
+    },
+    [solution.wavelengthsUm, lamMin, lamSpan, lamMax]
+  );
 
   const handleSubmitLedger = useCallback(async () => {
     setLedgerState('submitting');
@@ -1169,14 +1278,14 @@ export const MolecularIceStudio: React.FC = () => {
           <div className="rounded-lg border border-border bg-card p-3 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
-                2. Star Aperture vs Sky Ring
+                2. Star Beam vs Empty Sky Check
               </span>
               <Badge variant={selectedSource === 'primary' ? 'emerald' : 'amber'} className="font-mono text-[10px]">
                 {selectedSource === 'primary' ? 'Star − Sky' : 'Sky Ring Only'}
               </Badge>
             </div>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-2 text-[11px] cursor-pointer">
                 <input
                   type="radio"
                   name="ice-source"
@@ -1184,9 +1293,12 @@ export const MolecularIceStudio: React.FC = () => {
                   onChange={() => setSelectedSource('primary')}
                   className="accent-emerald-400"
                 />
-                Background star (sky subtracted)
+                <span>
+                  <strong className="text-neutral-200">Star Beam</strong>{' '}
+                  <span className="text-muted-foreground">(light shining through cloud)</span>
+                </span>
               </label>
-              <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+              <label className="flex items-center gap-2 text-[11px] cursor-pointer">
                 <input
                   type="radio"
                   name="ice-source"
@@ -1194,7 +1306,10 @@ export const MolecularIceStudio: React.FC = () => {
                   onChange={() => setSelectedSource('sky')}
                   className="accent-amber-400"
                 />
-                Sky ring (dust check)
+                <span>
+                  <strong className="text-neutral-200">Empty Sky Ring</strong>{' '}
+                  <span className="text-muted-foreground">(check glow beside star)</span>
+                </span>
               </label>
             </div>
 
@@ -1252,7 +1367,7 @@ export const MolecularIceStudio: React.FC = () => {
               </label>
             </div>
             <p className="text-[10px] text-muted-foreground leading-relaxed">
-              Shining starlight behind dust reveals ice absorption; subtracting the dashed amber sky ring removes surrounding glow.
+              Sanity test: ice valleys should appear in the Star Beam (through the cloud), NOT in the empty amber Sky Ring around it.
             </p>
           </div>
         </section>
@@ -1262,7 +1377,7 @@ export const MolecularIceStudio: React.FC = () => {
           {/* Plain-English Ice Verdict Hero */}
           <div
             className={`rounded-xl border p-3.5 ${
-              effectiveSolution.brownDwarfNotice || skySelected
+              effectiveSolution.brownDwarfNotice || skySelected || liveStatus === 'error'
                 ? 'border-amber-500/40 bg-amber-950/20'
                 : iceDetected
                   ? 'border-cyan-500/40 bg-gradient-to-r from-cyan-950/35 via-card to-card'
@@ -1289,48 +1404,80 @@ export const MolecularIceStudio: React.FC = () => {
                 </div>
 
                 <h2 className="mt-1 text-base font-semibold text-foreground">
-                  {effectiveSolution.brownDwarfNotice
-                    ? 'False-Positive Guard: Methane Gas (Brown Dwarf), Not Solid Ice'
-                    : skySelected
-                      ? 'Inspecting Empty Sky Ring (Surrounding Cloud Glow Only)'
-                      : activeSpectrum.fidelity !== 'true_102_ch'
-                        ? `Broadband Preview for ${selectedTarget.name}`
-                        : iceDetected
-                          ? `Solid Ice Absorption Detected along ${selectedTarget.name}`
-                          : `Clear Sightline: No Solid Ice Above Noise at ${selectedTarget.name}`}
+                  {liveStatus === 'error'
+                    ? `No SPHEREx Archive Coverage Yet at ${selectedTarget.name}`
+                    : effectiveSolution.brownDwarfNotice
+                      ? 'False-Positive Guard: Methane Gas (Brown Dwarf), Not Solid Ice'
+                      : skySelected
+                        ? 'Inspecting Empty Sky Ring (Surrounding Cloud Glow Only)'
+                        : activeSpectrum.fidelity !== 'true_102_ch'
+                          ? `Broadband Preview for ${selectedTarget.name}`
+                          : iceDetected
+                            ? `Solid Ice Absorption Detected along ${selectedTarget.name}`
+                            : `Clear Sightline: No Solid Ice Above Noise at ${selectedTarget.name}`}
                 </h2>
 
                 <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-                  {effectiveSolution.brownDwarfNotice ? (
+                  {liveStatus === 'error' ? (
                     <>
-                      The 3.32 µm dip comes from warm atmospheric CH₄ gas inside {selectedTarget.name}. Solid-ice column densities are suppressed so you don&apos;t log a brown dwarf as frozen cloud ice.
+                      IRSA SPHEREx DR1 returned no overlapping exposures for this exact sky coordinate ({liveStatusMessage}). Switch to an installed Taurus star-forming cutout like <strong className="text-neutral-200">RW Aurigae</strong> to inspect real cutout light right away.
+                    </>
+                  ) : effectiveSolution.brownDwarfNotice ? (
+                    <>
+                      {selectedTarget.name} is an isolated nearby brown dwarf, not a background star behind a cloud. Its 3.32 µm dip comes from warm atmospheric methane gas (CH₄), so solid-ice measurements are suppressed.
                     </>
                   ) : skySelected ? (
                     <>
-                      Sky-ring pixels carry background cloud emission without a bright star behind them, so solid-ice column densities are suppressed until you switch back to Background Star.
+                      Sky-ring pixels sample empty cloud glow beside the star rather than starlight shining through ice, so ice totals are suppressed until you switch back to Star Beam.
                     </>
                   ) : activeSpectrum.fidelity !== 'true_102_ch' ? (
                     <>
-                      Installed cutout cubes only store 6 broad bands (D1–D6), which smooth out narrow CO₂ (4.27 µm) and CO (4.67 µm) ice dips. Extract the full 102-channel HDU 6 spectrum from IRSA to measure solid ice accurately.
+                      Installed cutout cubes only measure 6 broad bands (D1–D6), which smooth out narrow CO₂ (4.27 µm) and CO (4.67 µm) dips. Extract all 102 HDU 6 channels from IRSA to quantify exact column densities.
                     </>
                   ) : iceDetected ? (
                     <>
-                      Starlight dipped noticeably inside laboratory ice bands (CO₂ / H₂O ={' '}
-                      <strong className="text-cyan-300">
-                        {effectiveSolution.ratioPercent?.toFixed(1) ?? '—'}%
+                      Starlight dips sharply inside cosmic ice wavelengths (H₂O blocked{' '}
+                      <strong className="text-sky-300">
+                        {h2oBlockedPct !== null ? `${h2oBlockedPct.toFixed(0)}%` : '—'}
                       </strong>
+                      {effectiveSolution.ratioPercent !== null && (
+                        <>
+                          {' '}
+                          · CO₂ / H₂O ={' '}
+                          <strong className="text-cyan-300">
+                            {effectiveSolution.ratioPercent.toFixed(1)}%
+                          </strong>
+                        </>
+                      )}
                       ).
                     </>
                   ) : (
                     <>
-                      {selectedTarget.environment}. Try an icy molecular-cloud sightline (Elias 16, J110621, M42 Orion) to see deep H₂O & CO₂ absorption troughs.
+                      {selectedTarget.environment}. Pick a molecular-cloud star or Taurus/Orion sightline to measure frozen H₂O &amp; CO₂ valleys.
                     </>
                   )}
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {activeSpectrum.fidelity !== 'true_102_ch' && (
+                {(() => {
+                  const rwSec = readyInstalledSections.find((s) =>
+                    s.label.toLowerCase().includes('rw aurigae')
+                  );
+                  if (!rwSec || (sourceMode === 'installed' && selectedSectionId === rwSec.section_id)) {
+                    return null;
+                  }
+                  return (
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => handleSelectInstalledSection(rwSec)}
+                    >
+                      Try RW Aurigae (Taurus Cloud)
+                    </Button>
+                  );
+                })()}
+                {activeSpectrum.fidelity !== 'true_102_ch' && liveStatus !== 'error' && (
                   <Button
                     size="xs"
                     onClick={() => {
@@ -1353,43 +1500,97 @@ export const MolecularIceStudio: React.FC = () => {
             </div>
           </div>
 
+          {/* 1-Line Flashlight Mental Model */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-500/20 bg-cyan-950/15 px-3 py-2 text-[11px]">
+            <div className="font-mono text-[10px] text-cyan-200">
+              ☀️ Background Star &nbsp;──▶&nbsp; ❄️ Cold Ice Cloud &nbsp;──▶&nbsp; 🛰️ SPHEREx Telescope
+            </div>
+            <div className="text-neutral-300">
+              Valleys hanging below <strong className="text-emerald-300">100%</strong> show colors swallowed by frozen molecules along the beam.
+            </div>
+          </div>
+
           {/* Interactive 3-Step Visual Story Chart */}
           <div className="rounded-lg border border-border bg-black/60 p-3 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex overflow-hidden rounded-sm border border-border">
-                <button
-                  type="button"
-                  onClick={() => setMode('raw')}
-                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                    mode === 'raw' ? 'bg-primary/20 text-primary' : 'bg-background text-muted-foreground hover:text-white'
-                  }`}
-                >
-                  1. Starlight vs. Baseline
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('transmission')}
-                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                    mode === 'transmission'
-                      ? 'bg-emerald-500/20 text-emerald-300'
-                      : 'bg-background text-muted-foreground hover:text-white'
-                  }`}
-                >
-                  2. % Light Passing Through
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('tau')}
-                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
-                    mode === 'tau' ? 'bg-sky-500/20 text-sky-300' : 'bg-background text-muted-foreground hover:text-white'
-                  }`}
-                >
-                  3. Ice Absorption Spikes (τ)
-                </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex overflow-hidden rounded-sm border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setMode('transmission')}
+                    className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                      mode === 'transmission'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'bg-background text-muted-foreground hover:text-white'
+                    }`}
+                  >
+                    1. % Light Passing Through
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('raw')}
+                    className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                      mode === 'raw' ? 'bg-primary/20 text-primary' : 'bg-background text-muted-foreground hover:text-white'
+                    }`}
+                  >
+                    2. Starlight vs. Baseline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('tau')}
+                    className={`px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                      mode === 'tau' ? 'bg-sky-500/20 text-sky-300' : 'bg-background text-muted-foreground hover:text-white'
+                    }`}
+                  >
+                    3. Absorption Spikes (τ)
+                  </button>
+                </div>
+
+                <div className="flex overflow-hidden rounded-sm border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setWaveZoom('ice')}
+                    className={`px-2 py-1 font-mono text-[10px] transition-colors cursor-pointer ${
+                      waveZoom === 'ice'
+                        ? 'bg-cyan-500/20 text-cyan-200'
+                        : 'bg-background text-muted-foreground hover:text-white'
+                    }`}
+                    title="Zoom into 2.4–5.0 µm where frozen H₂O, CO₂, and CO ice dips live"
+                  >
+                    Ice Zone (2.4–5 µm)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWaveZoom('full')}
+                    className={`px-2 py-1 font-mono text-[10px] transition-colors cursor-pointer ${
+                      waveZoom === 'full'
+                        ? 'bg-cyan-500/20 text-cyan-200'
+                        : 'bg-background text-muted-foreground hover:text-white'
+                    }`}
+                  >
+                    Full (0.75–5 µm)
+                  </button>
+                </div>
               </div>
 
               {/* Explicit Chart Legend */}
               <div className="flex flex-wrap items-center gap-3 text-[10px] text-neutral-300">
+                {mode === 'transmission' && (
+                  <>
+                    <span className="inline-flex items-center gap-1.5 text-amber-300">
+                      <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-amber-400" />
+                      Expected clean starlight (100%)
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-emerald-300">
+                      <span className="inline-block h-0.5 w-4 bg-emerald-400" />
+                      Observed starlight
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-sky-300">
+                      <span className="inline-block h-2.5 w-3 rounded-xs bg-cyan-400/25 border border-cyan-400/40" />
+                      Absorbed by ice
+                    </span>
+                  </>
+                )}
                 {mode === 'raw' && (
                   <>
                     <span className="inline-flex items-center gap-1.5">
@@ -1406,16 +1607,10 @@ export const MolecularIceStudio: React.FC = () => {
                     </span>
                   </>
                 )}
-                {mode === 'transmission' && (
-                  <span className="inline-flex items-center gap-1.5 text-emerald-300">
-                    <span className="inline-block h-0.5 w-4 bg-emerald-400" />
-                    Fraction transmitted (1.0 = unblocked starlight)
-                  </span>
-                )}
                 {mode === 'tau' && (
                   <span className="inline-flex items-center gap-1.5 text-sky-300">
                     <span className="inline-block h-0.5 w-4 bg-sky-400" />
-                    Optical depth τ (taller peak = thicker ice layer)
+                    Optical depth τ (taller spike = denser ice)
                   </span>
                 )}
               </div>
@@ -1440,108 +1635,233 @@ export const MolecularIceStudio: React.FC = () => {
             </div>
 
             <svg
-              className="h-[260px] sm:h-[290px] w-full"
+              className="h-[260px] sm:h-[290px] w-full cursor-crosshair"
               viewBox="0 0 940 350"
               preserveAspectRatio="none"
               role="img"
               aria-label="Optical depth and continuum comparison versus wavelength"
+              onMouseMove={handleSvgMouseMove}
+              onMouseLeave={() => setHoverIdx(null)}
             >
-              {[0.2, 0.4, 0.6, 0.8].map((fraction) => {
-                const y = 330 - fraction * 290;
+              {[0.25, 0.5, 0.75, 1.0].map((fraction) => {
+                const y = 326 - fraction * 282;
+                const useMjy = maxFlux < 0.05;
+                const rawVal = fraction * maxFlux * (useMjy ? 1000 : 1);
                 return (
                   <g key={fraction}>
-                    <line x1="54" y1={y} x2="896" y2={y} stroke="#262626" strokeWidth="1" />
-                    <text x="48" y={y + 3} textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
+                    <line
+                      x1="58"
+                      y1={y}
+                      x2="896"
+                      y2={y}
+                      stroke={mode === 'transmission' && fraction === 1.0 ? '#f59e0b' : '#262626'}
+                      strokeWidth={mode === 'transmission' && fraction === 1.0 ? '1.3' : '1'}
+                      strokeDasharray={mode === 'transmission' && fraction === 1.0 ? '5,4' : undefined}
+                    />
+                    <text x="52" y={y + 3} textAnchor="end" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
                       {mode === 'tau'
                         ? (fraction * maxTau).toFixed(2)
                         : mode === 'transmission'
                           ? `${Math.round(fraction * 100)}%`
-                          : (fraction * maxFlux).toFixed(3)}
+                          : rawVal >= 10
+                            ? rawVal.toFixed(1)
+                            : rawVal.toFixed(2)}
                     </text>
                   </g>
                 );
               })}
-              <line x1="54" y1="330" x2="896" y2="330" stroke="#737373" strokeWidth="1" />
-              <line x1="54" y1="16" x2="54" y2="330" stroke="#737373" strokeWidth="1" />
-              {[1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0].map((wave) => {
-                const x = 54 + ((wave - 0.75) / 4.25) * 842;
+              {mode === 'raw' && (
+                <text x="52" y="16" textAnchor="end" fill="#737373" fontSize="9" fontFamily="monospace">
+                  {maxFlux < 0.05 ? 'mJy' : 'Jy'}
+                </text>
+              )}
+              <line x1="58" y1="326" x2="896" y2="326" stroke="#737373" strokeWidth="1" />
+              <line x1="58" y1="24" x2="58" y2="326" stroke="#737373" strokeWidth="1" />
+              {(waveZoom === 'ice'
+                ? [2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+                : [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+              ).map((wave) => {
+                const x = xForWave(wave);
                 return (
                   <g key={wave}>
-                    <line x1={x} y1="16" x2={x} y2="330" stroke="#1f1f1f" strokeWidth="1" />
-                    <text x={x} y="346" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
+                    <line x1={x} y1="24" x2={x} y2="326" stroke="#1f1f1f" strokeWidth="1" />
+                    <text x={x} y="344" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
                       {wave.toFixed(1)}
                     </text>
                   </g>
                 );
               })}
-              {ICE_BANDS.filter((band) => activeBands.includes(band.key)).map((band) => {
-                const x = 54 + ((band.centerUm - 0.75) / 4.25) * 842;
+              {ICE_BANDS.filter(
+                (band) => activeBands.includes(band.key) && band.centerUm >= lamMin && band.centerUm <= lamMax
+              ).map((band, idx) => {
+                const x = xForWave(band.centerUm);
+                const labelY = idx % 2 === 0 ? 34 : 48;
                 return (
                   <g key={band.key}>
-                    <line x1={x} y1="16" x2={x} y2="330" stroke={band.color} strokeDasharray="3,3" opacity={0.55} />
-                    <text x={x + 4} y="28" fill={band.color} fontSize="9" fontFamily="monospace">
+                    <line x1={x} y1="24" x2={x} y2="326" stroke={band.color} strokeDasharray="3,3" opacity={0.55} />
+                    <text x={x + 4} y={labelY} fill={band.color} fontSize="10" fontFamily="monospace">
                       {band.species}
                     </text>
                   </g>
                 );
               })}
               {solution.wavelengthsUm.length === 0 ? (
-                <text x="474" y="175" textAnchor="middle" fill="#A3A3A3" fontSize="12" fontFamily="monospace">
+                <text x="477" y="175" textAnchor="middle" fill="#A3A3A3" fontSize="12" fontFamily="monospace">
                   {liveStatus === 'loading'
                     ? liveStatusMessage || 'Extracting archive spectrum…'
-                    : 'No archive spectrum loaded — select an installed cutout or Icy Cloud Sightline'}
+                    : liveStatus === 'error'
+                      ? 'No IRSA exposures at this coordinate — try RW Aurigae or an installed cutout'
+                      : 'No archive spectrum loaded — select an installed cutout or sightline'}
                 </text>
               ) : mode === 'tau' ? (
-                <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.tau, maxTau)} />
+                <polyline fill="none" stroke="#38bdf8" strokeWidth="2" points={plotPoints(solution.tau, maxTau)} />
               ) : mode === 'transmission' ? (
-                <polyline fill="none" stroke="#34d399" strokeWidth="1.8" points={plotPoints(transmission, 1.0)} />
+                <>
+                  {transmissionValleyPath && (
+                    <polygon points={transmissionValleyPath} fill="rgba(34, 211, 238, 0.22)" />
+                  )}
+                  <polyline fill="none" stroke="#34d399" strokeWidth="2.1" points={plotPoints(transmission, 1.0)} />
+                </>
               ) : (
                 <>
                   {absorptionShadingPath && (
-                    <polygon points={absorptionShadingPath} fill="rgba(56, 189, 248, 0.18)" />
+                    <polygon points={absorptionShadingPath} fill="rgba(56, 189, 248, 0.2)" />
                   )}
                   <polyline
                     fill="none"
                     stroke="#f59e0b"
-                    strokeWidth="1.4"
+                    strokeWidth="1.5"
                     strokeDasharray="4,3"
                     points={plotPoints(solution.continuum, maxFlux)}
                   />
-                  <polyline fill="none" stroke="#38bdf8" strokeWidth="1.8" points={plotPoints(solution.flux, maxFlux)} />
+                  <polyline fill="none" stroke="#38bdf8" strokeWidth="2" points={plotPoints(solution.flux, maxFlux)} />
                 </>
               )}
-              <text x="474" y="14" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
-                Wavelength λ [µm] · 0.75–5.00 µm
+              {hoverPointInfo && (
+                <line
+                  x1={xForWave(hoverPointInfo.wave)}
+                  y1="24"
+                  x2={xForWave(hoverPointInfo.wave)}
+                  y2="326"
+                  stroke="#e5e7eb"
+                  strokeWidth="1"
+                  strokeDasharray="2,2"
+                />
+              )}
+              <text x="477" y="14" textAnchor="middle" fill="#A3A3A3" fontSize="10" fontFamily="monospace">
+                Wavelength λ [µm] · {lamMin.toFixed(2)}–5.00 µm
               </text>
             </svg>
+
+            {/* Live Hover Wavelength Translator */}
+            <div className="min-h-[28px] rounded-md border border-white/10 bg-neutral-900/75 px-2.5 py-1.5 text-[11px] flex flex-wrap items-center justify-between gap-2">
+              {hoverPointInfo ? (
+                <>
+                  <span className="text-neutral-200">
+                    <strong className="font-mono text-white">{hoverPointInfo.wave.toFixed(2)} µm</strong> ·{' '}
+                    {hoverPointInfo.label}
+                  </span>
+                  <span className="font-mono text-[10px] text-cyan-300">
+                    {hoverPointInfo.blocked !== null
+                      ? `${(100 - hoverPointInfo.blocked).toFixed(0)}% passing through (${hoverPointInfo.blocked.toFixed(0)}% blocked)`
+                      : ''}
+                  </span>
+                </>
+              ) : (
+                <span className="text-neutral-400">
+                  Hover across the curve to read how much starlight each ice color blocks at this sightline.
+                </span>
+              )}
+            </div>
+
+            {/* Live Plain-English Ice Chart Reader */}
+            {solution.wavelengthsUm.length >= 5 && (
+              <div className="rounded-md border border-white/10 bg-neutral-900/50 p-2.5 text-[11px] space-y-1">
+                <div className="font-mono text-[10px] uppercase tracking-wider text-cyan-300">
+                  What This Graph Is Telling You
+                </div>
+                <p className="text-neutral-200 leading-relaxed">
+                  {effectiveSolution.brownDwarfNotice ? (
+                    <>
+                      • <strong className="text-white">False-positive alert:</strong> Any dip near 3.3 µm here comes from hot methane gas inside a brown dwarf — not frozen ice between stars.
+                    </>
+                  ) : skySelected ? (
+                    <>
+                      • <strong className="text-white">Sky Ring sanity check:</strong> Compare this curve against Star Beam — if empty space shows no deep 3.05 / 4.27 µm valley, any ice dip in Star Beam is truly absorbing starlight.
+                    </>
+                  ) : (
+                    <>
+                      • <strong className="text-white">Missing starlight valleys:</strong> Water ice (3.05 µm) blocks up to{' '}
+                      <strong className="text-sky-300">
+                        {h2oBlockedPct !== null ? `${h2oBlockedPct.toFixed(0)}%` : '—'}
+                      </strong>{' '}
+                      of light, and dry ice CO₂ (4.27 µm) blocks up to{' '}
+                      <strong className="text-amber-300">
+                        {co2BlockedPct !== null ? `${co2BlockedPct.toFixed(0)}%` : '—'}
+                      </strong>
+                      .
+                    </>
+                  )}
+                </p>
+                {activeSpectrum.fidelity !== 'true_102_ch' && (
+                  <p className="text-amber-200/90 leading-relaxed">
+                    • <strong className="text-amber-200">Preview fidelity:</strong> Cutout pixels average across 6 wide bands, so sharp valleys look shallower until you run 102-channel IRSA extraction.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Human-Readable Column Density Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div className="rounded-lg border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Water Ice — N(H₂O)</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Water Ice — H₂O (3.05 µm)</div>
               <div className="mt-1 font-mono text-base font-semibold text-sky-300">
                 {effectiveSolution.brownDwarfNotice || skySelected
                   ? 'suppressed'
-                  : formatColumnDensity(h2oDensity)}
+                  : h2oBlockedPct !== null
+                    ? `${h2oBlockedPct.toFixed(0)}% light blocked`
+                    : '—'}
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">molecules cm⁻² · 3.05 µm</div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                {effectiveSolution.brownDwarfNotice || skySelected
+                  ? 'Not solid cloud ice'
+                  : activeSpectrum.fidelity === 'true_102_ch'
+                    ? `N(H₂O) = ${formatColumnDensity(h2oDensity)} cm⁻²`
+                    : '6-band preview · extract 102-ch for N(H₂O)'}
+              </div>
             </div>
             <div className="rounded-lg border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Dry Ice — N(CO₂)</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Dry Ice — CO₂ (4.27 µm)</div>
               <div className="mt-1 font-mono text-base font-semibold text-amber-300">
                 {effectiveSolution.brownDwarfNotice || skySelected
                   ? 'suppressed'
-                  : formatColumnDensity(co2Density)}
+                  : co2BlockedPct !== null
+                    ? `${co2BlockedPct.toFixed(0)}% light blocked`
+                    : '—'}
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">molecules cm⁻² · 4.27 µm</div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                {effectiveSolution.brownDwarfNotice || skySelected
+                  ? 'Not solid cloud ice'
+                  : activeSpectrum.fidelity === 'true_102_ch'
+                    ? `N(CO₂) = ${formatColumnDensity(co2Density)} cm⁻²`
+                    : '6-band preview · extract 102-ch for N(CO₂)'}
+              </div>
             </div>
             <div className="rounded-lg border border-border bg-card p-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">CO₂ / H₂O Ratio</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">CO₂ / H₂O Ice Mix</div>
               <div className="mt-1 font-mono text-base font-semibold text-emerald-300">
-                {effectiveSolution.ratioPercent === null ? 'suppressed' : `${effectiveSolution.ratioPercent.toFixed(1)}%`}
+                {effectiveSolution.ratioPercent === null || activeSpectrum.fidelity !== 'true_102_ch'
+                  ? effectiveSolution.brownDwarfNotice || skySelected
+                    ? 'suppressed'
+                    : '102-ch only'
+                  : `${effectiveSolution.ratioPercent.toFixed(1)}%`}
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">typical dense cloud: 15–25%</div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                {effectiveSolution.brownDwarfNotice
+                  ? 'Brown dwarf CH₄ gas guard active'
+                  : 'Typical icy star-forming cloud: 15–25%'}
+              </div>
             </div>
           </div>
 
