@@ -401,7 +401,7 @@ export const DecisionBoundaries: React.FC = () => {
           title="AI Knowledge & Latent Graph"
           subtitle="Explore PyTorch latent embeddings linking sky targets, spectral features, archive templates, and class hubs."
           actions={
-            <>
+            <div data-tour="admin-boundaries-actions" className="flex flex-wrap items-center gap-2">
               {graph?.checkpoint_meta && (
                 <AdminStatusPill tone={graph.embedding_space === 'trained' ? 'emerald' : 'amber'}>
                   {graph.embedding_space === 'trained'
@@ -454,7 +454,7 @@ export const DecisionBoundaries: React.FC = () => {
               >
                 Reset View
               </Button>
-            </>
+            </div>
           }
         />
 
