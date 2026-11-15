@@ -412,7 +412,7 @@ export const ActivationInspector: React.FC = () => {
           title="AI Identification Co-Pilot"
           subtitle="Compare base vs. fine-tuned SPHEREx predictions, Grad-CAM centroid apertures, and 102-channel attributions."
           actions={
-            <>
+            <div data-tour="admin-identify-actions" className="flex flex-wrap items-center gap-2">
               {data?.checkpoint_meta && (
                 <AdminStatusPill tone="sky">
                   {data.checkpoint_meta.source === 'studio_train' ? 'Studio Run' : 'Warmstart'} · LoRA r=
@@ -436,7 +436,7 @@ export const ActivationInspector: React.FC = () => {
               >
                 {loading ? 'Scanning Targets...' : '↻ Run Batch Scan'}
               </Button>
-            </>
+            </div>
           }
         />
 
