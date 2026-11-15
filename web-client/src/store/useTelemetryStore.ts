@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { InstalledSection } from '../lib/installedSections';
 
 export interface EphemerisTarget {
   name: string;
@@ -90,6 +91,7 @@ export interface TelemetryState {
   loadedCutout: LoadedCutoutData | null;
   isCutoutLoading: boolean;
   cutoutError: string | null;
+  currentSelectedSection: InstalledSection | null;
 
   // Actions
   setCoordinates: (ra: number, dec: number, targetName?: string, sourceBadge?: string) => void;
@@ -113,6 +115,7 @@ export interface TelemetryState {
   setIceAperture: (apertureRadiusPx: number, innerPx?: number, outerPx?: number) => void;
   setLoadedCutout: (cutout: LoadedCutoutData | null) => void;
   setCutoutLoading: (loading: boolean, error?: string | null) => void;
+  setCurrentSelectedSection: (section: InstalledSection | null) => void;
   setActiveSpectrum: (spectrum: SpectralChannel[]) => void;
   setSpectrumLoading: (loading: boolean) => void;
   setSpectralBlinkSynced: (synced: boolean) => void;
@@ -164,6 +167,7 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
   loadedCutout: null,
   isCutoutLoading: false,
   cutoutError: null,
+  currentSelectedSection: null,
 
   // Actions
   setCoordinates: (ra, dec, targetName, sourceBadge) =>
@@ -251,6 +255,8 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
 
   setCutoutLoading: (isCutoutLoading, cutoutError = null) =>
     set({ isCutoutLoading, cutoutError }),
+
+  setCurrentSelectedSection: (currentSelectedSection) => set({ currentSelectedSection }),
 
   setActiveSpectrum: (activeSpectrum) => set({ activeSpectrum }),
 
