@@ -13,6 +13,34 @@ TARGET_LAYERS = {
 }
 FEATURE_AXES = ["ir_color_d5_d2", "motion_snr", "ice_methane_depth"]
 CLASS_LABELS = ["Field / Stationary", "Moving / Spectral Anomaly"]
+DOMAIN_CLASSES = [
+    "Brown Dwarf (Y/T/L)",
+    "M-Dwarf / High-PM Star",
+    "Pulsating / T-Tauri Variable",
+    "Ice-Absorbed Protostar",
+    "Solar System / Moving",
+    "Galaxy / AGN / Field",
+]
+
+# Exact layer-by-layer specifications for the /admin Model Registry & Spec Inspector
+MODEL_LAYER_SPECS: dict[str, list[dict[str, object]]] = {
+    "SpectralResNet102": [
+        {"name": "stem", "type": "Conv1d(2→16, k=7) + BN + ReLU", "shape": "[B, 16, 102]", "params": 272, "trainable_in_lora": False, "role": "Frozen continuum feature stem"},
+        {"name": "block1", "type": "ResBlock1D(16→16, k=5)", "shape": "[B, 16, 102]", "params": 2656, "trainable_in_lora": False, "role": "Frozen spectral band residual encoder"},
+        {"name": "block2", "type": "ResBlock1D(16→16, k=5)", "shape": "[B, 16, 102]", "params": 2656, "trainable_in_lora": False, "role": "Saliency & gradient attribution hook (block2.out_act)"},
+        {"name": "attn", "type": "MultiheadAttention(16, heads=2)", "shape": "[B, 102, 16]", "params": 1088, "trainable_in_lora": True, "role": "Cross-band absorption correlation (LoRA out_proj)"},
+        {"name": "head", "type": "LoraLinear(16→2)", "shape": "[B, 2]", "params": 34, "trainable_in_lora": True, "role": "Low-rank adapted anomaly/class readout"},
+    ],
+    "DipoleConvNet3D": [
+        {"name": "conv1+bn1", "type": "Conv3d(6→8, k=3) + BN3d + Pool", "shape": "[B, 8, T, 16, 16]", "params": 1320, "trainable_in_lora": False, "role": "Frozen multi-band spatial aperture stem"},
+        {"name": "conv2+bn2", "type": "Conv3d(8→16, k=3) + BN3d + Pool", "shape": "[B, 16, T, 8, 8]", "params": 3504, "trainable_in_lora": False, "role": "Spatio-temporal motion feature map (act2 Grad-CAM)"},
+        {"name": "head", "type": "LoraLinear(16→2)", "shape": "[B, 2]", "params": 34, "trainable_in_lora": True, "role": "Low-rank adapted moving dipole classifier"},
+    ],
+    "AstroFeatureSVM": [
+        {"name": "rbf", "type": "RBFLayer(3→32 landmarks, γ)", "shape": "[B, 32]", "params": 97, "trainable_in_lora": False, "role": "Learnable Gaussian distance basis in [-1, 1]³"},
+        {"name": "readout", "type": "LoraLinear(32→2)", "shape": "[B, 2]", "params": 66, "trainable_in_lora": True, "role": "Low-rank adapted margin hyperplane readout"},
+    ],
+}
 
 
 class DipoleConvNet3D(nn.Module):
