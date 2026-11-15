@@ -1,8 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from '../components/ui';
 import { cn } from '../lib/utils';
 
 type SftSchema = 'prompt_completion' | 'conversational' | 'vlm' | 'tool_calling';
+
+const BUCKET_CLASS_OPTIONS = [
+  'Brown Dwarf (Y/T/L)',
+  'M-Dwarf / High-PM Star',
+  'Pulsating / T-Tauri Variable',
+  'Ice-Absorbed Protostar',
+  'Solar System / Moving',
+  'Galaxy / AGN / Field',
+] as const;
 
 interface SftTokenPreview {
   text: string;
@@ -10,10 +19,42 @@ interface SftTokenPreview {
   label_id: number;
 }
 
+interface SftBucketSample {
+  target_id: string;
+  label: string;
+  ra: number | null;
+  dec: number | null;
+  source: string;
+  source_badge: string;
+  split: 'train' | 'val';
+  domain_class: string;
+  has_real_cutout: boolean;
+  spectral_features: Record<string, number>;
+  stamp_preview_16x16: number[][];
+  flux_preview_34: number[];
+  prompt: string;
+  completion: string;
+  tokens_preview: SftTokenPreview[];
+}
+
+interface SftClassBucket {
+  class_name: string;
+  count: number;
+  train_count: number;
+  val_count: number;
+  sources: Record<string, number>;
+  samples: SftBucketSample[];
+}
+
 interface SftDatasetResponse {
   schema: SftSchema;
   total_records: number;
   feedback_count: number;
+  split_summary?: {
+    train: number;
+    val: number;
+  };
+  class_buckets?: SftClassBucket[];
   token_stats: {
     masked_prompt_tokens: number;
     supervised_completion_tokens: number;
@@ -21,6 +62,71 @@ interface SftDatasetResponse {
   records: Array<Record<string, any> & { tokens_preview?: SftTokenPreview[] }>;
   jsonl: string;
 }
+
+const StampPreviewSvg: React.FC<{ stamp?: number[][] }> = ({ stamp }) => {
+  if (!stamp || stamp.length === 0) {
+    return (
+      <div className="w-16 h-16 rounded border border-dashed border-border bg-background/60 flex items-center justify-center text-[9px] font-mono text-muted-foreground text-center px-1 shrink-0">
+        No Cutout
+      </div>
+    );
+  }
+  const rows = stamp.length;
+  const cols = stamp[0]?.length || rows;
+  const flat = stamp.flat();
+  const lo = Math.min(...flat);
+  const hi = Math.max(...flat, lo + 1e-6);
+  return (
+    <svg
+      viewBox={`0 0 ${cols} ${rows}`}
+      className="w-16 h-16 rounded border border-border bg-[#070b14] shrink-0"
+      role="img"
+      aria-label="16x16 sky cutout preview"
+    >
+      {stamp.map((row, y) =>
+        row.map((val, x) => {
+          const norm = Math.max(0, Math.min(1, (val - lo) / (hi - lo)));
+          const r = Math.round(14 + norm * 230);
+          const g = Math.round(24 + Math.pow(norm, 0.85) * 190);
+          const b = Math.round(52 + (1 - Math.abs(norm - 0.45)) * 145);
+          return <rect key={`${x}-${y}`} x={x} y={y} width={1.03} height={1.03} fill={`rgb(${r},${g},${b})`} />;
+        })
+      )}
+    </svg>
+  );
+};
+
+const SpectrumSparklineSvg: React.FC<{ flux?: number[] }> = ({ flux }) => {
+  if (!flux || flux.length < 2) {
+    return (
+      <div className="w-32 h-16 rounded border border-dashed border-border bg-background/60 flex items-center justify-center text-[9px] font-mono text-muted-foreground shrink-0">
+        No 102-ch SED
+      </div>
+    );
+  }
+  const w = 128;
+  const h = 48;
+  const lo = Math.min(...flux);
+  const hi = Math.max(...flux, lo + 1e-6);
+  const pts = flux
+    .map((v, i) => {
+      const x = (i / (flux.length - 1)) * (w - 4) + 2;
+      const y = h - 4 - ((v - lo) / (hi - lo)) * (h - 8);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      className="w-32 h-16 rounded border border-border bg-[#070b14] shrink-0"
+      role="img"
+      aria-label="34-point spectral preview"
+    >
+      <line x1="2" y1={h / 2} x2={w - 2} y2={h / 2} stroke="rgba(148,163,184,0.18)" strokeDasharray="2 2" />
+      <polyline fill="none" stroke="#38bdf8" strokeWidth="1.6" strokeLinejoin="round" points={pts} />
+    </svg>
+  );
+};
 
 interface ProductCardInfo {
   id: string;
@@ -151,27 +257,73 @@ export const DataProductExports: React.FC = () => {
   const [sftData, setSftData] = useState<SftDatasetResponse | null>(null);
   const [sftLoading, setSftLoading] = useState<boolean>(false);
   const [copiedJsonl, setCopiedJsonl] = useState<boolean>(false);
+  const [selectedBucket, setSelectedBucket] = useState<string>('ALL');
+  const [relabelMap, setRelabelMap] = useState<Record<string, string>>({});
+  const [relabelingTargetId, setRelabelingTargetId] = useState<string | null>(null);
+  const [relabelStatus, setRelabelStatus] = useState<string | null>(null);
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [copiedCurl, setCopiedCurl] = useState<string | null>(null);
   const [liveSummary, setLiveSummary] = useState<Record<string, { count: number; verified_count: number }> | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadSftDataset = useCallback(async (schema: SftSchema) => {
     setSftLoading(true);
-    fetch(`/api/admin/sft-dataset?schema=${sftSchema}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: SftDatasetResponse | null) => {
-        if (!cancelled && data) setSftData(data);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setSftLoading(false);
+    try {
+      const res = await fetch(`/api/admin/sft-dataset?schema=${schema}`);
+      if (res.ok) {
+        const data: SftDatasetResponse = await res.json();
+        setSftData(data);
+      }
+    } catch {
+      // ignore offline error
+    } finally {
+      setSftLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSftDataset(sftSchema);
+  }, [sftSchema, loadSftDataset]);
+
+  const bucketSamples = useMemo(() => {
+    const buckets = sftData?.class_buckets || [];
+    if (selectedBucket === 'ALL') {
+      return buckets.flatMap((b) => b.samples || []);
+    }
+    const found = buckets.find((b) => b.class_name === selectedBucket);
+    return found?.samples || [];
+  }, [sftData, selectedBucket]);
+
+  const handleQuickRelabel = async (sample: SftBucketSample) => {
+    const chosenClass = relabelMap[sample.target_id] || sample.domain_class;
+    setRelabelingTargetId(sample.target_id);
+    setRelabelStatus(null);
+    try {
+      const res = await fetch('/api/admin/sft-dataset/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_id: sample.target_id,
+          label: sample.label,
+          predicted_class: sample.domain_class,
+          human_class: chosenClass,
+          action: chosenClass === sample.domain_class ? 'confirmed' : 'overridden',
+          reasoning: `Curated in Class Buckets Inspector (${sample.domain_class} -> ${chosenClass})`,
+          metrics: sample.spectral_features || {},
+        }),
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [sftSchema]);
+      if (res.ok) {
+        setRelabelStatus(`Saved ${sample.label} -> ${chosenClass} into SFT corpus`);
+        await loadSftDataset(sftSchema);
+      } else {
+        setRelabelStatus(`Failed to save re-label (${res.status})`);
+      }
+    } catch {
+      setRelabelStatus('Network error saving dataset label override');
+    } finally {
+      setRelabelingTargetId(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -311,14 +463,21 @@ export const DataProductExports: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <Card className="p-3 border-border bg-card/60">
-                <div className="text-[10px] font-mono text-muted-foreground">Total Training Records</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-mono text-muted-foreground">Total Training Records</div>
+                  {sftData?.split_summary && (
+                    <Badge variant="outline" className="font-mono text-[9px] text-sky-300 border-sky-500/40">
+                      Train {sftData.split_summary.train} / Val {sftData.split_summary.val}
+                    </Badge>
+                  )}
+                </div>
                 <div className="text-xl font-mono font-bold mt-0.5">{sftData?.total_records ?? '—'}</div>
                 <div className="text-[10px] text-muted-foreground">Sections + Benchmarks + Forum</div>
               </Card>
               <Card className="p-3 border-border bg-card/60">
                 <div className="text-[10px] font-mono text-muted-foreground">Co-Pilot Feedback Examples</div>
                 <div className="text-xl font-mono font-bold text-emerald-400 mt-0.5">{sftData?.feedback_count ?? 0}</div>
-                <div className="text-[10px] text-muted-foreground">Saved from Tab 3 active learning</div>
+                <div className="text-[10px] text-muted-foreground">Saved from active learning &amp; buckets</div>
               </Card>
               <Card className="p-3 border-border bg-card/60">
                 <div className="text-[10px] font-mono text-muted-foreground">Masked Prompt Tokens (-100)</div>
@@ -336,6 +495,85 @@ export const DataProductExports: React.FC = () => {
               </Card>
             </div>
 
+            {/* TEACHABLE MACHINE-STYLE CLASS BUCKETS */}
+            <Card className="border-border bg-card/60">
+              <CardHeader className="py-2.5 px-4 border-b border-border bg-secondary/30 flex flex-wrap flex-row items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-xs font-semibold">
+                    Training Class Buckets &amp; Train/Val Split
+                  </CardTitle>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Click a class bucket to inspect its sky cutouts, 102-ch SEDs, or re-label examples into the live SFT corpus.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBucket('ALL')}
+                  className={cn(
+                    'px-2.5 py-1 rounded text-[10px] font-mono border transition-colors',
+                    selectedBucket === 'ALL'
+                      ? 'border-sky-400 bg-sky-500/15 text-sky-200 font-semibold'
+                      : 'border-border bg-background/60 text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  All Buckets ({sftData?.total_records ?? 0})
+                </button>
+              </CardHeader>
+              <CardContent className="p-3">
+                {sftData?.class_buckets && sftData.class_buckets.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    {sftData.class_buckets.map((bucket) => {
+                      const active = selectedBucket === bucket.class_name;
+                      const srcEntries = Object.entries(bucket.sources || {});
+                      return (
+                        <button
+                          key={bucket.class_name}
+                          type="button"
+                          onClick={() => setSelectedBucket(active ? 'ALL' : bucket.class_name)}
+                          className={cn(
+                            'rounded-md border p-2.5 text-left transition-all flex flex-col gap-1.5',
+                            active
+                              ? 'border-sky-400 bg-sky-500/10 ring-1 ring-sky-400/40'
+                              : 'border-border bg-secondary/20 hover:border-border/80 hover:bg-secondary/35'
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-foreground truncate">
+                              {bucket.class_name}
+                            </span>
+                            <Badge variant={bucket.count > 0 ? 'emerald' : 'muted'} className="font-mono text-[9px] shrink-0">
+                              {bucket.count} samples
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground">
+                            <span>
+                              Train <strong className="text-sky-300">{bucket.train_count}</strong> · Val{' '}
+                              <strong className="text-amber-300">{bucket.val_count}</strong>
+                            </span>
+                            <span className="truncate text-right">
+                              {srcEntries.length > 0
+                                ? srcEntries.map(([s, n]) => `${s.replace('nasa_', '').replace('installed_', '')}:${n}`).join(' · ')
+                                : 'empty'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-[11px] font-mono text-muted-foreground">
+                    Loading class buckets from PyTorch / installed SPHEREx corpus...
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {relabelStatus && (
+              <div className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-mono text-emerald-300">
+                {relabelStatus}
+              </div>
+            )}
+
             <div className="rounded border border-sky-500/30 bg-sky-950/20 px-4 py-2.5 text-xs text-sky-200">
               <strong>Schema Note:</strong> {SCHEMA_META[sftSchema].note}
             </div>
@@ -344,38 +582,162 @@ export const DataProductExports: React.FC = () => {
               <div className="text-xs font-mono text-muted-foreground">Building TRL JSONL corpus...</div>
             ) : (
               <div className="flex flex-col gap-3">
-                {(sftData?.records || []).slice(0, 6).map((rec, idx) => (
-                  <Card key={idx} className="border-border">
-                    <CardHeader className="py-2 px-4 border-b border-border bg-secondary/30 flex flex-row items-center justify-between">
-                      <CardTitle className="text-xs font-mono">{rec.label || rec.target_id || `Record #${idx + 1}`}</CardTitle>
-                      <Badge variant="outline" className="font-mono text-[10px]">{rec.source || sftSchema}</Badge>
-                    </CardHeader>
-                    <CardContent className="p-3 flex flex-col gap-2">
-                      {rec.tokens_preview && (
-                        <div className="flex flex-wrap gap-1 p-2 rounded bg-background/80 border border-border/60 font-mono text-[10px]">
-                          {rec.tokens_preview.map((tok, ti) => (
-                            <span
-                              key={ti}
-                              className={cn(
-                                'px-1 rounded',
-                                tok.masked ? 'bg-slate-800/80 text-slate-400 line-through' : 'bg-emerald-500/20 text-emerald-300'
-                              )}
-                            >
-                              {tok.text}
-                            </span>
-                          ))}
-                        </div>
+                {/* MULTI-MODAL SAMPLE INSPECTOR */}
+                {bucketSamples.length > 0 && (
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                      <span>
+                        Inspecting {selectedBucket === 'ALL' ? 'All Classes' : selectedBucket} · showing{' '}
+                        {Math.min(8, bucketSamples.length)} of {bucketSamples.length} multi-modal examples
+                      </span>
+                      {selectedBucket !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBucket('ALL')}
+                          className="text-sky-400 hover:text-sky-300 underline"
+                        >
+                          Clear filter
+                        </button>
                       )}
-                      <pre className="text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap">
-                        {JSON.stringify(
-                          Object.fromEntries(Object.entries(rec).filter(([k]) => k !== 'tokens_preview')),
-                          null,
-                          2
-                        )}
-                      </pre>
-                    </CardContent>
-                  </Card>
-                ))}
+                    </div>
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                      {bucketSamples.slice(0, 8).map((sample, idx) => {
+                        const sf = sample.spectral_features || {};
+                        const selectedLabel = relabelMap[sample.target_id] ?? sample.domain_class;
+                        const isSaving = relabelingTargetId === sample.target_id;
+                        return (
+                          <Card key={`${sample.target_id}-${idx}`} className="border-border bg-card/70">
+                            <CardHeader className="py-2 px-3.5 border-b border-border bg-secondary/30 flex flex-wrap flex-row items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <CardTitle className="text-xs font-mono truncate">
+                                  {sample.label}
+                                </CardTitle>
+                                <div className="text-[10px] font-mono text-muted-foreground">
+                                  {sample.target_id}
+                                  {sample.ra !== null && sample.dec !== null
+                                    ? ` · (${sample.ra.toFixed(2)}°, ${sample.dec >= 0 ? '+' : ''}${sample.dec.toFixed(2)}°)`
+                                    : ''}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <Badge
+                                  variant={sample.split === 'train' ? 'sky' : 'amber'}
+                                  className="font-mono text-[9px] uppercase"
+                                >
+                                  {sample.split}
+                                </Badge>
+                                <Badge variant="outline" className="font-mono text-[9px]">
+                                  {sample.source_badge || sample.source}
+                                </Badge>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="p-3 flex flex-col gap-2.5">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <StampPreviewSvg stamp={sample.stamp_preview_16x16} />
+                                <SpectrumSparklineSvg flux={sample.flux_preview_34} />
+                                <div className="flex-1 min-w-[160px] grid grid-cols-2 gap-1 text-[10px] font-mono">
+                                  <div className="rounded bg-secondary/30 px-2 py-1">
+                                    <span className="text-muted-foreground">H2O 3.05:</span>{' '}
+                                    <span className="text-sky-300">{(sf.h2o_305_depth ?? 0).toFixed(2)}</span>
+                                  </div>
+                                  <div className="rounded bg-secondary/30 px-2 py-1">
+                                    <span className="text-muted-foreground">CH4 3.32:</span>{' '}
+                                    <span className="text-violet-300">{(sf.ch4_332_depth ?? 0).toFixed(2)}</span>
+                                  </div>
+                                  <div className="rounded bg-secondary/30 px-2 py-1">
+                                    <span className="text-muted-foreground">D5/D2:</span>{' '}
+                                    <span className="text-amber-300">{(sf.ir_color_d5_d2 ?? 0).toFixed(2)}</span>
+                                  </div>
+                                  <div className="rounded bg-secondary/30 px-2 py-1">
+                                    <span className="text-muted-foreground">Class:</span>{' '}
+                                    <span className="text-emerald-300 truncate">{sample.domain_class.split(' ')[0]}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {sample.tokens_preview && (
+                                <div className="flex flex-wrap gap-1 p-1.5 rounded bg-background/80 border border-border/60 font-mono text-[9px]">
+                                  {sample.tokens_preview.slice(0, 18).map((tok, ti) => (
+                                    <span
+                                      key={ti}
+                                      className={cn(
+                                        'px-1 rounded',
+                                        tok.masked ? 'bg-slate-800/80 text-slate-400 line-through' : 'bg-emerald-500/20 text-emerald-300'
+                                      )}
+                                    >
+                                      {tok.text}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-border/50">
+                                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                                  <select
+                                    aria-label={`Re-label ${sample.label}`}
+                                    value={selectedLabel}
+                                    onChange={(e) =>
+                                      setRelabelMap((m) => ({ ...m, [sample.target_id]: e.target.value }))
+                                    }
+                                    className="h-7 flex-1 min-w-0 bg-background border border-border rounded px-2 text-[10px] font-mono text-foreground"
+                                  >
+                                    {BUCKET_CLASS_OPTIONS.map((cls) => (
+                                      <option key={cls} value={cls}>
+                                        {cls}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isSaving}
+                                    onClick={() => void handleQuickRelabel(sample)}
+                                    className="h-7 px-2.5 text-[10px] font-mono shrink-0"
+                                  >
+                                    {isSaving ? 'Saving...' : 'Save Re-Label'}
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* RAW TRL JSONL RECORDS PREVIEW */}
+                <details className="rounded border border-border bg-card/50">
+                  <summary className="cursor-pointer px-4 py-2.5 text-xs font-mono text-sky-300 hover:bg-secondary/30">
+                    Raw TRL SFTTrainer JSONL Records ({sftData?.records.length ?? 0} total · showing top 6)
+                  </summary>
+                  <div className="p-3 flex flex-col gap-3 border-t border-border">
+                    {(sftData?.records || []).slice(0, 6).map((rec, idx) => (
+                      <Card key={idx} className="border-border">
+                        <CardHeader className="py-2 px-4 border-b border-border bg-secondary/30 flex flex-row items-center justify-between">
+                          <CardTitle className="text-xs font-mono">{rec.label || rec.target_id || `Record #${idx + 1}`}</CardTitle>
+                          <div className="flex items-center gap-1.5">
+                            {rec.split && (
+                              <Badge variant={rec.split === 'train' ? 'sky' : 'amber'} className="font-mono text-[9px] uppercase">
+                                {rec.split}
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className="font-mono text-[10px]">{rec.source || sftSchema}</Badge>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="p-3 flex flex-col gap-2">
+                          <pre className="text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap">
+                            {JSON.stringify(
+                              Object.fromEntries(Object.entries(rec).filter(([k]) => k !== 'tokens_preview')),
+                              null,
+                              2
+                            )}
+                          </pre>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </details>
               </div>
             )}
           </div>
