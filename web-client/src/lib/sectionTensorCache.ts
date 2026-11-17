@@ -90,7 +90,7 @@ function releaseThumbnailSlot(): void {
 }
 
 export function getSectionTensorCacheKey(section: InstalledSection): string {
-  return `${section.section_id}:${section.updated_at || section.size_bytes}`;
+  return `${section.section_id}:${section.updated_at || section.size_bytes}:${section.scope || 'shared'}`;
 }
 
 export function getCachedDecodedTensor(key: string): DecodedSectionEntry | null {
@@ -259,11 +259,14 @@ export async function loadOrDecodeInstalledSectionTensor(
       worker = new Worker(new URL('../workers/tensorWorker.ts', import.meta.url), { type: 'module' });
       const decoded = await decodeBinaryTensorBuffer(await secRes.arrayBuffer(), worker);
       const parsed = mapDecodedTensor(decoded, false);
-      const installedBadge = parsed.sourceBadge.startsWith('[Installed]')
-        ? parsed.sourceBadge
-        : `[Installed] ${parsed.sourceBadge}`;
-      parsed.sourceBadge = installedBadge;
-      const entry = { parsed, sourceBadge: installedBadge };
+      const sourceBadge = parsed.sourceBadge.replace(/^\[Installed\]\s*/i, '');
+      const scopeBadge = section.scope === 'personal'
+        ? '[Installed]'
+        : section.scope === 'benchmark'
+          ? '[NASA Benchmark (Pre-cached)]'
+          : '[Shared Cutout]';
+      parsed.sourceBadge = `${scopeBadge} ${sourceBadge}`.trim();
+      const entry = { parsed, sourceBadge: parsed.sourceBadge };
       setCachedDecodedTensor(cacheKey, entry);
       return entry;
     } finally {

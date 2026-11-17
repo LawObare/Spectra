@@ -422,7 +422,14 @@ function inferFidelity(payload: any): SpectralFidelity {
 }
 
 function resolveInitialTarget(
-  readySections: Array<{ section_id: string; label: string; ra: number; dec: number; source_badge?: string }>,
+  readySections: Array<{
+    section_id: string;
+    label: string;
+    ra: number;
+    dec: number;
+    source_badge?: string;
+    scope?: 'personal' | 'benchmark' | 'shared';
+  }>,
   activeName: string | null,
   ra: number,
   dec: number
@@ -442,9 +449,13 @@ function resolveInitialTarget(
       name: bySection.label,
       ra: bySection.ra,
       dec: bySection.dec,
-      catalog: 'Installed IRSA Section',
+      catalog: bySection.scope === 'personal'
+        ? 'My Installed IRSA Section'
+        : bySection.scope === 'benchmark'
+          ? 'NASA Benchmark (Pre-cached)'
+          : 'Shared IRSA Section',
       environment: brownDwarf ? 'Brown dwarf - photospheric CH4 guardrail' : 'Point-source line of sight',
-      badge: `[Installed] ${bySection.source_badge || '[IRSA Live]'}`,
+      badge: `${bySection.scope === 'personal' ? '[Installed]' : bySection.scope === 'benchmark' ? '[NASA Benchmark (Pre-cached)]' : '[Shared Cutout]'} ${bySection.source_badge || '[IRSA Live]'}`,
       isBrownDwarf: brownDwarf,
     };
   }
@@ -1177,7 +1188,7 @@ export const MolecularIceStudio: React.FC = () => {
                 sizeVariant="xs"
                 aria-label="Ice spectrum source mode"
               >
-                <option value="installed">Installed Cutouts ({readyInstalledSections.length})</option>
+                <option value="installed">Available Cutouts ({readyInstalledSections.length})</option>
                 <option value="live">Icy Cloud Sightlines</option>
               </Select>
             </div>

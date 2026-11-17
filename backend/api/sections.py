@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import math
 import os
+import re
 import struct
 import sys
 import threading
@@ -21,6 +23,7 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import asyncpg
 import numpy as np
@@ -130,6 +133,84 @@ async def _get_pool(request: Request) -> asyncpg.Pool | None:
         return _pool
     except Exception:  # noqa: BLE001
         return None
+
+
+async def _observer_id_for_request(
+    request: Request,
+    conn: Any,
+    *,
+    required: bool = False,
+    create: bool = False,
+) -> str | None:
+    observer_id = request.headers.get("X-Observer-ID")
+    observer_key = request.headers.get("X-Observer-Key")
+    if not observer_id and not observer_key:
+        if required:
+            raise HTTPException(status_code=401, detail="Missing observer session headers")
+        return None
+    if not observer_id or not observer_key or not re.fullmatch(r"[0-9a-fA-F]{64}", observer_key):
+        raise HTTPException(status_code=401, detail="Invalid observer session headers")
+    try:
+        parsed_id = UUID(observer_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid observer ID") from exc
+    if parsed_id.version != 4:
+        raise HTTPException(status_code=401, detail="Observer ID must be UUIDv4")
+
+    expected_hash = hashlib.sha256(observer_key.encode("utf-8")).hexdigest()
+    row = await conn.fetchrow(
+        "SELECT key_hash FROM observers WHERE observer_id = $1",
+        parsed_id,
+    )
+    if row is None and create:
+        await conn.execute(
+            """
+            INSERT INTO observers (observer_id, key_hash, handle)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (observer_id) DO NOTHING
+            """,
+            parsed_id,
+            expected_hash,
+            f"Observer-{parsed_id.hex[:8]}",
+        )
+        row = await conn.fetchrow(
+            "SELECT key_hash FROM observers WHERE observer_id = $1",
+            parsed_id,
+        )
+    if row is None:
+        if required:
+            raise HTTPException(status_code=401, detail="Observer session not found")
+        return None
+    if not hmac.compare_digest(str(row["key_hash"]), expected_hash):
+        raise HTTPException(status_code=401, detail="Invalid observer key")
+    return str(parsed_id)
+
+
+def _benchmark_section_ids() -> set[str]:
+    return {
+        section_id_for(float(target["ra"]), float(target["dec"]), BENCHMARK_FOV_ARCSEC)
+        for target in BENCHMARK_TARGETS.values()
+    }
+
+
+def _annotate_section_scope(
+    sections: list[dict[str, Any]], owned_ids: set[str] | None = None
+) -> list[dict[str, Any]]:
+    owned = owned_ids or set()
+    benchmark_ids = _benchmark_section_ids()
+    return [
+        {
+            **section,
+            "scope": (
+                "personal"
+                if section["section_id"] in owned
+                else "benchmark"
+                if section["section_id"] in benchmark_ids
+                else "shared"
+            ),
+        }
+        for section in sections
+    ]
 
 
 def _parse_tensor_header(payload: bytes) -> tuple[dict[str, Any], memoryview]:
@@ -383,7 +464,7 @@ def _extract_spectrum_from_tensor_payload(
         "continuum_flux_jy": cont_flux,
         "optical_depth_tau": tau,
         "provenance": {
-            "source_badge": f"[Installed] {source_badge}",
+            "source_badge": source_badge,
             "release": str(header.get("release") or "spherex"),
             "probe_pixel": [cx, cy],
             "epoch": epoch,
@@ -1043,7 +1124,7 @@ async def list_installed_sections(
     limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    """Return user-installed sky sections with optional filtering and pagination."""
+    """Return available sky sections with per-observer library scope."""
     pool = await _get_pool(request)
     if pool is None:
         disk_sections = await asyncio.to_thread(_load_disk_benchmark_sections)
@@ -1051,12 +1132,14 @@ async def list_installed_sections(
             disk_sections, q=q, status=status, limit=limit, offset=offset
         )
         return {
-            "sections": paged,
+            "sections": _annotate_section_scope(paged),
             "total": total,
             "has_more": (offset + len(paged)) < total,
             "status": "ready" if disk_sections else "offline",
         }
+    owned_ids: set[str] = set()
     try:
+        observer_id: str | None = None
         if "pytest" not in sys.modules and not _BENCHMARKS_SEEDED_MARKER.exists():
             await ensure_benchmarks_preinstalled(pool)
         await _ensure_tensor_zst_column(pool)
@@ -1079,6 +1162,7 @@ async def list_installed_sections(
             f"FROM installed_sections {where_sql} ORDER BY updated_at DESC"
         )
         async with pool.acquire() as conn:
+            observer_id = await _observer_id_for_request(request, conn)
             if limit is None and not clauses and offset == 0:
                 rows = await conn.fetch(base_select)
                 total = len(rows)
@@ -1099,6 +1183,14 @@ async def list_installed_sections(
                     total = int(total_val) if total_val is not None else len(rows)
                 else:
                     total = len(rows)
+            if observer_id:
+                owner_rows = await conn.fetch(
+                    "SELECT section_id FROM installed_section_owners WHERE observer_id = $1",
+                    UUID(observer_id),
+                )
+                owned_ids = {str(owner["section_id"]) for owner in owner_rows}
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Failed listing installed sections from PostgreSQL; using bundled sections")
         disk_sections = await asyncio.to_thread(_load_disk_benchmark_sections)
@@ -1106,7 +1198,7 @@ async def list_installed_sections(
             disk_sections, q=q, status=status, limit=limit, offset=offset
         )
         return {
-            "sections": paged,
+            "sections": _annotate_section_scope(paged),
             "total": total,
             "has_more": (offset + len(paged)) < total,
             "status": "ready" if disk_sections else "offline",
@@ -1135,6 +1227,7 @@ async def list_installed_sections(
         }
         for r in rows
     ]
+    sections = _annotate_section_scope(sections, owned_ids)
     return {
         "sections": sections,
         "total": total,
@@ -1157,16 +1250,26 @@ async def install_section(
     section_id = section_id_for(body.ra, body.dec, body.fov_arcsec)
     label = body.label.strip() or f"Field ({body.ra:.4f}°, {body.dec:+.4f}°)"
 
-    if section_id in _active_installs and not _active_installs[section_id].done() and section_id in _active_task_ids:
-        return {
-            "section_id": section_id,
-            "task_id": _active_task_ids[section_id],
-            "status": "installing",
-            "already_installed": False,
-            "already_installing": True,
-        }
-
     async with pool.acquire() as conn:
+        observer_id = await _observer_id_for_request(request, conn, required=True, create=True)
+        assert observer_id is not None
+        if section_id in _active_installs and not _active_installs[section_id].done() and section_id in _active_task_ids:
+            await conn.execute(
+                """
+                INSERT INTO installed_section_owners (section_id, observer_id)
+                VALUES ($1, $2) ON CONFLICT DO NOTHING
+                """,
+                section_id,
+                UUID(observer_id),
+            )
+            return {
+                "section_id": section_id,
+                "task_id": _active_task_ids[section_id],
+                "status": "installing",
+                "already_installed": False,
+                "already_installing": True,
+            }
+
         existing_rows = await conn.fetch(
             """
             SELECT section_id, label, ra, dec, fov_arcsec, status, tensor_path, epochs, bands, source_badge
@@ -1193,6 +1296,14 @@ async def install_section(
             )
             if not is_match:
                 continue
+            await conn.execute(
+                """
+                INSERT INTO installed_section_owners (section_id, observer_id)
+                VALUES ($1, $2) ON CONFLICT DO NOTHING
+                """,
+                ex_id,
+                UUID(observer_id),
+            )
             if (
                 ex_status == "ready"
                 and _resolve_existing_tensor_path(ex_id, existing["tensor_path"]) is not None
@@ -1237,6 +1348,14 @@ async def install_section(
             body.ra,
             body.dec,
             body.fov_arcsec,
+        )
+        await conn.execute(
+            """
+            INSERT INTO installed_section_owners (section_id, observer_id)
+            VALUES ($1, $2) ON CONFLICT DO NOTHING
+            """,
+            section_id,
+            UUID(observer_id),
         )
 
     cutout_res = await create_cutout(
@@ -1429,21 +1548,22 @@ async def get_installed_section_spectrum(
 @router.delete("/sections/{section_id}")
 @router.post("/sections/{section_id}/uninstall")
 async def uninstall_section(section_id: str, request: Request) -> dict[str, Any]:
-    """Remove an installed section and its persisted tensor file."""
+    """Remove the observer's library membership while keeping the shared tensor cache intact."""
     pool = await _get_pool(request)
     if pool is None:
         raise HTTPException(status_code=503, detail="Database unavailable")
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "DELETE FROM installed_sections WHERE section_id = $1 RETURNING tensor_path",
+        observer_id = await _observer_id_for_request(request, conn, required=True)
+        assert observer_id is not None
+        membership = await conn.fetchrow(
+            """
+            DELETE FROM installed_section_owners
+            WHERE section_id = $1 AND observer_id = $2
+            RETURNING section_id
+            """,
             section_id,
+            UUID(observer_id),
         )
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Installed section {section_id} not found")
-    tensor_path = row["tensor_path"]
-    if tensor_path:
-        try:
-            Path(str(tensor_path)).unlink(missing_ok=True)
-        except OSError:
-            pass
+        if not membership:
+            raise HTTPException(status_code=404, detail=f"Personal section {section_id} not found")
     return {"section_id": section_id, "status": "uninstalled"}

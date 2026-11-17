@@ -492,16 +492,25 @@ export const SpectrophotometricLab: React.FC = () => {
           const channels = payloadToChannels(data);
           const fidelity = inferFidelity(data);
           const statusText = `${data.provenance.covered_channels}/${data.provenance.channel_count} channels covered`;
+          const sourceText = (sourceBadge as string).replace(/^\[(?:Installed|Shared Cutout|NASA Benchmark \(Pre-cached\))\]\s*/i, '');
+          const scopeBadge = activeInstalledSection?.scope === 'personal'
+            ? '[Installed]'
+            : activeInstalledSection?.scope === 'benchmark'
+              ? '[NASA Benchmark (Pre-cached)]'
+              : activeInstalledSection
+                ? '[Shared Cutout]'
+                : '';
+          const displayBadge = `${scopeBadge} ${sourceText}`.trim();
           if (matchedKey) {
             setCachedSpectrum(matchedKey, {
               channels,
-              badge: sourceBadge as string,
+              badge: displayBadge,
               status: statusText,
               fidelity,
             });
           }
           setActiveSpectrum(channels);
-          setSpectrumSourceBadge(sourceBadge as string);
+          setSpectrumSourceBadge(displayBadge);
           setSpectrumStatus(statusText);
           setSpectralFidelity(fidelity);
           if (data.provenance?.spatial_probe_unavailable) {

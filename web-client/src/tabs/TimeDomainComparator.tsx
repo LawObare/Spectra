@@ -1271,7 +1271,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
                 onClick={() => setIsCutoutBrowserOpen(true)}
                 className="rounded-lg border border-emerald-500/70 bg-emerald-950/70 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-900/70 transition-colors"
               >
-                Browse Installed Cutouts ({readyInstalledSections.length})
+                Browse Available Cutouts ({readyInstalledSections.length})
               </button>
               {!isShowingProgress && (
                 <>
@@ -1395,7 +1395,7 @@ export const TimeDomainComparator: React.FC<TimeDomainComparatorProps> = ({ onOp
               >
                 <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
               </svg>
-              <span>Browse Installed Cutouts ({readyInstalledSections.length})</span>
+              <span>Browse Available Cutouts ({readyInstalledSections.length})</span>
             </button>
             <span className="inline-flex h-7 items-center rounded-lg border border-white/10 bg-white/[0.03] px-2.5 font-mono text-[11px] text-neutral-300">
               {store.sourceBadge}

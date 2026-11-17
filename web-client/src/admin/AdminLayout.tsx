@@ -1,10 +1,5 @@
-import React, { useState } from 'react';
-import { Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
-import { TrainingDynamics } from './TrainingDynamics';
-import { ActivationInspector } from './ActivationInspector';
-import { DecisionBoundaries } from './DecisionBoundaries';
-import { HardNegativeTriage } from './HardNegativeTriage';
-import { DataProductExports } from './DataProductExports';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
+import { Navigate, useLocation, Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useWalkthroughStore } from '../store/useWalkthroughStore';
 import './admin.css';
@@ -21,6 +16,15 @@ import {
   IconX,
 } from './components/AdminPrimitives';
 
+const ADMIN_STATIONS = [
+  { id: 'dynamics', path: '/admin/dynamics', Page: lazy(() => import('./TrainingDynamics').then((m) => ({ default: m.TrainingDynamics }))) },
+  { id: 'internals', path: '/admin/internals', Page: lazy(() => import('./ActivationInspector').then((m) => ({ default: m.ActivationInspector }))) },
+  { id: 'boundaries', path: '/admin/boundaries', Page: lazy(() => import('./DecisionBoundaries').then((m) => ({ default: m.DecisionBoundaries }))) },
+  { id: 'triage', path: '/admin/triage', Page: lazy(() => import('./HardNegativeTriage').then((m) => ({ default: m.HardNegativeTriage }))) },
+  { id: 'exports', path: '/admin/exports', Page: lazy(() => import('./DataProductExports').then((m) => ({ default: m.DataProductExports }))) },
+] as const;
+type AdminTabId = (typeof ADMIN_STATIONS)[number]['id'];
+
 /**
  * Spectra Administrative Mission Control Shell (/admin/*)
  * Specification Anchors: SPECIFICATION.md §6.4, §6.5
@@ -33,16 +37,13 @@ export const AdminLayout: React.FC = () => {
   const location = useLocation();
   const currentPath = location.pathname;
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const activeStation = ADMIN_STATIONS.find((station) => station.path === currentPath);
+  const activeTab: AdminTabId = activeStation?.id ?? 'dynamics';
+  const [mountedTabs, setMountedTabs] = useState<Set<AdminTabId>>(() => new Set([activeTab]));
 
-  const getActiveTab = () => {
-    if (currentPath.includes('/admin/boundaries')) return 'boundaries';
-    if (currentPath.includes('/admin/internals')) return 'internals';
-    if (currentPath.includes('/admin/triage')) return 'triage';
-    if (currentPath.includes('/admin/exports')) return 'exports';
-    return 'dynamics';
-  };
-
-  const activeTab = getActiveTab();
+  useEffect(() => {
+    setMountedTabs((previous) => new Set(previous).add(activeTab));
+  }, [activeTab]);
 
   const utilityLinks = [
     { label: 'Sky Explorer', to: '/explore?tab=navigator', icon: <IconCompass className="w-4 h-4" /> },
@@ -235,19 +236,27 @@ export const AdminLayout: React.FC = () => {
 
         {/* WORKSPACE CONTENT ROUTER */}
         <main className="flex-1 min-h-0 overflow-y-auto">
-          <Routes>
-            <Route path="/" element={<Navigate to="/admin/dynamics" replace />} />
-            <Route path="/dynamics" element={<TrainingDynamics />} />
-            <Route path="/internals" element={<ActivationInspector />} />
-            <Route path="/boundaries" element={<DecisionBoundaries />} />
-            <Route path="/triage" element={<HardNegativeTriage />} />
-            <Route path="/exports" element={<DataProductExports />} />
-            <Route path="*" element={<Navigate to="/admin/dynamics" replace />} />
-          </Routes>
+          {!activeStation ? (
+            <Navigate to="/admin/dynamics" replace />
+          ) : (
+            <div className="min-h-full">
+              {ADMIN_STATIONS.filter(({ id }) => mountedTabs.has(id) || activeTab === id).map(({ id, Page }) => (
+                <section key={id} hidden={activeTab !== id} aria-hidden={activeTab !== id}>
+                  <Suspense fallback={<AdminStationLoading />}><Page /></Suspense>
+                </section>
+              ))}
+            </div>
+          )}
         </main>
       </div>
     </div>
   );
 };
+
+const AdminStationLoading = () => (
+  <div className="flex min-h-48 items-center justify-center text-xs text-muted-foreground">
+    Loading workstation…
+  </div>
+);
 
 export default AdminLayout;

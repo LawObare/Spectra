@@ -309,6 +309,13 @@ export const InstalledSectionPreviewCard: React.FC<{
               {section.label}
             </div>
             <div className="flex shrink-0 items-center gap-1">
+                <span className="rounded border border-slate-600 bg-slate-800 px-1.5 py-0.5 font-mono text-[9px] text-slate-300">
+                  {section.scope === 'personal'
+                    ? 'My install'
+                    : section.scope === 'benchmark'
+                      ? 'Benchmark'
+                      : 'Shared'}
+                </span>
               {isCurrentComparator && !isActive && (
                 <span className="rounded border border-sky-400/50 bg-sky-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-sky-300">
                   Time-Domain
@@ -391,6 +398,7 @@ export const InstalledCutoutsModal: React.FC<{
     onSelect,
   }) => {
     const [searchQuery, setSearchQuery] = useState('');
+    const [scopeFilter, setScopeFilter] = useState<'all' | 'personal' | 'benchmark' | 'shared'>('all');
     const [visibleCount, setVisibleCount] = useState(CARDS_PER_BATCH);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
@@ -398,6 +406,7 @@ export const InstalledCutoutsModal: React.FC<{
     useEffect(() => {
       if (!isOpen) return;
       setSearchQuery('');
+      setScopeFilter('all');
       setVisibleCount(CARDS_PER_BATCH);
       const focusTimer = window.setTimeout(() => searchInputRef.current?.focus(), 0);
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -414,12 +423,13 @@ export const InstalledCutoutsModal: React.FC<{
 
     useEffect(() => {
       setVisibleCount(CARDS_PER_BATCH);
-    }, [searchQuery]);
+    }, [searchQuery, scopeFilter]);
 
     const filteredSections = useMemo(() => {
       const q = searchQuery.trim().toLowerCase();
-      if (!q) return sections;
-      return sections.filter((sec) => {
+      const scoped = sections.filter((section) => scopeFilter === 'all' || (section.scope || 'shared') === scopeFilter);
+      if (!q) return scoped;
+      return scoped.filter((sec) => {
         const raStr = sec.ra.toFixed(4);
         const decStr = `${sec.dec >= 0 ? '+' : ''}${sec.dec.toFixed(4)}`;
         return (
@@ -431,7 +441,7 @@ export const InstalledCutoutsModal: React.FC<{
           sec.dec.toFixed(4).includes(q)
         );
       });
-    }, [sections, searchQuery]);
+    }, [sections, searchQuery, scopeFilter]);
 
     const visibleSections = useMemo(
       () => filteredSections.slice(0, visibleCount),
@@ -472,7 +482,7 @@ export const InstalledCutoutsModal: React.FC<{
           <div className="flex items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950 px-5 py-3.5">
             <div>
               <h2 id="installed-cutouts-modal-title" className="text-sm font-semibold text-white">
-                Browse Installed Cutouts ({sections.length})
+                Browse Available Cutouts ({sections.length})
               </h2>
               <p className="mt-0.5 text-[11px] text-slate-400">{subtitle}</p>
             </div>
@@ -487,13 +497,24 @@ export const InstalledCutoutsModal: React.FC<{
           </div>
 
           <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/80 bg-slate-900/60 px-5 py-3">
+            <select
+              value={scopeFilter}
+              onChange={(event) => setScopeFilter(event.target.value as typeof scopeFilter)}
+              aria-label="Filter cutouts by availability"
+              className="rounded-lg border border-neutral-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="all">All sources</option>
+              <option value="personal">My installs ({sections.filter((section) => section.scope === 'personal').length})</option>
+              <option value="benchmark">Benchmarks ({sections.filter((section) => section.scope === 'benchmark').length})</option>
+              <option value="shared">Shared ({sections.filter((section) => !section.scope || section.scope === 'shared').length})</option>
+            </select>
             <input
               ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search installed cutouts by name, ID, or RA/Dec…"
-              aria-label="Search installed cutouts by name, ID, or RA/Dec"
+              placeholder="Search cutouts by name, ID, or RA/Dec…"
+              aria-label="Search cutouts by name, ID, or RA/Dec"
               className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
             />
             {searchQuery && (
@@ -514,7 +535,7 @@ export const InstalledCutoutsModal: React.FC<{
           <div className="max-h-[65vh] overflow-y-auto p-4">
             {sections.length === 0 ? (
               <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
-                No cutout sections are installed yet. Use Sky Navigator or &ldquo;Install &amp; Load Section Here&rdquo; to install a region.
+                No cutout sections are available yet. Use Sky Navigator or &ldquo;Install &amp; Load Section Here&rdquo; to install a region.
               </div>
             ) : filteredSections.length === 0 && !searchQuery.trim() ? (
               <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
@@ -522,7 +543,7 @@ export const InstalledCutoutsModal: React.FC<{
               </div>
             ) : filteredSections.length === 0 ? (
               <div className="rounded-xl border border-dashed border-neutral-800 bg-slate-900/40 p-6 text-center text-xs text-slate-400">
-                No installed cutouts matched &ldquo;{searchQuery}&rdquo;.
+                No cutouts matched &ldquo;{searchQuery}&rdquo;.
               </div>
             ) : (
               <>

@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS coverage_mocs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 9. User-Installed SPHEREx Sky Sections (Persisted Cutout Tensors & 102-Channel Spectra)
+-- 9. Shared SPHEREx Sky Sections (Persisted Cutout Tensors & 102-Channel Spectra)
 CREATE TABLE IF NOT EXISTS installed_sections (
     section_id TEXT PRIMARY KEY,
     label TEXT NOT NULL,
@@ -205,3 +205,13 @@ CREATE TABLE IF NOT EXISTS installed_sections (
 CREATE INDEX IF NOT EXISTS idx_installed_sections_spatial ON installed_sections (ra, dec);
 CREATE INDEX IF NOT EXISTS idx_installed_sections_status ON installed_sections (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_installed_sections_status_updated ON installed_sections (status, updated_at DESC);
+
+-- Per-observer library membership; section tensors remain shareable in the cache.
+CREATE TABLE IF NOT EXISTS installed_section_owners (
+    section_id TEXT NOT NULL REFERENCES installed_sections(section_id) ON DELETE CASCADE,
+    observer_id UUID NOT NULL REFERENCES observers(observer_id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (section_id, observer_id)
+);
+CREATE INDEX IF NOT EXISTS idx_installed_section_owners_observer
+    ON installed_section_owners (observer_id, created_at DESC);

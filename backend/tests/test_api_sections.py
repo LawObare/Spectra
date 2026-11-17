@@ -40,21 +40,39 @@ def _make_tensor_payload(n_epochs: int = 2, n_bands: int = 6, h: int = 5, w: int
 
 
 class _FakeConn:
-    def __init__(self, rows: dict[str, dict]):
+    def __init__(self, rows: dict[str, dict], owners: set[tuple[str, str]], observers: dict[str, dict]):
         self.rows = rows
+        self.owners = owners
+        self.observers = observers
 
     async def fetch(self, query: str, *args):
+        if "FROM installed_section_owners" in query:
+            observer_id = str(args[0])
+            return [{"section_id": section_id} for section_id, owner_id in self.owners if owner_id == observer_id]
         return list(self.rows.values())
 
     async def fetchrow(self, query: str, *args):
         sec_id = args[0]
+        if "FROM observers" in query:
+            return self.observers.get(str(sec_id))
+        if "DELETE FROM installed_section_owners" in query:
+            owner = (str(sec_id), str(args[1]))
+            if owner not in self.owners:
+                return None
+            self.owners.remove(owner)
+            return {"section_id": str(sec_id)}
         if query.strip().startswith("DELETE"):
-            return self.rows.pop(sec_id, None)
+            row = self.rows.pop(str(sec_id), None)
+            return {"tensor_path": row.get("tensor_path")} if row else None
         return self.rows.get(sec_id)
 
     async def execute(self, query: str, *args):
         sec_id = args[0]
-        if "INSERT INTO installed_sections" in query:
+        if "INSERT INTO observers" in query:
+            self.observers[str(sec_id)] = {"key_hash": args[1]}
+        elif "INSERT INTO installed_section_owners" in query:
+            self.owners.add((str(sec_id), str(args[1])))
+        elif "INSERT INTO installed_sections" in query:
             self.rows[sec_id] = {
                 "section_id": sec_id,
                 "label": args[1],
@@ -90,13 +108,22 @@ class _FakeConn:
                 }
             )
 
+    async def fetchval(self, query: str, *args):
+        if "SELECT EXISTS" in query:
+            return any(section_id == str(args[0]) for section_id, _ in self.owners)
+        if "SELECT COUNT" in query:
+            return len(self.rows)
+        return None
+
 
 class _FakeAcquire:
-    def __init__(self, rows: dict[str, dict]):
+    def __init__(self, rows: dict[str, dict], owners: set[tuple[str, str]], observers: dict[str, dict]):
         self.rows = rows
+        self.owners = owners
+        self.observers = observers
 
     async def __aenter__(self):
-        return _FakeConn(self.rows)
+        return _FakeConn(self.rows, self.owners, self.observers)
 
     async def __aexit__(self, exc_type, exc, tb):
         pass
@@ -105,9 +132,11 @@ class _FakeAcquire:
 class _FakePool:
     def __init__(self, rows: dict[str, dict]):
         self.rows = rows
+        self.owners: set[tuple[str, str]] = set()
+        self.observers: dict[str, dict] = {}
 
     def acquire(self):
-        return _FakeAcquire(self.rows)
+        return _FakeAcquire(self.rows, self.owners, self.observers)
 
 
 def test_sections_list_tensor_spectrum_and_uninstall(tmp_path: Path, monkeypatch):
@@ -150,7 +179,20 @@ def test_sections_list_tensor_spectrum_and_uninstall(tmp_path: Path, monkeypatch
     assert res.json()["sections"][0]["section_id"] == sec_id
 
     # 2. Re-install short-circuits cleanly when already installed
-    ins = client.post("/api/sections/install", json={"ra": 120.0, "dec": 20.0, "fov_arcsec": 180.0})
+    observer_headers = {
+        "X-Observer-ID": "00000000-0000-4000-8000-000000000001",
+        "X-Observer-Key": "a" * 64,
+    }
+    unauthenticated_install = client.post(
+        "/api/sections/install",
+        json={"ra": 121.0, "dec": 20.0, "fov_arcsec": 180.0},
+    )
+    assert unauthenticated_install.status_code == 401
+    ins = client.post(
+        "/api/sections/install",
+        json={"ra": 120.0, "dec": 20.0, "fov_arcsec": 180.0},
+        headers=observer_headers,
+    )
     assert ins.status_code == 202
     assert ins.json()["already_installed"] is True
     assert ins.json()["overlapping_section"] is False
@@ -159,6 +201,7 @@ def test_sections_list_tensor_spectrum_and_uninstall(tmp_path: Path, monkeypatch
     overlap_ins = client.post(
         "/api/sections/install",
         json={"ra": 120.02, "dec": 20.01, "fov_arcsec": 180.0},
+        headers=observer_headers,
     )
     assert overlap_ins.status_code == 202
     assert overlap_ins.json()["already_installed"] is True
@@ -183,11 +226,23 @@ def test_sections_list_tensor_spectrum_and_uninstall(tmp_path: Path, monkeypatch
     assert spec_data["continuum_flux_jy"] is not None
     assert spec_data["provenance"]["probe_pixel"] == [2, 2]
 
-    # 5. Uninstall removes DB row and disk file
-    rem = client.delete(f"/api/sections/{sec_id}")
+    # 5. Uninstall removes this observer's membership; the tensor remains shared.
+    personal_list = client.get("/api/sections", headers=observer_headers).json()["sections"]
+    assert personal_list[0]["scope"] == "personal"
+    other_viewer = client.get(
+        "/api/sections",
+        headers={
+            "X-Observer-ID": "00000000-0000-4000-8000-000000000002",
+            "X-Observer-Key": "b" * 64,
+        },
+    ).json()["sections"]
+    assert other_viewer[0]["scope"] == "shared"
+    rem = client.delete(f"/api/sections/{sec_id}", headers=observer_headers)
     assert rem.status_code == 200
-    assert not Path(tensor_path).exists()
-    assert client.get("/api/sections").json()["sections"] == []
+    assert Path(tensor_path).exists()
+    remaining = client.get("/api/sections").json()["sections"]
+    assert remaining[0]["section_id"] == sec_id
+    assert remaining[0]["scope"] == "shared"
 
 
 def test_section_spectrum_masked_core_falls_back_to_psf_wings():

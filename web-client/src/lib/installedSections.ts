@@ -17,6 +17,7 @@ export interface InstalledSection {
   error_message?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  scope?: 'personal' | 'benchmark' | 'shared';
 }
 
 export interface DownloadingSectionMeta {
@@ -52,6 +53,28 @@ export interface DownloadingSummaryState {
 }
 
 const MAX_CONCURRENT_INSTALLS = 2;
+const OBSERVER_ID_STORAGE_KEY = 'spx_observer_id';
+const OBSERVER_KEY_STORAGE_KEY = 'spx_observer_key';
+
+function observerHeaders(): Record<string, string> {
+  try {
+    let observerId = localStorage.getItem(OBSERVER_ID_STORAGE_KEY) || '';
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(observerId)) {
+      observerId = crypto.randomUUID();
+      localStorage.setItem(OBSERVER_ID_STORAGE_KEY, observerId);
+    }
+
+    let observerKey = localStorage.getItem(OBSERVER_KEY_STORAGE_KEY) || '';
+    if (!/^[0-9a-f]{64}$/i.test(observerKey)) {
+      const bytes = crypto.getRandomValues(new Uint8Array(32));
+      observerKey = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem(OBSERVER_KEY_STORAGE_KEY, observerKey);
+    }
+    return { 'X-Observer-ID': observerId, 'X-Observer-Key': observerKey };
+  } catch {
+    return {};
+  }
+}
 
 const listeners = new Set<() => void>();
 const activeTaskStreamKeys = new Set<string>();
@@ -139,6 +162,7 @@ function installedSectionListsEqual(a: InstalledSection[], b: InstalledSection[]
     if (
       x.section_id !== y.section_id ||
       x.status !== y.status ||
+      x.scope !== y.scope ||
       x.task_id !== y.task_id ||
       x.epochs !== y.epochs ||
       x.bands !== y.bands ||
@@ -282,7 +306,7 @@ async function runQueuedInstall(entry: DownloadingSection): Promise<void> {
   try {
     const res = await fetch('/api/sections/install', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...observerHeaders() },
       body: JSON.stringify({
         ra,
         dec,
@@ -389,7 +413,9 @@ export async function fetchStaticBenchmarkSections(
   signal?: AbortSignal
 ): Promise<InstalledSection[]> {
   const manifest = await loadStaticBenchmarkManifest(signal);
-  return Array.isArray(manifest?.sections) ? manifest.sections : [];
+  return Array.isArray(manifest?.sections)
+    ? manifest.sections.map((section) => ({ ...section, scope: 'benchmark' as const }))
+    : [];
 }
 
 export async function fetchStaticSectionSpectrum(
@@ -403,13 +429,15 @@ export async function fetchStaticSectionSpectrum(
 
 export async function fetchInstalledSections(signal?: AbortSignal): Promise<InstalledSection[]> {
   let list: InstalledSection[] = [];
+  let apiResponded = false;
   try {
-    const res = await fetch('/api/sections', { signal });
+    const res = await fetch('/api/sections', { signal, headers: observerHeaders() });
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
     if (res.ok && !contentType.includes('text/html')) {
       const data = (await res.json()) as { sections?: InstalledSection[] };
       if (Array.isArray(data.sections)) {
-        list = data.sections;
+        apiResponded = true;
+        list = data.sections.map((section) => ({ ...section, scope: section.scope || 'shared' }));
       }
     }
   } catch (err) {
@@ -418,7 +446,7 @@ export async function fetchInstalledSections(signal?: AbortSignal): Promise<Inst
     }
   }
 
-  if (list.length === 0) {
+  if (!apiResponded) {
     list = await fetchStaticBenchmarkSections(signal);
   }
 
@@ -492,6 +520,7 @@ export async function startSectionInstall(params: {
 
   const existingInstalled = snapshot.installedSections.find(
     (s) =>
+      s.scope === 'personal' &&
       (s.status === 'ready' || s.status === 'installing') &&
       sectionsOverlap(ra, dec, fovArcsec, s.ra, s.dec, s.fov_arcsec)
   );
@@ -529,7 +558,10 @@ export function cancelQueuedInstall(key: string): void {
 }
 
 export async function uninstallSectionById(sectionId: string): Promise<void> {
-  await fetch(`/api/sections/${sectionId}`, { method: 'DELETE' });
+  await fetch(`/api/sections/${sectionId}`, {
+    method: 'DELETE',
+    headers: observerHeaders(),
+  });
   await fetchInstalledSections();
 }
 

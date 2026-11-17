@@ -131,6 +131,28 @@ export interface ModelsRegistryResponse {
   training_active: boolean;
 }
 
+const ADMIN_MODELS_CACHE_KEY = 'spectra.admin.models.v1';
+
+function readCachedModelsRegistry(): ModelsRegistryResponse | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(ADMIN_MODELS_CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as ModelsRegistryResponse;
+    return Array.isArray(data.base_models) && Array.isArray(data.trained_models) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedModelsRegistry(data: ModelsRegistryResponse): void {
+  try {
+    window.sessionStorage.setItem(ADMIN_MODELS_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // Session storage may be unavailable or full; keep the in-memory state.
+  }
+}
+
 export interface Hyperparameters {
   customName: string;
   model: ModelArchitecture;
@@ -405,7 +427,7 @@ function generateOfflineFallbackFrames(hyper: Hyperparameters): TelemetryFrame[]
 export function useAdminTelemetry() {
   const [hyperparams, setHyperparams] = useState<Hyperparameters>(DEFAULT_HYPERPARAMS);
   const [activeEpoch, setActiveEpoch] = useState<number>(1);
-  const [modelsRegistry, setModelsRegistry] = useState<ModelsRegistryResponse | null>(null);
+  const [modelsRegistry, setModelsRegistry] = useState<ModelsRegistryResponse | null>(readCachedModelsRegistry);
   const [promotingModelId, setPromotingModelId] = useState<string | null>(null);
 
   const refreshModelsRegistry = useCallback(async () => {
@@ -415,6 +437,7 @@ export function useAdminTelemetry() {
       const data: ModelsRegistryResponse = await res.json();
       if (data && Array.isArray(data.base_models)) {
         setModelsRegistry(data);
+        writeCachedModelsRegistry(data);
       }
     } catch {
       // Backend offline or unavailable; ignore
@@ -433,6 +456,7 @@ export function useAdminTelemetry() {
       const data: ModelsRegistryResponse = await res.json();
       if (data && Array.isArray(data.base_models)) {
         setModelsRegistry(data);
+        writeCachedModelsRegistry(data);
       }
       return true;
     } catch {

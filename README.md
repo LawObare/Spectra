@@ -1,6 +1,6 @@
 # Spectra (SPHEREx Spectral Explorers)
 
-[![Live Demo: Vercel](https://img.shields.io/badge/Live%20Demo-spectra--seven--opal.vercel.app-black.svg)](https://spectra-seven-opal.vercel.app/)
+[![Live Demo: Vercel](https://img.shields.io/badge/Live%20Demo-spectra--mission.vercel.app-black.svg)](https://spectra-mission.vercel.app/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Target Mission: NASA SPHEREx](https://img.shields.io/badge/Mission-NASA%20SPHEREx-red.svg)](https://spherex.caltech.edu/)
 [![Archive: NASA IRSA SPHEREx QR2 and QR3](https://img.shields.io/badge/Archive-IRSA%20SPHEREx%20QR2%20%2F%20QR3-orange.svg)](https://irsa.ipac.caltech.edu/Missions/spherex.html)
