@@ -12,7 +12,7 @@
 > **Finite minds trying to understand an infinite universe.**  
 > An open-source, no-login workbench for seeing how the sky changes over time and for reading 102-channel spectra from NASA's SPHEREx mission.
 
-**Live demo:** [https://spectra-seven-opal.vercel.app/](https://spectra-seven-opal.vercel.app/)
+**Live demo:** [Spectra](https://spectra-mission.vercel.app/)
 
 ---
 
@@ -155,7 +155,7 @@ To keep the hackathon experience frictionless while still supporting attribution
 
 ## 6. Run It Locally
 
-**Live demo:** [https://spectra-seven-opal.vercel.app/](https://spectra-seven-opal.vercel.app/)
+**Live demo:** [Spectra](https://spectra-mission.vercel.app/)
 
 ### Prerequisites
 
